@@ -1,0 +1,30 @@
+node_modules/
+dist/
+.next/
+out/
+build/
+
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# SQLite — the database and its WAL/shared-memory sidecars must never be
+# committed. Note that a *.db without its -wal file is an inconsistent snapshot;
+# see scripts/backup.sh for the correct way to copy one.
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+backups/
+
+*.log
+npm-debug.log*
+coverage/
+.nyc_output/
+
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp

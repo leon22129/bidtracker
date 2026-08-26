@@ -1,0 +1,92 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+}
+
+html,
+body {
+  @apply h-full bg-gray-50 text-gray-900 antialiased;
+}
+
+/* Dense-grid scrollbars: the table is the whole product, so it gets a slim, always-visible bar
+   rather than the OS overlay default (which hides the position indicator while scrolling 50k rows). */
+.thin-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: #cbd5e1 transparent;
+}
+.thin-scroll::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+.thin-scroll::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border: 3px solid transparent;
+  border-radius: 8px;
+  background-clip: content-box;
+}
+.thin-scroll::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+  background-clip: content-box;
+  border: 3px solid transparent;
+}
+
+@layer components {
+  .btn {
+    @apply inline-flex items-center justify-center gap-1.5 rounded-md border px-3 py-1.5 text-sm
+      font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50;
+  }
+  .btn-primary {
+    @apply btn border-transparent bg-gray-900 text-white hover:bg-gray-700;
+  }
+  .btn-secondary {
+    @apply btn border-gray-300 bg-white text-gray-700 hover:bg-gray-50;
+  }
+  .btn-danger {
+    @apply btn border-transparent bg-red-600 text-white hover:bg-red-700;
+  }
+  .btn-xs {
+    @apply px-2 py-1 text-xs;
+  }
+
+  .input {
+    @apply w-full rounded-md border border-gray-300 bg-white px-2.5 py-1.5 text-sm
+      placeholder:text-gray-400 focus:border-gray-900 focus:outline-none focus:ring-1
+      focus:ring-gray-900 disabled:bg-gray-100 disabled:text-gray-500;
+  }
+  .label {
+    @apply mb-1 block text-xs font-medium text-gray-600;
+  }
+  .card {
+    @apply rounded-lg border border-gray-200 bg-white shadow-sm;
+  }
+
+  /* Grid cell: editable cells must look editable on hover without shifting layout, so the affordance
+     is a background + ring rather than a border (which would change box size and jitter the row). */
+  .cell {
+    @apply flex h-full items-center overflow-hidden whitespace-nowrap px-2 text-xs;
+  }
+  .cell-editable {
+    @apply cursor-text hover:bg-blue-50/70 hover:ring-1 hover:ring-inset hover:ring-blue-200;
+  }
+  .cell-locked {
+    @apply cursor-not-allowed;
+  }
+}
+
+/* Status pills — colours are the spec's contract:
+   Pending gray, Applied green, Rejected black, Duplicated red. */
+.status-pending {
+  @apply bg-gray-100 text-gray-700 ring-gray-300;
+}
+.status-applied {
+  @apply bg-green-100 text-green-800 ring-green-300;
+}
+.status-rejected {
+  @apply bg-gray-900 text-white ring-gray-900;
+}
+.status-duplicated {
+  @apply bg-red-100 text-red-700 ring-red-300;
+}

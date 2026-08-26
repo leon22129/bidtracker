@@ -1,0 +1,9 @@
+{
+  // Build-only config. The base tsconfig includes prisma/** so that editors and `tsc --noEmit`
+  // typecheck seed.ts, but including it in the emit makes TypeScript widen rootDir to the project
+  // root — output lands at dist/src/main.js instead of dist/main.js. The seed script is a dev tool run
+  // through ts-node and is never shipped, so the build excludes it.
+  "extends": "./tsconfig.json",
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "dist", "prisma", "**/*.spec.ts"]
+}

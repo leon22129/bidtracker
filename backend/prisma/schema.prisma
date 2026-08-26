@@ -1,0 +1,152 @@
+// Prisma schema — SQLite.
+//
+// NOTE ON ENUMS: SQLite has no native enum type and Prisma therefore rejects `enum` blocks for this
+// provider. Every "enum" column below is a String whose allowed values live in
+// `src/common/constants.ts` and are enforced at the DTO boundary with `@IsIn(...)`.
+// This keeps the schema portable: switching `provider` to "postgresql" requires no column changes.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// User
+// ---------------------------------------------------------------------------
+model User {
+  id            String   @id @default(cuid())
+  username      String   @unique
+  email         String   @unique
+  password_hash String
+  role          String   @default("bidder") // admin | bidder_manager | bidder
+  is_active     Boolean  @default(true)
+  created_at    DateTime @default(now())
+  updated_at    DateTime @updatedAt
+
+  ownedWorkspaces Workspace[]           @relation("WorkspaceOwner")
+  permissions     WorkspacePermission[]
+  createdApplications JobApplication[]  @relation("CreatedBy")
+  processedPaymentReports PaymentReport[] @relation("ProcessedBy")
+  bidderPaymentReports PaymentReport[] @relation("BidderPaymentReports")
+
+  @@index([role])
+  @@map("users")
+}
+
+// ---------------------------------------------------------------------------
+// Workspace (a "tab", e.g. "John Applications")
+// The owner is the payment subject. Access is granted separately.
+// ---------------------------------------------------------------------------
+model Workspace {
+  id            String   @id @default(cuid())
+  name          String   @unique
+  owner_user_id String
+  is_archived   Boolean  @default(false)
+  created_at    DateTime @default(now())
+  updated_at    DateTime @updatedAt
+
+  // Restrict: a user who owns a workspace cannot be deleted — payment attribution must survive.
+  owner        User                  @relation("WorkspaceOwner", fields: [owner_user_id], references: [id], onDelete: Restrict)
+  permissions  WorkspacePermission[]
+  applications JobApplication[]
+
+  @@index([owner_user_id])
+  @@index([is_archived])
+  @@map("workspaces")
+}
+
+// ---------------------------------------------------------------------------
+// WorkspacePermission — grants a non-owner view/edit access to a workspace
+// ---------------------------------------------------------------------------
+model WorkspacePermission {
+  id              String   @id @default(cuid())
+  workspace_id    String
+  user_id         String
+  permission_type String   @default("edit") // view | edit
+  created_at      DateTime @default(now())
+  updated_at      DateTime @updatedAt
+
+  workspace Workspace @relation(fields: [workspace_id], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@unique([workspace_id, user_id])
+  @@index([user_id])
+  @@index([workspace_id])
+  @@map("workspace_permissions")
+}
+
+// ---------------------------------------------------------------------------
+// JobApplication — the main table (50k+ rows per workspace)
+// ---------------------------------------------------------------------------
+model JobApplication {
+  id           String @id @default(cuid())
+  workspace_id String
+
+  // Day bucket, always normalised to UTC midnight. `number` restarts at 1 for each (workspace, date).
+  date   DateTime
+  number Int
+
+  job_title      String?
+  company_name   String? // NEVER part of duplicate detection
+  url            String
+  normalized_url String // canonical form — the duplicate key
+  job_source     String  @default("Other")
+
+  application_status String @default("Pending")     // Pending | Applied | Rejected | Duplicated
+  pipeline_status    String @default("Not Started") // admin-managed recruiting stage
+
+  note String?
+
+  paid    Boolean   @default(false)
+
+  resume_link String?
+
+  // Audit only. Deliberately NOT an input to payment — see Workspace.owner_user_id.
+  created_by_user_id String?
+
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  workspace Workspace @relation(fields: [workspace_id], references: [id], onDelete: Cascade)
+  createdByUser User? @relation("CreatedBy", fields: [created_by_user_id], references: [id], onDelete: SetNull)
+
+  // Guarantees the "number resets per date" invariant at the storage layer, and doubles as the
+  // covering index for the default table sort (date desc, number desc).
+  @@unique([workspace_id, date, number])
+  @@index([workspace_id, application_status])
+  @@index([workspace_id, pipeline_status])
+  @@index([workspace_id, job_source])
+  @@index([workspace_id, paid])
+  @@index([workspace_id, normalized_url])
+  @@index([normalized_url])
+  @@index([url])
+  @@index([date])
+  @@index([workspace_id, created_at])
+  @@map("job_applications")
+}
+
+// ---------------------------------------------------------------------------
+// PaymentReport — immutable history of an admin processing an unpaid period.
+// ---------------------------------------------------------------------------
+model PaymentReport {
+  id            String   @id @default(cuid())
+  bidder_id     String
+  start_date    DateTime
+  end_date      DateTime
+  applied_count Int
+  processed_by  String?
+  processed_at  DateTime @default(now())
+  created_at    DateTime @default(now())
+  updated_at    DateTime @updatedAt
+
+  bidder    User @relation("BidderPaymentReports", fields: [bidder_id], references: [id], onDelete: Restrict)
+  processor User? @relation("ProcessedBy", fields: [processed_by], references: [id], onDelete: SetNull)
+
+  @@index([bidder_id, start_date, end_date])
+  @@index([processed_at])
+  @@map("payment_reports")
+}

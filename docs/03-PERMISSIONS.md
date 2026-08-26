@@ -1,0 +1,158 @@
+# 3. Permission & Authorization Logic
+
+Authorization answers **three independent questions**, and the code keeps them separate on purpose:
+
+```
+(A) ROLE      — may this kind of user call this endpoint at all?      → RolesGuard
+(B) SCOPE     — may this user touch this workspace, and read or write? → WorkspaceAccessService
+(C) FIELD     — may this user set this column to this value?           → ApplicationPolicy
+```
+
+Most permission bugs in tools like this come from implementing (A) and forgetting (C). Here (C) is a pure,
+unit-tested module that every write path must pass through.
+
+## 3.1 (A) Role capability matrix
+
+| Capability | admin | bidder_manager | bidder |
+|---|:--:|:--:|:--:|
+| Create / delete users | ✅ | ❌ | ❌ |
+| Reset any password | ✅ | ❌ | ❌ |
+| Change username / role | ✅ | ❌ | ❌ |
+| Change **own** password | ✅ | ✅ | ✅ |
+| Create / rename / delete workspace | ✅ | ❌ | ❌ |
+| Grant workspace permissions | ✅ | ❌ | ❌ |
+| List all workspaces | ✅ | granted only | granted only |
+| Add URLs / import Excel | ✅ | ✅ (edit scope) | ✅ (edit scope) |
+| Edit job title/company/url/note/resume | ✅ | ✅ (edit scope) | ✅ (edit scope) |
+| Set status `Pending→Applied`, `Applied→Rejected` | ✅ | ✅ | ✅ |
+| Any other status transition | ✅ | ❌ | ❌ |
+| Set/clear `Duplicated` | ✅ | ❌ | ❌ |
+| Edit `pipeline_status` | ✅ | ❌ | ❌ |
+| Edit `interview_date` / `interview_note` | ✅ | ❌ | ❌ |
+| Toggle `paid` | ✅ | ❌ | ❌ |
+| Edit **any** field on a paid row | ✅ | ❌ | ❌ |
+| Delete applications | ✅ | ❌ | ❌ |
+| Generate / view payment reports | ✅ | ❌ | ❌ |
+| View analytics dashboard | ✅ | ❌ | ❌ |
+
+`bidder_manager` vs `bidder` is intentionally **not** a capability difference — it is a *breadth* difference.
+A manager is expected to hold `edit` grants on many workspaces; a junior holds one. Encoding it as breadth
+rather than power means adding a tab to a manager is a data change, not a code change.
+
+## 3.2 (B) Workspace scope resolution
+
+```ts
+resolveAccess(user, workspaceId): 'none' | 'view' | 'edit'
+
+  if (user.role === 'admin')                    return 'edit';   // admin bypasses grants entirely
+  if (workspace.owner_user_id === user.id)      return 'edit';   // you always control your own tab
+  const grant = permission(workspaceId, user.id);
+  return grant?.permission_type ?? 'none';
+```
+
+Consequences:
+- A **junior bidder cannot see another tab exists.** `GET /workspaces` returns only owned + granted rows, so
+  the workspace switcher is naturally filtered — no client-side hiding.
+- Every application endpoint derives `workspaceId` from **the row**, not from the request body, then re-checks
+  scope. So you cannot move a row into a workspace you can't write to, and you cannot read row `X` by guessing
+  its id.
+- `view` scope is read-only at the service layer: any mutation on a `view` workspace is `403` regardless of role.
+
+## 3.3 (C) Field-level policy — the security core
+
+### Writable field sets
+
+```ts
+BIDDER_WRITABLE = { job_title, company_name, url, job_source,
+                    application_status, note, resume_link, date }
+
+ADMIN_ONLY      = { pipeline_status, interview_date, interview_note,
+                    paid, workspace_id, number }
+```
+
+`filterPatchByRole()` **strips** admin-only keys from a non-admin patch rather than rejecting the whole
+request when the value is unchanged, and throws `403` when a non-admin actively tries to change one. Stripping
+no-ops keeps the UI simple (it can PATCH a whole row object) while still blocking real escalation.
+
+### Status transition state machine
+
+```
+        ┌──────── admin only ─────────┐
+        │                             │
+        ▼                             │
+   ┌─────────┐   any role    ┌─────────┐   any role   ┌──────────┐
+   │ Pending │──────────────▶│ Applied │─────────────▶│ Rejected │
+   └─────────┘               └─────────┘              └──────────┘
+        ▲                         ▲                         │
+        │                         └──── admin only ─────────┘
+        │                                                   │
+        └──────────────── admin only ───────────────────────┘
+
+   ┌────────────┐
+   │ Duplicated │  ◀── set ONLY by the system (duplicate detector) or admin
+   └────────────┘      exit ONLY by admin  →  any status
+```
+
+Implemented as an explicit allow-list, not a deny-list:
+
+```ts
+const BIDDER_ALLOWED_TRANSITIONS = new Set([
+  'Pending>Applied',
+  'Applied>Rejected',
+]);
+```
+
+Everything else — `Rejected→Applied`, `Rejected→Pending`, `*→Duplicated`, `Duplicated→*`, and even
+`Pending→Rejected` — requires `admin`. An allow-list is the right shape because the failure mode of forgetting
+an entry is "admin has to do it" (annoying, safe), whereas a deny-list fails toward "bidder can inflate their
+own payment" (silent, expensive).
+
+> Note: `Pending → Rejected` is admin-only by strict reading of the spec (the only bidder transitions listed are
+> `Pending→Applied` and `Applied→Rejected`). Flip `ALLOW_BIDDER_PENDING_TO_REJECTED=true` if you want juniors to
+> be able to discard un-applied rows themselves; the constant is isolated in `application.policy.ts`.
+
+### Why `Duplicated` is admin-only
+
+`Duplicated` rows are excluded from the weekly `Applied` count. If a bidder could clear the flag, they could
+convert a duplicate paste into billable work — self-service payment inflation. If they could *set* it, they
+could bury a competitor's row. So the flag is written by exactly two actors: the duplicate detector (system,
+at insert time) and admin (manual correction).
+
+### Paid-row locking
+
+```ts
+assertRowNotLocked(row, role) {
+  if (row.paid && role !== 'admin') throw Forbidden('Row is paid and locked');
+}
+```
+
+Checked **before** the patch filter, on single edits, bulk edits, and delete. A paid row is a settled financial
+record; it renders gray and read-only in the UI, but the UI is only a courtesy — the 403 is the actual control.
+
+## 3.4 Enforcement points (every write path)
+
+| Path | Endpoint | Guards applied |
+|---|---|---|
+| Single cell edit | `PATCH /applications/:id` | scope=edit, not-locked, patch filter, transition check |
+| Bulk edit | `PATCH /applications/bulk` | same, evaluated **per row**; partial success reported per id |
+| Bulk delete | `POST /applications/bulk-delete` | admin only |
+| Paid toggle | `POST /applications/bulk-paid` | admin only; stamps `paid_by`, `paid_at` |
+| Manual URL paste | `POST /applications/urls` | scope=edit; status forced to `Pending`/`Duplicated` by system |
+| Excel/CSV import | `POST /import/:workspaceId` | scope=edit; imported `Status` clamped — non-admins cannot import `Duplicated`/paid |
+| Pipeline update | `PATCH /applications/:id/pipeline` | admin only |
+
+The import path is the classic hole: a CSV column named `Status` containing `Duplicated` would otherwise let a
+bidder bypass the state machine. `import.service.ts` therefore routes every row's status through the *same*
+`assertStatusTransition('Pending' → value, role)` call used by inline editing.
+
+## 3.5 Authentication summary
+
+- `POST /auth/login` → `{ email, password }` → bcrypt compare → JWT `{ sub, role, username }`, 7 d expiry.
+- `GET /auth/me` → current user (never includes `password_hash`; a global Prisma `omit` + explicit `select`
+  makes leaking it require deliberate effort).
+- `POST /auth/change-password` → requires current password, any role, self only.
+- Admin resets: `POST /users/:id/reset-password` → sets a new password directly, no email involved.
+- Inactive users (`is_active=false`) fail login and fail the JWT strategy's `validate()`, so existing tokens die
+  immediately on deactivation rather than surviving until expiry.
+- Default admin bootstrap runs once at startup, guarded by `count(role='admin') === 0`, so restarts and scale-out
+  never create duplicates. Credentials come from env only, are never logged, and never appear in any response.
