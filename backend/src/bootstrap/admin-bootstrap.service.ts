@@ -3,9 +3,9 @@ import { PrismaService } from '../prisma/prisma.service';
 import { hashPassword } from '../auth/auth.service';
 
 /**
- * Creates the default admin on first boot.
+ * Creates the default superadmin on first boot.
  *
- * Idempotency rule: the account is created only when there is NO admin at all. That means restarts,
+ * Idempotency rule: the account is created only when there is NO elevated account at all. That means restarts,
  * container recreation, and rolling deploys can never produce a second default admin, and — crucially —
  * changing the admin's password does not cause it to be reset on the next restart (which a naive
  * "upsert by email" implementation would do, silently reverting a password change).
@@ -23,15 +23,9 @@ export class AdminBootstrapService implements OnApplicationBootstrap {
     const username = process.env.DEFAULT_ADMIN_USERNAME?.trim();
     const password = process.env.DEFAULT_ADMIN_PASSWORD;
 
-    const existingAdmins = await this.prisma.user.count({ where: { role: { in: ['admin', 'super_admin'] } } });
-    if (existingAdmins > 0) {
-      this.logger.log(`Admin account present (${existingAdmins}); skipping bootstrap.`);
-      return;
-    }
-
     if (!email || !username || !password) {
       this.logger.error(
-        'No admin exists and DEFAULT_ADMIN_EMAIL / DEFAULT_ADMIN_USERNAME / DEFAULT_ADMIN_PASSWORD ' +
+        'DEFAULT_ADMIN_EMAIL / DEFAULT_ADMIN_USERNAME / DEFAULT_ADMIN_PASSWORD ' +
           'are not all set. Nobody can log in. Set them in .env and restart.',
       );
       return;
@@ -49,13 +43,19 @@ export class AdminBootstrapService implements OnApplicationBootstrap {
       if (clash.role !== 'super_admin') {
         await this.prisma.user.update({
           where: { id: clash.id },
-          data: { role: 'admin', is_active: true },
+          data: { role: 'super_admin', is_active: true },
         });
       }
       this.logger.warn(
         `Existing user "${clash.username}" matched the configured default admin identity and was ` +
-          'promoted to admin (password left unchanged).',
+          'promoted to superadmin (password left unchanged).',
       );
+      return;
+    }
+
+    const existingAdmins = await this.prisma.user.count({ where: { role: { in: ['admin', 'super_admin'] } } });
+    if (existingAdmins > 0) {
+      this.logger.log(`Elevated account present (${existingAdmins}); skipping bootstrap.`);
       return;
     }
 
@@ -63,12 +63,12 @@ export class AdminBootstrapService implements OnApplicationBootstrap {
       data: {
         email,
         username,
-        role: 'admin',
+        role: 'super_admin',
         password_hash: await hashPassword(password),
       },
     });
 
     // Log the identity, never the secret.
-    this.logger.log(`Default admin created: ${username} <${email}>. Change the password after login.`);
+    this.logger.log(`Default superadmin created: ${username} <${email}>. Change the password after login.`);
   }
 }

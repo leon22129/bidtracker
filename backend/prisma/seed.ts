@@ -71,7 +71,7 @@ async function main() {
       email: (process.env.DEFAULT_ADMIN_EMAIL || 'admin@example.com').toLowerCase(),
       username: process.env.DEFAULT_ADMIN_USERNAME || 'admin',
       password_hash: await bcrypt.hash(process.env.DEFAULT_ADMIN_PASSWORD || 'Password123!', 10),
-      role: 'admin',
+      role: 'super_admin',
     },
   });
 

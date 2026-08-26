@@ -21,9 +21,9 @@ No managed services, no paid dependencies, runs on the smallest VPS you can rent
 5. [Frontend folder structure](#frontend-folder-structure)
 6. [Authentication](#authentication)
 7. [Authorization](#authorization)
-8. [Database & migrations](#database--migrations)
+8. [Database &amp; migrations](#database--migrations)
 9. [Deployment](#deployment)
-10. [Backup & restore](#backup--restore)
+10. [Backup &amp; restore](#backup--restore)
 11. [Operations reference](#operations-reference)
 
 ---
@@ -40,7 +40,7 @@ docker compose up -d --build
 docker compose logs -f backend      # watch for "Default admin created"
 ```
 
-Open <http://localhost:3000> and sign in with `DEFAULT_ADMIN_EMAIL` /
+Open [http://localhost:3000](http://localhost:3000) and sign in with `DEFAULT_ADMIN_EMAIL` /
 `DEFAULT_ADMIN_PASSWORD`. Change the password immediately from **Account**.
 
 ### Local development (two terminals)
@@ -102,22 +102,22 @@ SMOKE_BASE=http://127.0.0.1:3000/api \
 Median of 5 requests after one warm-up, on a database seeded to the stated target — **50,082 rows in
 the workspace being queried, 150,148 rows in total** — running SQLite on a laptop SSD:
 
-| Operation | Latency |
-| --- | --- |
-| First page (100 rows) | 32 ms |
-| Mid page (offset 25,000) | 34 ms |
-| Last page (offset 50,000) | 35 ms |
-| Max page size (500 rows) | 57 ms |
-| Filter by status | 29 ms |
-| Filter by status + source + paid | 151 ms |
-| Filter by date range | 27 ms |
-| Free-text search | 115 ms |
-| Sort by company name (not indexed) | 88 ms |
-| Workspace summary counts | 55 ms |
-| Analytics: conversion funnel | 128 ms |
-| Analytics: full dashboard | 500 ms |
-| Weekly payment preview | 9 ms |
-| Weekly payment settlement (write) | 60 ms |
+| Operation                          | Latency |
+| ---------------------------------- | ------- |
+| First page (100 rows)              | 32 ms   |
+| Mid page (offset 25,000)           | 34 ms   |
+| Last page (offset 50,000)          | 35 ms   |
+| Max page size (500 rows)           | 57 ms   |
+| Filter by status                   | 29 ms   |
+| Filter by status + source + paid   | 151 ms  |
+| Filter by date range               | 27 ms   |
+| Free-text search                   | 115 ms  |
+| Sort by company name (not indexed) | 88 ms   |
+| Workspace summary counts           | 55 ms   |
+| Analytics: conversion funnel       | 128 ms  |
+| Analytics: full dashboard          | 500 ms  |
+| Weekly payment preview             | 9 ms    |
+| Weekly payment settlement (write)  | 60 ms   |
 
 Deep paging costs the same as the first page because the offset walks a covering index rather than the
 table. The two slowest entries are the ones that cannot use an index: free-text search is a `LIKE`
@@ -130,12 +130,12 @@ see [Indexes](#indexes) for why, and what to add if the workload changes.
 
 The reasoning behind the code, written before it:
 
-| Document | Contents |
-| --- | --- |
+| Document                                          | Contents                                                                                                                 |
+| ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
 | [docs/01-ARCHITECTURE.md](docs/01-ARCHITECTURE.md) | Requirements analysis, system diagram, request lifecycle, technical decisions and tradeoffs, explicitly rejected options |
-| [docs/02-DATABASE.md](docs/02-DATABASE.md) | ER diagram, every table and column, index strategy, database-enforced invariants, SQLite pragmas |
-| [docs/03-PERMISSIONS.md](docs/03-PERMISSIONS.md) | The three-layer authorization model, role capability matrix, status state machine, enforcement-point audit |
-| [docs/04-ROADMAP.md](docs/04-ROADMAP.md) | Build phases 0–11, why this order, per-phase verification |
+| [docs/02-DATABASE.md](docs/02-DATABASE.md)         | ER diagram, every table and column, index strategy, database-enforced invariants, SQLite pragmas                         |
+| [docs/03-PERMISSIONS.md](docs/03-PERMISSIONS.md)   | The three-layer authorization model, role capability matrix, status state machine, enforcement-point audit               |
+| [docs/04-ROADMAP.md](docs/04-ROADMAP.md)           | Build phases 0–11, why this order, per-phase verification                                                               |
 
 ---
 
@@ -150,81 +150,81 @@ Legend: 🔓 public · 👤 any authenticated user · 🛡 **admin only** (enfor
 
 ### Auth — `/api/auth`
 
-| Method | Path | Access | Description |
-| --- | --- | --- | --- |
-| POST | `/auth/login` | 🔓 | `{ email, password }` → `{ access_token, user }` |
-| GET | `/auth/me` | 👤 | Current user, re-read from the database |
-| POST | `/auth/change-password` | 👤 | `{ current_password, new_password }` — own account only |
-| GET | `/health` | 🔓 | Liveness + database probe for Docker and the tunnel |
+| Method | Path                      | Access | Description                                                |
+| ------ | ------------------------- | ------ | ---------------------------------------------------------- |
+| POST   | `/auth/login`           | 🔓     | `{ email, password }` → `{ access_token, user }`      |
+| GET    | `/auth/me`              | 👤     | Current user, re-read from the database                    |
+| POST   | `/auth/change-password` | 👤     | `{ current_password, new_password }` — own account only |
+| GET    | `/health`               | 🔓     | Liveness + database probe for Docker and the tunnel        |
 
 ### Users — `/api/users` 🛡
 
-| Method | Path | Description |
-| --- | --- | --- |
-| GET | `/users` | All users with owned/granted workspace counts |
-| GET | `/users/:id` | One user |
-| POST | `/users` | `{ username, email, password, role }` |
-| PATCH | `/users/:id` | `{ username?, email?, role?, is_active? }` — refuses to demote/deactivate the last admin |
-| POST | `/users/:id/reset-password` | `{ new_password }` (there is no reset-by-email flow, by design) |
-| DELETE | `/users/:id` | Refused while the user still owns workspaces |
+| Method | Path                          | Description                                                                                 |
+| ------ | ----------------------------- | ------------------------------------------------------------------------------------------- |
+| GET    | `/users`                    | All users with owned/granted workspace counts                                               |
+| GET    | `/users/:id`                | One user                                                                                    |
+| POST   | `/users`                    | `{ username, email, password, role }`                                                     |
+| PATCH  | `/users/:id`                | `{ username?, email?, role?, is_active? }` — refuses to demote/deactivate the last admin |
+| POST   | `/users/:id/reset-password` | `{ new_password }` (there is no reset-by-email flow, by design)                           |
+| DELETE | `/users/:id`                | Refused while the user still owns workspaces                                                |
 
 `password_hash` is never present in any response — every user object is built by an explicit
 whitelist projection, not by deleting fields from a Prisma row.
 
 ### Workspaces — `/api/workspaces`
 
-| Method | Path | Access | Description |
-| --- | --- | --- | --- |
-| GET | `/workspaces` | 👤 | Only workspaces you own or were granted (admins see all). `?includeArchived=true` |
-| GET | `/workspaces/:id` | 🔑 | One workspace incl. `my_access` |
-| POST | `/workspaces` | 🛡 | `{ name, owner_user_id }` — the owner is who gets paid |
-| PATCH | `/workspaces/:id` | 🛡 | `{ name?, owner_user_id?, is_archived? }` |
-| DELETE | `/workspaces/:id` | 🛡 | Cascades to its applications; returns the deleted count |
-| POST | `/workspaces/:id/permissions` | 🛡 | `{ user_id, permission_type: 'view' \| 'edit' }` |
-| DELETE | `/workspaces/:id/permissions/:userId` | 🛡 | Revoke |
+| Method | Path                                    | Access | Description                                                                        |
+| ------ | --------------------------------------- | ------ | ---------------------------------------------------------------------------------- |
+| GET    | `/workspaces`                         | 👤     | Only workspaces you own or were granted (admins see all).`?includeArchived=true` |
+| GET    | `/workspaces/:id`                     | 🔑     | One workspace incl.`my_access`                                                   |
+| POST   | `/workspaces`                         | 🛡     | `{ name, owner_user_id }` — the owner is who gets paid                          |
+| PATCH  | `/workspaces/:id`                     | 🛡     | `{ name?, owner_user_id?, is_archived? }`                                        |
+| DELETE | `/workspaces/:id`                     | 🛡     | Cascades to its applications; returns the deleted count                            |
+| POST   | `/workspaces/:id/permissions`         | 🛡     | `{ user_id, permission_type: 'view' \| 'edit' }`                                  |
+| DELETE | `/workspaces/:id/permissions/:userId` | 🛡     | Revoke                                                                             |
 
 Requesting a workspace you can't see returns **404, not 403** — a 403 would confirm the id exists.
 
 ### Applications — `/api/applications`
 
-| Method | Path | Access | Description |
-| --- | --- | --- | --- |
-| GET | `/applications/meta` | 👤 | Enum values + which fields your role may write |
-| GET | `/applications` | 🔑 | Paginated list — see query parameters below |
-| GET | `/applications/summary` | 🔑 | Counts by status / pipeline / source, and paid count |
-| GET | `/applications/:id` | 🔑 | One row |
-| PATCH | `/applications/:id` | 🔑 edit | Inline cell edit; field-level policy applies |
-| PATCH | `/applications/:id/pipeline` | 🛡 | `pipeline_status`, `interview_date`, `interview_note` |
-| PATCH | `/applications/bulk` | 🔑 edit | `{ ids, patch }` — per-row policy, per-id failure reasons |
-| POST | `/applications/bulk-paid` | 🛡 | `{ ids, paid }` |
-| POST | `/applications/bulk-delete` | 🛡 | `{ ids }` |
-| POST | `/applications/urls` | 🔑 edit | `{ workspace_id, date, urls, enrich? }` — the paste endpoint |
-| POST | `/applications/urls/preview` | 🔑 | Duplicate/validity dry run; writes nothing |
+| Method | Path                           | Access  | Description                                                     |
+| ------ | ------------------------------ | ------- | --------------------------------------------------------------- |
+| GET    | `/applications/meta`         | 👤      | Enum values + which fields your role may write                  |
+| GET    | `/applications`              | 🔑      | Paginated list — see query parameters below                    |
+| GET    | `/applications/summary`      | 🔑      | Counts by status / pipeline / source, and paid count            |
+| GET    | `/applications/:id`          | 🔑      | One row                                                         |
+| PATCH  | `/applications/:id`          | 🔑 edit | Inline cell edit; field-level policy applies                    |
+| PATCH  | `/applications/:id/pipeline` | 🛡      | `pipeline_status`, `interview_date`, `interview_note`     |
+| PATCH  | `/applications/bulk`         | 🔑 edit | `{ ids, patch }` — per-row policy, per-id failure reasons    |
+| POST   | `/applications/bulk-paid`    | 🛡      | `{ ids, paid }`                                               |
+| POST   | `/applications/bulk-delete`  | 🛡      | `{ ids }`                                                     |
+| POST   | `/applications/urls`         | 🔑 edit | `{ workspace_id, date, urls, enrich? }` — the paste endpoint |
+| POST   | `/applications/urls/preview` | 🔑      | Duplicate/validity dry run; writes nothing                      |
 
 **`GET /applications` query parameters**
 
-| Parameter | Type | Notes |
-| --- | --- | --- |
-| `workspace_id` | string | **required** |
-| `page` | int | 1-based, default 1 |
-| `page_size` | int | default 100, **capped at 500** so one request can't pull the table |
-| `search` | string | matches job title, company, URL, note |
-| `application_status` | csv | `Pending,Applied,Rejected,Duplicated` |
-| `pipeline_status` | csv | the 7 pipeline values |
-| `job_source` | csv | the 13 sources |
-| `paid` | bool | |
-| `date_from`, `date_to` | `YYYY-MM-DD` | inclusive |
-| `sort_by` | string | `date`, `number`, `job_title`, `company_name`, `job_source`, `application_status`, `pipeline_status`, `paid`, `interview_date`, `created_at` |
-| `sort_dir` | `asc` \| `desc` | `number` is always appended as a tiebreaker so pagination is stable |
+| Parameter                  | Type                | Notes                                                                                                                                                            |
+| -------------------------- | ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `workspace_id`           | string              | **required**                                                                                                                                               |
+| `page`                   | int                 | 1-based, default 1                                                                                                                                               |
+| `page_size`              | int                 | default 100,**capped at 500** so one request can't pull the table                                                                                          |
+| `search`                 | string              | matches job title, company, URL, note                                                                                                                            |
+| `application_status`     | csv                 | `Pending,Applied,Rejected,Duplicated`                                                                                                                          |
+| `pipeline_status`        | csv                 | the 7 pipeline values                                                                                                                                            |
+| `job_source`             | csv                 | the 13 sources                                                                                                                                                   |
+| `paid`                   | bool                |                                                                                                                                                                  |
+| `date_from`, `date_to` | `YYYY-MM-DD`      | inclusive                                                                                                                                                        |
+| `sort_by`                | string              | `date`, `number`, `job_title`, `company_name`, `job_source`, `application_status`, `pipeline_status`, `paid`, `interview_date`, `created_at` |
+| `sort_dir`               | `asc` \| `desc` | `number` is always appended as a tiebreaker so pagination is stable                                                                                            |
 
 Response: `{ items, total, page, page_size, total_pages }`.
 
 ### Import — `/api/import`
 
-| Method | Path | Access | Description |
-| --- | --- | --- | --- |
-| POST | `/import/:workspaceId/preview` | 🔑 edit | multipart `file` → detected columns + sample rows, no writes |
-| POST | `/import/:workspaceId` | 🔑 edit | multipart `file`, `enrich`, `default_date` → `{ total_rows, created, duplicates, skipped[], detected_columns }` |
+| Method | Path                             | Access  | Description                                                                                                             |
+| ------ | -------------------------------- | ------- | ----------------------------------------------------------------------------------------------------------------------- |
+| POST   | `/import/:workspaceId/preview` | 🔑 edit | multipart`file` → detected columns + sample rows, no writes                                                          |
+| POST   | `/import/:workspaceId`         | 🔑 edit | multipart`file`, `enrich`, `default_date` → `{ total_rows, created, duplicates, skipped[], detected_columns }` |
 
 Accepts `.xlsx` and `.csv`. Recognised headers (fuzzy-matched): Date, Job Title, Company Name, URL,
 Status, Note, Resume Link. A `Status` column in the file is run through the **same** status-transition
@@ -232,25 +232,25 @@ policy as a UI edit — otherwise a bidder could set `Duplicated` from a spreads
 
 ### Payments — `/api/payments` 🛡
 
-| Method | Path | Description |
-| --- | --- | --- |
-| GET | `/payments/weekly` | Stored reports; `?from&to&workspace_id`. Returns `applied_count` (settled) **and** `live_applied_count` (recomputed) |
-| GET | `/payments/weekly/preview` | `?week_start=YYYY-MM-DD` (any date in the week; blank = last complete week). Writes nothing |
-| POST | `/payments/weekly/generate` | `{ week_start? }` — idempotent upsert |
-| GET | `/payments/by-bidder` | Totals aggregated by `Workspace.owner_user_id` |
+| Method | Path                          | Description                                                                                                                     |
+| ------ | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| GET    | `/payments/weekly`          | Stored reports;`?from&to&workspace_id`. Returns `applied_count` (settled) **and** `live_applied_count` (recomputed) |
+| GET    | `/payments/weekly/preview`  | `?week_start=YYYY-MM-DD` (any date in the week; blank = last complete week). Writes nothing                                   |
+| POST   | `/payments/weekly/generate` | `{ week_start? }` — idempotent upsert                                                                                        |
+| GET    | `/payments/by-bidder`       | Totals aggregated by`Workspace.owner_user_id`                                                                                 |
 
 ### Analytics — `/api/analytics` 🛡
 
 All accept `?from&to&workspace_id`.
 
-| Method | Path | Description |
-| --- | --- | --- |
-| GET | `/analytics/overview` | Everything below in one request (what the dashboard calls) |
-| GET | `/analytics/conversion` | Totals + `interview_rate`, `offer_rate`, `duplicate_rate` |
-| GET | `/analytics/interviews-by-workspace` | |
-| GET | `/analytics/interviews-by-source` | Includes per-source interview rate |
-| GET | `/analytics/pipeline` | Count per pipeline stage |
-| GET | `/analytics/upcoming-interviews` | Future `interview_date`s, ascending |
+| Method | Path                                   | Description                                                    |
+| ------ | -------------------------------------- | -------------------------------------------------------------- |
+| GET    | `/analytics/overview`                | Everything below in one request (what the dashboard calls)     |
+| GET    | `/analytics/conversion`              | Totals +`interview_rate`, `offer_rate`, `duplicate_rate` |
+| GET    | `/analytics/interviews-by-workspace` |                                                                |
+| GET    | `/analytics/interviews-by-source`    | Includes per-source interview rate                             |
+| GET    | `/analytics/pipeline`                | Count per pipeline stage                                       |
+| GET    | `/analytics/upcoming-interviews`     | Future`interview_date`s, ascending                           |
 
 Rates return `null`, never `NaN` or `0`, when the denominator is zero.
 
@@ -418,11 +418,11 @@ After the first login, change the password under **Account**, then clear
 Three independent layers. A request must pass all three; see
 [docs/03-PERMISSIONS.md](docs/03-PERMISSIONS.md) for the full matrix.
 
-| Layer | Question | Where |
-| --- | --- | --- |
-| **A. Role** | Is this endpoint open to your role at all? | `RolesGuard` + `@Roles('admin')` |
-| **B. Scope** | May you see/edit *this workspace*? | `WorkspaceAccessService.resolve()` |
-| **C. Field** | May you change *this field*, to *this value*, on *this row*? | `application.policy.ts` |
+| Layer              | Question                                                          | Where                                |
+| ------------------ | ----------------------------------------------------------------- | ------------------------------------ |
+| **A. Role**  | Is this endpoint open to your role at all?                        | `RolesGuard` + `@Roles('admin')` |
+| **B. Scope** | May you see/edit*this workspace*?                               | `WorkspaceAccessService.resolve()` |
+| **C. Field** | May you change*this field*, to *this value*, on *this row*? | `application.policy.ts`            |
 
 **Scope** resolves to `edit` for admins and for the workspace owner, otherwise to the granted
 `WorkspacePermission` (`view` / `edit`), otherwise `none`.
@@ -478,14 +478,14 @@ fresh database.
 
 Applied on connect in [prisma.service.ts](backend/src/prisma/prisma.service.ts):
 
-| Pragma | Value | Why |
-| --- | --- | --- |
-| `journal_mode` | `WAL` | Readers don't block the writer — essential when a 50k-row scroll runs beside an import |
-| `busy_timeout` | `5000` | Wait for a lock instead of failing instantly under concurrent writes |
-| `synchronous` | `NORMAL` | WAL makes this durable enough; `FULL` costs an fsync per commit |
-| `foreign_keys` | `ON` | **SQLite defaults this OFF.** Without it, cascades and restrictions are decorative |
-| `cache_size` | `-64000` | 64 MB page cache — keeps the hot indexes resident |
-| `temp_store` | `MEMORY` | Sorting a large filtered result doesn't hit disk |
+| Pragma           | Value      | Why                                                                                      |
+| ---------------- | ---------- | ---------------------------------------------------------------------------------------- |
+| `journal_mode` | `WAL`    | Readers don't block the writer — essential when a 50k-row scroll runs beside an import  |
+| `busy_timeout` | `5000`   | Wait for a lock instead of failing instantly under concurrent writes                     |
+| `synchronous`  | `NORMAL` | WAL makes this durable enough;`FULL` costs an fsync per commit                         |
+| `foreign_keys` | `ON`     | **SQLite defaults this OFF.** Without it, cascades and restrictions are decorative |
+| `cache_size`   | `-64000` | 64 MB page cache — keeps the hot indexes resident                                       |
+| `temp_store`   | `MEMORY` | Sorting a large filtered result doesn't hit disk                                         |
 
 ### Indexes
 
@@ -564,7 +564,7 @@ leaves behind (`docker compose down -v` clears them, along with everything else)
 
 **A. Cloudflare Tunnel (free, no open ports, no public IP needed)**
 
-1. <https://one.dash.cloudflare.com> → Networks → Tunnels → **Create a tunnel** (Cloudflared).
+1. [https://one.dash.cloudflare.com](https://one.dash.cloudflare.com) → Networks → Tunnels → **Create a tunnel** (Cloudflared).
 2. Add a public hostname, e.g. `bids.example.com`, service `http://frontend:3000`.
 3. Copy the token into `.env` as `CLOUDFLARE_TUNNEL_TOKEN`.
 4. `docker compose --profile tunnel up -d`
@@ -596,13 +596,13 @@ docker compose logs -f --tail=50
 
 ### 5. Sizing and limits
 
-| Concern | Reality |
-| --- | --- |
-| Disk | ~250 MB per 500k applications, plus WAL. Budget 2 GB. |
-| Memory | Backend ~150 MB idle, ~400 MB peak during a large import (ExcelJS holds the workbook). |
-| Concurrent users | Comfortable to a few dozen. SQLite serialises writers; readers are unaffected. |
-| Scaling | **Vertically.** Do not run `--scale backend=2`: it would be correct but would burn time retrying `SQLITE_BUSY`. |
-| Outgrowing SQLite | Every "enum" is already a `String` and no raw SQL is dialect-specific — switching `provider` to `postgresql` needs no column changes. |
+| Concern           | Reality                                                                                                                                     |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| Disk              | ~250 MB per 500k applications, plus WAL. Budget 2 GB.                                                                                       |
+| Memory            | Backend ~150 MB idle, ~400 MB peak during a large import (ExcelJS holds the workbook).                                                      |
+| Concurrent users  | Comfortable to a few dozen. SQLite serialises writers; readers are unaffected.                                                              |
+| Scaling           | **Vertically.** Do not run `--scale backend=2`: it would be correct but would burn time retrying `SQLITE_BUSY`.                   |
+| Outgrowing SQLite | Every "enum" is already a`String` and no raw SQL is dialect-specific — switching `provider` to `postgresql` needs no column changes. |
 
 ---
 
@@ -668,17 +668,17 @@ An untested restore procedure is a plan, not a backup.
 
 Full annotated list in [.env.example](.env.example). The ones worth knowing:
 
-| Variable | Default | Effect |
-| --- | --- | --- |
-| `JWT_SECRET` | — (**required**) | Signs tokens. Changing it signs everyone out. |
-| `DEFAULT_ADMIN_*` | — (**required**) | First-boot admin; ignored once any admin exists. |
-| `JWT_EXPIRES_IN` | `7d` | Session length. |
-| `DUPLICATE_SCOPE` | `global` | `global` = a URL seen in any workspace is a duplicate; `workspace` = per-tab only. |
-| `ENABLE_URL_ENRICHMENT` | `true` | Fetch pages for company/title. Off makes pasting instant. |
-| `URL_FETCH_CONCURRENCY` / `URL_FETCH_TIMEOUT_MS` | `5` / `6000` | Enrichment throttle. |
-| `MAX_UPLOAD_MB` | `25` | Import file ceiling. |
-| `DISABLE_CRON` | `false` | Set `true` on a staging copy so it can't produce authoritative-looking reports. |
-| `ALLOW_BIDDER_PENDING_TO_REJECTED` | `false` | Adds one extra transition beyond the spec's two. |
+| Variable                                             | Default                 | Effect                                                                                 |
+| ---------------------------------------------------- | ----------------------- | -------------------------------------------------------------------------------------- |
+| `JWT_SECRET`                                       | — (**required**) | Signs tokens. Changing it signs everyone out.                                          |
+| `DEFAULT_ADMIN_*`                                  | — (**required**) | First-boot admin; ignored once any admin exists.                                       |
+| `JWT_EXPIRES_IN`                                   | `7d`                  | Session length.                                                                        |
+| `DUPLICATE_SCOPE`                                  | `global`              | `global` = a URL seen in any workspace is a duplicate; `workspace` = per-tab only. |
+| `ENABLE_URL_ENRICHMENT`                            | `true`                | Fetch pages for company/title. Off makes pasting instant.                              |
+| `URL_FETCH_CONCURRENCY` / `URL_FETCH_TIMEOUT_MS` | `5` / `6000`        | Enrichment throttle.                                                                   |
+| `MAX_UPLOAD_MB`                                    | `25`                  | Import file ceiling.                                                                   |
+| `DISABLE_CRON`                                     | `false`               | Set`true` on a staging copy so it can't produce authoritative-looking reports.       |
+| `ALLOW_BIDDER_PENDING_TO_REJECTED`                 | `false`               | Adds one extra transition beyond the spec's two.                                       |
 
 ### Common tasks
 
@@ -695,12 +695,18 @@ curl -X POST localhost:3000/api/payments/weekly/generate \
 
 ### Troubleshooting
 
-| Symptom | Cause and fix |
-| --- | --- |
-| `JWT_SECRET must be set` on boot | `.env` missing or unset. `cp .env.example .env` and fill it in. |
-| Login fails right after a fresh deploy | Look for "Default admin created" in `docker compose logs backend`. If the database already had an admin, the env vars were ignored — use the real password or reset it from another admin account. |
-| `SQLITE_BUSY` in the logs | Concurrent writers exceeding `busy_timeout`. Check for a second backend replica; there should be exactly one. |
-| Import reports many skipped rows | Open the skip list on the results panel — it gives a reason per row. Usually a missing/unparseable URL column. |
-| Company/title columns arrive blank | Career sites block bots or time out. This is the specified fallback; fill them in on the table, or retry with enrichment on. |
-| Weekly report shows an amber "Live" figure | Rows changed after settlement. Expected when an admin edits history; regenerate the week if the new figure is the correct one. |
-| Table scrolls but rows stay blank | Backend unreachable — check `docker compose ps` and `/api/health`. |
+| Symptom                                    | Cause and fix                                                                                                                                                                                        |
+| ------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `JWT_SECRET must be set` on boot         | `.env` missing or unset. `cp .env.example .env` and fill it in.                                                                                                                                  |
+| Login fails right after a fresh deploy     | Look for "Default admin created" in`docker compose logs backend`. If the database already had an admin, the env vars were ignored — use the real password or reset it from another admin account. |
+| `SQLITE_BUSY` in the logs                | Concurrent writers exceeding`busy_timeout`. Check for a second backend replica; there should be exactly one.                                                                                       |
+| Import reports many skipped rows           | Open the skip list on the results panel — it gives a reason per row. Usually a missing/unparseable URL column.                                                                                      |
+| Company/title columns arrive blank         | Career sites block bots or time out. This is the specified fallback; fill them in on the table, or retry with enrichment on.                                                                         |
+| Weekly report shows an amber "Live" figure | Rows changed after settlement. Expected when an admin edits history; regenerate the week if the new figure is the correct one.                                                                       |
+| Table scrolls but rows stay blank          | Backend unreachable — check`docker compose ps` and `/api/health`.                                                                                                                               |
+
+# QUICK START COMMAND FOR LOCAL ENVIRONMENT
+
+```PowerShell
+Start-Process powershell -ArgumentList '-NoExit','-Command','Set-Location .\backend; npm run start:dev'; Start-Process powershell -ArgumentList '-NoExit','-Command','Set-Location .\frontend; npm run dev'
+```

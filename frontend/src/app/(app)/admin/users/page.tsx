@@ -258,7 +258,7 @@ function CreateUserModal({
         </div>
         <div>
           <label className="label" htmlFor="cu-password">Temporary password</label>
-          <input id="cu-password" type="text" className="input font-mono" value={password} onChange={(e) => setPassword(e.target.value)} required minLength={8} />
+          <input id="cu-password" type="password" autoComplete="new-password" className="input font-mono" value={password} onChange={(e) => setPassword(e.target.value)} required minLength={8} />
           <p className="mt-1 text-2xs text-gray-500">
             Minimum 8 characters. Shown as plain text because you have to pass it on — the user can change
             it from their Account page.
@@ -313,7 +313,8 @@ function ResetPasswordModal({ user, onClose }: { user: User; onClose: () => void
           <label className="label" htmlFor="rp-password">New password</label>
           <input
             id="rp-password"
-            type="text"
+            type="password"
+            autoComplete="new-password"
             className="input font-mono"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
