@@ -47,6 +47,9 @@ export default function UsersPage() {
   }
 
   const adminCount = users.filter((u) => u.role === 'admin' && u.is_active).length;
+  const addableRoles = me?.role === 'super_admin'
+    ? ROLES.filter((role) => role === 'admin')
+    : ROLES.filter((role) => role === 'bidder' || role === 'bidder_manager');
 
   async function patch(u: User, data: Partial<{ role: Role; is_active: boolean; username: string }>) {
     try {
@@ -111,6 +114,7 @@ export default function UsersPage() {
               {users.map((u) => {
                 const isMe = u.id === me?.id;
                 const lastAdmin = u.role === 'admin' && adminCount <= 1;
+                const roleOptions = [...new Set([u.role, ...addableRoles])];
                 return (
                   <tr key={u.id} className={`border-t border-gray-100 ${u.is_active ? '' : 'bg-gray-50 text-gray-500'}`}>
                     <td className="px-3 py-2">
@@ -128,7 +132,7 @@ export default function UsersPage() {
                         title={lastAdmin ? 'This is the only active admin — promote someone else first' : undefined}
                         onChange={(e) => void patch(u, { role: e.target.value as Role })}
                       >
-                        {ROLES.map((r) => (
+                        {roleOptions.map((r) => (
                           <option key={r} value={r}>
                             {roleLabel(r)}
                           </option>
@@ -195,6 +199,7 @@ export default function UsersPage() {
 
       {showCreate && (
         <CreateUserModal
+          allowedRoles={addableRoles}
           onClose={() => setShowCreate(false)}
           onCreated={async () => {
             setShowCreate(false);
@@ -211,9 +216,11 @@ export default function UsersPage() {
 }
 
 function CreateUserModal({
+  allowedRoles,
   onClose,
   onCreated,
 }: {
+  allowedRoles: Role[];
   onClose: () => void;
   onCreated: () => Promise<void>;
 }) {
@@ -221,7 +228,7 @@ function CreateUserModal({
   const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [role, setRole] = useState<Role>('bidder');
+  const [role, setRole] = useState<Role>(allowedRoles[0]);
   const [busy, setBusy] = useState(false);
 
   async function submit(e: React.FormEvent) {
@@ -260,7 +267,7 @@ function CreateUserModal({
         <div>
           <label className="label" htmlFor="cu-role">Role</label>
           <select id="cu-role" className="input" value={role} onChange={(e) => setRole(e.target.value as Role)}>
-            {ROLES.map((r) => (
+            {allowedRoles.map((r) => (
               <option key={r} value={r}>{roleLabel(r)}</option>
             ))}
           </select>

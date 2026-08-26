@@ -9,6 +9,7 @@ interface RangeFilter {
   from?: string;
   to?: string;
   workspace_id?: string;
+  workspace_ids?: string[];
 }
 
 /** Row counts keyed by each status column, for one filter range. */
@@ -31,7 +32,9 @@ export class AnalyticsService {
 
   private dateWhere(range: RangeFilter) {
     return {
-      ...(range.workspace_id ? { workspace_id: range.workspace_id } : {}),
+      ...(range.workspace_id
+        ? { workspace_id: range.workspace_id }
+        : range.workspace_ids ? { workspace_id: { in: range.workspace_ids } } : {}),
       ...(range.from || range.to
         ? {
             date: {

@@ -61,7 +61,7 @@ export class ApplicationsController {
 
   @Post('bulk-delete')
   @HttpCode(200)
-  @Roles('admin')
+  @Roles('admin', 'super_admin')
   bulkDelete(@CurrentUser() user: AuthUser, @Body() dto: BulkIdsDto) {
     return this.applications.bulkDelete(user, dto);
   }
@@ -81,7 +81,7 @@ export class ApplicationsController {
   }
 
   @Patch(':id/pipeline')
-  @Roles('admin')
+  @Roles('admin', 'super_admin')
   updatePipeline(
     @CurrentUser() user: AuthUser,
     @Param('id') id: string,

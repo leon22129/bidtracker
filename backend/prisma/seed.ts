@@ -96,7 +96,7 @@ async function main() {
       await prisma.workspace.upsert({
         where: { name },
         update: {},
-        create: { name, owner_user_id: bidder.id },
+        create: { name, owner_user_id: bidder.id, created_by_user_id: admin.id },
       }),
     );
   }

@@ -36,12 +36,19 @@ export class PaymentsService {
   }
 
   async process(user: AuthUser, period: Period) {
-    if (user.role !== 'admin') throw new ForbiddenException('Only an admin can process payment');
+    if (user.role !== 'admin' && user.role !== 'super_admin') throw new ForbiddenException('Only an admin can process payment');
     if (!period.bidder_id) throw new BadRequestException('bidder_id is required');
     const range = this.resolvePeriod(period);
     const result = await this.prisma.$transaction(async (tx) => {
       const applications = await tx.jobApplication.findMany({
-        where: { application_status: 'Applied', paid: false, date: { gte: range.start, lte: endOfDay(range.end) }, workspace: { owner_user_id: period.bidder_id } },
+        where: {
+          application_status: 'Applied', paid: false,
+          date: { gte: range.start, lte: endOfDay(range.end) },
+          workspace: {
+            owner_user_id: period.bidder_id,
+            ...(user.role === 'admin' ? { created_by_user_id: user.id } : {}),
+          },
+        },
         select: { id: true },
       });
       const report = await tx.paymentReport.create({
@@ -76,8 +83,13 @@ export class PaymentsService {
   }
 
   private async visibleBidderIds(user: AuthUser): Promise<string[] | null> {
-    if (user.role === 'admin') return null;
-    const workspaces = await this.prisma.workspace.findMany({ where: { OR: [{ owner_user_id: user.id }, { permissions: { some: { user_id: user.id } } }] }, select: { owner_user_id: true } });
+    if (user.role === 'super_admin') return null;
+    const workspaces = await this.prisma.workspace.findMany({
+      where: user.role === 'admin'
+        ? { created_by_user_id: user.id }
+        : { OR: [{ owner_user_id: user.id }, { permissions: { some: { user_id: user.id } } }] },
+      select: { owner_user_id: true },
+    });
     return [...new Set(workspaces.map((workspace) => workspace.owner_user_id))];
   }
 }

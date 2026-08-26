@@ -198,6 +198,7 @@ export class ApplicationsService {
     const row = await this.prisma.jobApplication.findUnique({ where: { id } });
     if (!row) throw new NotFoundException('Application not found');
     if (!isAdmin(user.role)) throw new ForbiddenException('Only an admin can manage pipeline status');
+    await this.access.assertCanEdit(user, row.workspace_id);
 
     return this.prisma.jobApplication.update({
       where: { id },
@@ -264,7 +265,13 @@ export class ApplicationsService {
   async bulkDelete(user: AuthUser, dto: BulkIdsDto) {
     if (!isAdmin(user.role)) throw new ForbiddenException('Only an admin can delete applications');
 
-    const result = await this.prisma.jobApplication.deleteMany({ where: { id: { in: dto.ids } } });
+    const rows = await this.prisma.jobApplication.findMany({
+      where: { id: { in: dto.ids } },
+      select: { id: true, workspace_id: true },
+    });
+    const workspaceIds = [...new Set(rows.map((row) => row.workspace_id))];
+    for (const workspaceId of workspaceIds) await this.access.assertCanEdit(user, workspaceId);
+    const result = await this.prisma.jobApplication.deleteMany({ where: { id: { in: rows.map((row) => row.id) } } });
     return { deleted: result.count };
   }
 
@@ -422,6 +429,7 @@ export class ApplicationsService {
         job_source: detectJobSource(v.url),
         existing_url: v.existing?.url ?? null,
               existing_job_title: v.existing?.job_title ?? null,
+        existing_date: v.existing?.date?.toISOString().slice(0, 10) ?? null,
         is_duplicate: v.is_duplicate,
         existing_in: v.existing
           ? `${v.existing.workspace_name} #${v.existing.number}`

@@ -16,7 +16,7 @@ export const ADMIN_ONLY_FIELDS = new Set<keyof JobApplication>([
 ]);
 
 export function isAdmin(user: Pick<User, 'role'> | null | undefined): boolean {
-  return user?.role === 'admin';
+  return user?.role === 'admin' || user?.role === 'super_admin';
 }
 
 /** Can this user edit this specific field on this specific row? */
@@ -67,7 +67,7 @@ export function canViewAnalytics(user: Pick<User, 'role'> | null): boolean {
 }
 
 export function roleLabel(role: Role): string {
-  return { admin: 'Admin', bidder_manager: 'Bidder Manager', bidder: 'Junior Bidder' }[role];
+  return { super_admin: 'Super Admin', admin: 'Admin', bidder_manager: 'Bidder Manager', bidder: 'Bidder' }[role];
 }
 
 /** Human explanation for a disabled control — better than a silently dead input. */

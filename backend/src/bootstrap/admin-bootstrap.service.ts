@@ -23,7 +23,7 @@ export class AdminBootstrapService implements OnApplicationBootstrap {
     const username = process.env.DEFAULT_ADMIN_USERNAME?.trim();
     const password = process.env.DEFAULT_ADMIN_PASSWORD;
 
-    const existingAdmins = await this.prisma.user.count({ where: { role: 'admin' } });
+    const existingAdmins = await this.prisma.user.count({ where: { role: { in: ['admin', 'super_admin'] } } });
     if (existingAdmins > 0) {
       this.logger.log(`Admin account present (${existingAdmins}); skipping bootstrap.`);
       return;
@@ -46,10 +46,12 @@ export class AdminBootstrapService implements OnApplicationBootstrap {
       where: { OR: [{ email }, { username }] },
     });
     if (clash) {
-      await this.prisma.user.update({
-        where: { id: clash.id },
-        data: { role: 'admin', is_active: true },
-      });
+      if (clash.role !== 'super_admin') {
+        await this.prisma.user.update({
+          where: { id: clash.id },
+          data: { role: 'admin', is_active: true },
+        });
+      }
       this.logger.warn(
         `Existing user "${clash.username}" matched the configured default admin identity and was ` +
           'promoted to admin (password left unchanged).',

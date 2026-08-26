@@ -44,7 +44,7 @@ const BIDDER_ALLOWED_TRANSITIONS = new Set<string>([
 ]);
 
 export function isAdmin(role: Role | string): boolean {
-  return role === 'admin';
+  return role === 'admin' || role === 'super_admin';
 }
 
 /**

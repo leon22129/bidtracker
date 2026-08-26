@@ -1,7 +1,7 @@
 // Mirrors the backend's Prisma models and `src/common/constants.ts`.
 // Kept hand-written (rather than generated) so the frontend depends only on the HTTP contract.
 
-export const ROLES = ['admin', 'bidder_manager', 'bidder'] as const;
+export const ROLES = ['super_admin', 'admin', 'bidder_manager', 'bidder'] as const;
 export type Role = (typeof ROLES)[number];
 
 export const APPLICATION_STATUSES = ['Pending', 'Applied', 'Rejected', 'Duplicated'] as const;
@@ -51,6 +51,7 @@ export interface Workspace {
   id: string;
   name: string;
   owner_user_id: string;
+  created_by_user_id?: string;
   owner: { id: string; username: string; email: string };
   is_archived: boolean;
   application_count: number;
@@ -174,6 +175,7 @@ export interface UrlPreviewResult {
     job_source: JobSource;
     existing_url: string | null;
     existing_job_title: string | null;
+    existing_date: string | null;
     is_duplicate: boolean;
     existing_in: string | null;
   }>;

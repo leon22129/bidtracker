@@ -273,6 +273,7 @@ function PreviewPanel({ preview }: { preview: UrlPreviewResult }) {
               <th className="w-64 px-2 py-1 font-medium">Current row URL</th>
               <th className="w-48 px-2 py-1 font-medium">Current row title</th>
               <th className="w-40 px-2 py-1 font-medium">Current row</th>
+              <th className="w-32 px-2 py-1 font-medium">Date</th>
               <th className="w-36 px-2 py-1 font-medium">Source</th>
               <th className="w-40 px-2 py-1 font-medium">Status</th>
             </tr>
@@ -286,6 +287,7 @@ function PreviewPanel({ preview }: { preview: UrlPreviewResult }) {
                   {r.existing_job_title ?? <span className="text-gray-400">Not available</span>}
                 </td>
                 <td className="px-2 py-1 text-gray-500">{r.existing_in ?? 'Within this paste'}</td>
+                <td className="px-2 py-1 text-gray-600">{r.existing_date ?? 'Not available'}</td>
                 <td className="px-2 py-1 text-gray-600">{r.job_source}</td>
                 <td className="px-2 py-1">
                   {r.is_duplicate ? (

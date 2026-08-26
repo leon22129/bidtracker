@@ -21,7 +21,7 @@ export class PaymentsController {
   }
 
   @Post('process')
-  @Roles('admin')
+  @Roles('admin', 'super_admin')
   process(@CurrentUser() user: AuthUser, @Body() period: PaymentPeriodDto) {
     return this.payments.process(user, period);
   }

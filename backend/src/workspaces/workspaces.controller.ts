@@ -24,32 +24,32 @@ export class WorkspacesController {
   }
 
   @Post()
-  @Roles('admin')
-  create(@Body() dto: CreateWorkspaceDto) {
-    return this.workspaces.create(dto);
+  @Roles('admin', 'super_admin')
+  create(@Body() dto: CreateWorkspaceDto, @CurrentUser() user: AuthUser) {
+    return this.workspaces.create(dto, user);
   }
 
   @Patch(':id')
-  @Roles('admin')
-  update(@Param('id') id: string, @Body() dto: UpdateWorkspaceDto) {
-    return this.workspaces.update(id, dto);
+  @Roles('admin', 'super_admin')
+  update(@Param('id') id: string, @Body() dto: UpdateWorkspaceDto, @CurrentUser() user: AuthUser) {
+    return this.workspaces.update(id, dto, user);
   }
 
   @Delete(':id')
-  @Roles('admin')
-  remove(@Param('id') id: string) {
-    return this.workspaces.remove(id);
+  @Roles('admin', 'super_admin')
+  remove(@Param('id') id: string, @CurrentUser() user: AuthUser) {
+    return this.workspaces.remove(id, user);
   }
 
   @Post(':id/permissions')
-  @Roles('admin')
-  grant(@Param('id') id: string, @Body() dto: GrantPermissionDto) {
-    return this.workspaces.grantPermission(id, dto);
+  @Roles('admin', 'super_admin')
+  grant(@Param('id') id: string, @Body() dto: GrantPermissionDto, @CurrentUser() user: AuthUser) {
+    return this.workspaces.grantPermission(id, dto, user);
   }
 
   @Delete(':id/permissions/:userId')
-  @Roles('admin')
-  revoke(@Param('id') id: string, @Param('userId') userId: string) {
-    return this.workspaces.revokePermission(id, userId);
+  @Roles('admin', 'super_admin')
+  revoke(@Param('id') id: string, @Param('userId') userId: string, @CurrentUser() user: AuthUser) {
+    return this.workspaces.revokePermission(id, userId, user);
   }
 }

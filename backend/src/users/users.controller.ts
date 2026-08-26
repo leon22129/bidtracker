@@ -10,38 +10,38 @@ import { AuthUser, CurrentUser } from '../common/decorators/current-user.decorat
 /** Entire controller is admin-only: user management is not delegated to bidder managers. */
 @Controller('users')
 @UseGuards(RolesGuard)
-@Roles('admin')
+@Roles('admin', 'super_admin')
 export class UsersController {
   constructor(private readonly users: UsersService) {}
 
   @Get()
-  findAll() {
-    return this.users.findAll();
+    findAll(@CurrentUser() me: AuthUser) {
+      return this.users.findAll(me);
   }
 
   @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.users.findOne(id);
+    findOne(@Param('id') id: string, @CurrentUser() me: AuthUser) {
+      return this.users.findOne(id, me);
   }
 
   @Post()
-  create(@Body() dto: CreateUserDto) {
-    return this.users.create(dto);
+  create(@Body() dto: CreateUserDto, @CurrentUser() me: AuthUser) {
+    return this.users.create(dto, me);
   }
 
   @Patch(':id')
   update(@Param('id') id: string, @Body() dto: UpdateUserDto, @CurrentUser() me: AuthUser) {
-    return this.users.update(id, dto, me.id);
+    return this.users.update(id, dto, me);
   }
 
   @Post(':id/reset-password')
   @HttpCode(200)
-  resetPassword(@Param('id') id: string, @Body() dto: ResetPasswordDto) {
-    return this.users.resetPassword(id, dto);
+    resetPassword(@Param('id') id: string, @Body() dto: ResetPasswordDto, @CurrentUser() me: AuthUser) {
+      return this.users.resetPassword(id, dto, me);
   }
 
   @Delete(':id')
   remove(@Param('id') id: string, @CurrentUser() me: AuthUser) {
-    return this.users.remove(id, me.id);
+    return this.users.remove(id, me);
   }
 }

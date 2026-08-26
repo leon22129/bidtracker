@@ -6,7 +6,7 @@
  * place to change if a value is ever added.
  */
 
-export const ROLES = ['admin', 'bidder_manager', 'bidder'] as const;
+export const ROLES = ['super_admin', 'admin', 'bidder_manager', 'bidder'] as const;
 export type Role = (typeof ROLES)[number];
 
 export const PERMISSION_TYPES = ['view', 'edit'] as const;

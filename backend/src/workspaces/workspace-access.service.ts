@@ -16,15 +16,16 @@ export class WorkspaceAccessService {
   constructor(private readonly prisma: PrismaService) {}
 
   async resolve(user: AuthUser, workspaceId: string): Promise<AccessLevel> {
-    if (user.role === 'admin') return 'edit'; // admin bypasses grants entirely
+    if (user.role === 'super_admin') return 'edit';
 
     const workspace = await this.prisma.workspace.findUnique({
       where: { id: workspaceId },
-      select: { id: true, owner_user_id: true },
+      select: { id: true, owner_user_id: true, created_by_user_id: true },
     });
     if (!workspace) throw new NotFoundException('Workspace not found');
 
-    if (workspace.owner_user_id === user.id) return 'edit'; // you always control your own tab
+    if (workspace.created_by_user_id === user.id) return 'edit';
+    if (user.role !== 'admin' && workspace.owner_user_id === user.id) return 'edit';
 
     const grant = await this.prisma.workspacePermission.findUnique({
       where: { workspace_id_user_id: { workspace_id: workspaceId, user_id: user.id } },
@@ -49,12 +50,14 @@ export class WorkspaceAccessService {
     }
   }
 
-  /** Workspace ids the user may read. `null` means "no restriction" (admin). */
+  /** Workspace ids the user may read. `null` means "no restriction" (super admin). */
   async visibleWorkspaceIds(user: AuthUser): Promise<string[] | null> {
-    if (user.role === 'admin') return null;
+    if (user.role === 'super_admin') return null;
     const [owned, granted] = await Promise.all([
       this.prisma.workspace.findMany({
-        where: { owner_user_id: user.id },
+        where: user.role === 'admin'
+          ? { created_by_user_id: user.id }
+          : { owner_user_id: user.id },
         select: { id: true },
       }),
       this.prisma.workspacePermission.findMany({
@@ -62,6 +65,9 @@ export class WorkspaceAccessService {
         select: { workspace_id: true },
       }),
     ]);
-    return [...new Set([...owned.map((w) => w.id), ...granted.map((p) => p.workspace_id)])];
+    return [...new Set([
+      ...owned.map((w) => w.id),
+      ...granted.map((p) => p.workspace_id),
+    ])];
   }
 }

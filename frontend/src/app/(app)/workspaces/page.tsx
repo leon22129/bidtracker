@@ -144,7 +144,9 @@ export default function WorkspacesPage() {
         </div>
       ) : (
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {workspaces.map((w) => (
+          {workspaces.map((w) => {
+            const canManageSharing = user?.role === 'super_admin' || w.created_by_user_id === user?.id;
+            return (
             <div
               key={w.id}
               className={`card flex flex-col p-4 ${w.is_archived ? 'opacity-60' : ''}`}
@@ -199,7 +201,7 @@ export default function WorkspacesPage() {
                     </Link>
                   </>
                 )}
-                {admin && (
+                {admin && canManageSharing && (
                   <>
                     <button
                       type="button"
@@ -226,7 +228,8 @@ export default function WorkspacesPage() {
                 )}
               </div>
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
@@ -258,10 +261,10 @@ function PermissionsModal({
   const [level, setLevel] = useState<PermissionType>('edit');
   const [busy, setBusy] = useState(false);
 
-  // Admins already have global access and the owner already has edit — offering them would create
-  // grants that do nothing, so they are excluded from the picker.
+  // Superadmins already have global access and the owner already has edit — offering either would
+  // create grants that do nothing.
   const candidates = users.filter(
-    (u) => u.is_active && u.role !== 'admin' && u.id !== workspace.owner_user_id,
+    (u) => u.is_active && u.role !== 'super_admin' && u.id !== workspace.owner_user_id,
   );
 
   async function grant() {

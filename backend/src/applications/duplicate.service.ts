@@ -14,16 +14,14 @@ export type DuplicateScope = 'global' | 'workspace';
  *     be billable, so comparing company names would destroy legitimate rows.
  *
  * Scope is configurable via DUPLICATE_SCOPE:
- *   global    (default) — a URL already present anywhere in the system flags the new row. This is the
- *                         scope that actually protects payment: two bidders pasting the same job is
- *                         exactly the abuse the flag exists to catch.
- *   workspace           — each bidder is only compared against their own tab.
+ *   workspace (default) — each workspace is compared only against its own rows.
+ *   global               — a URL already present anywhere in the system flags the new row.
  */
 @Injectable()
 export class DuplicateService {
   private readonly logger = new Logger(DuplicateService.name);
   readonly scope: DuplicateScope =
-    process.env.DUPLICATE_SCOPE === 'workspace' ? 'workspace' : 'global';
+    process.env.DUPLICATE_SCOPE === 'global' ? 'global' : 'workspace';
 
   constructor(private readonly prisma: PrismaService) {}
 

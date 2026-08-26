@@ -1,5 +1,5 @@
 import {
-  BadRequestException, ConflictException, Injectable, NotFoundException,
+  BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthUser } from '../common/decorators/current-user.decorator';
@@ -40,18 +40,19 @@ export class WorkspacesService {
       id: w.id,
       name: w.name,
       owner_user_id: w.owner_user_id,
+      created_by_user_id: w.created_by_user_id,
       owner: w.owner,
       is_archived: w.is_archived,
       created_at: w.created_at,
       updated_at: w.updated_at,
       application_count: w._count.applications,
       my_access:
-        user.role === 'admin' || w.owner_user_id === user.id
+        user.role === 'super_admin' || w.created_by_user_id === user.id || w.owner_user_id === user.id
           ? 'edit'
           : (w.permissions.find((p) => p.user_id === user.id)?.permission_type ?? 'none'),
       // Grant list is admin-only information: who else can edit this tab.
       permissions:
-        user.role === 'admin'
+        user.role === 'admin' || user.role === 'super_admin'
           ? w.permissions.map((p) => ({
               id: p.id,
               user_id: p.user_id,
@@ -71,7 +72,7 @@ export class WorkspacesService {
     return found;
   }
 
-  async create(dto: CreateWorkspaceDto) {
+  async create(dto: CreateWorkspaceDto, user: AuthUser) {
     const owner = await this.prisma.user.findUnique({ where: { id: dto.owner_user_id } });
     if (!owner) throw new BadRequestException('Owner user does not exist');
 
@@ -80,12 +81,17 @@ export class WorkspacesService {
     if (clash) throw new ConflictException('A workspace with that name already exists');
 
     return this.prisma.workspace.create({
-      data: { name, owner_user_id: dto.owner_user_id },
+      data: {
+        name,
+        owner_user_id: dto.owner_user_id,
+        created_by_user_id: user.id,
+      },
       include: { owner: { select: { id: true, username: true, email: true } } },
     });
   }
 
-  async update(id: string, dto: UpdateWorkspaceDto) {
+  async update(id: string, dto: UpdateWorkspaceDto, user: AuthUser) {
+    await this.access.assertCanEdit(user, id);
     const workspace = await this.prisma.workspace.findUnique({ where: { id } });
     if (!workspace) throw new NotFoundException('Workspace not found');
 
@@ -113,7 +119,8 @@ export class WorkspacesService {
   }
 
   /** Cascades to applications, permissions and weekly reports. Admin-only, irreversible. */
-  async remove(id: string) {
+  async remove(id: string, user: AuthUser) {
+    await this.access.assertCanEdit(user, id);
     const workspace = await this.prisma.workspace.findUnique({
       where: { id },
       include: { _count: { select: { applications: true } } },
@@ -124,7 +131,9 @@ export class WorkspacesService {
     return { success: true, deleted_applications: workspace._count.applications };
   }
 
-  async grantPermission(workspaceId: string, dto: GrantPermissionDto) {
+  async grantPermission(workspaceId: string, dto: GrantPermissionDto, actingUser: AuthUser) {
+    await this.assertCanManageSharing(workspaceId, actingUser);
+    await this.access.assertCanEdit(actingUser, workspaceId);
     const [workspace, user] = await Promise.all([
       this.prisma.workspace.findUnique({ where: { id: workspaceId } }),
       this.prisma.user.findUnique({ where: { id: dto.user_id } }),
@@ -135,8 +144,8 @@ export class WorkspacesService {
     if (workspace.owner_user_id === dto.user_id) {
       throw new BadRequestException('The owner already has full edit access to this workspace');
     }
-    if (user.role === 'admin') {
-      throw new BadRequestException('Admins already have access to every workspace');
+    if (user.role === 'super_admin') {
+      throw new BadRequestException('Super admins already have access to every workspace');
     }
 
     // Upsert on (workspace_id, user_id): re-granting changes the level instead of duplicating.
@@ -152,7 +161,9 @@ export class WorkspacesService {
     });
   }
 
-  async revokePermission(workspaceId: string, userId: string) {
+  async revokePermission(workspaceId: string, userId: string, user: AuthUser) {
+    await this.assertCanManageSharing(workspaceId, user);
+    await this.access.assertCanEdit(user, workspaceId);
     const grant = await this.prisma.workspacePermission.findUnique({
       where: { workspace_id_user_id: { workspace_id: workspaceId, user_id: userId } },
     });
@@ -160,5 +171,17 @@ export class WorkspacesService {
 
     await this.prisma.workspacePermission.delete({ where: { id: grant.id } });
     return { success: true };
+  }
+
+  private async assertCanManageSharing(workspaceId: string, user: AuthUser) {
+    if (user.role === 'super_admin') return;
+    const workspace = await this.prisma.workspace.findUnique({
+      where: { id: workspaceId },
+      select: { created_by_user_id: true },
+    });
+    if (!workspace) throw new NotFoundException('Workspace not found');
+    if (workspace.created_by_user_id !== user.id) {
+      throw new ForbiddenException('Only the workspace owner admin can manage sharing');
+    }
   }
 }
