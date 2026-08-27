@@ -30,6 +30,14 @@ export const ADMIN_ONLY_FIELDS = [
   'paid',
 ] as const;
 
+const DUPLICATED_WRITABLE_FIELDS = [
+  'job_title',
+  'company_name',
+  'job_source',
+  'note',
+  'resume_link',
+] as const;
+
 /**
  * Allow-list of status transitions available to non-admins, as `from>to`.
  *
@@ -125,6 +133,16 @@ export function filterPatchByRole<T extends Record<string, any>>(
         throw new ForbiddenException(`Only an admin can modify "${key}".`);
       }
       continue; // unchanged admin-only field: drop it, don't fail
+    }
+
+    if (
+      current.application_status === 'Duplicated' &&
+      !(DUPLICATED_WRITABLE_FIELDS as readonly string[]).includes(key)
+    ) {
+      if (isSameValue(current[key], value)) continue;
+      throw new ForbiddenException(
+        'Only an admin can modify this field on a Duplicated application.',
+      );
     }
 
     if (!(BIDDER_WRITABLE_FIELDS as readonly string[]).includes(key)) {

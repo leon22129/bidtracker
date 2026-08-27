@@ -98,6 +98,16 @@ describe('ApplicationPolicy', () => {
       expect(() => filterPatchByRole({ paid: true }, current, 'bidder')).toThrow(ForbiddenException);
     });
 
+    it('limits bidder edits on duplicated rows to review fields', () => {
+      const duplicated = { ...current, application_status: 'Duplicated' };
+      expect(filterPatchByRole({ company_name: 'New Co', note: 'Keep' }, duplicated, 'bidder'))
+        .toEqual({ company_name: 'New Co', note: 'Keep' });
+      expect(() => filterPatchByRole({ date: '2026-08-27' }, duplicated, 'bidder'))
+        .toThrow(ForbiddenException);
+      expect(() => filterPatchByRole({ url: 'https://example.com' }, duplicated, 'bidder_manager'))
+        .toThrow(ForbiddenException);
+    });
+
     it('silently drops unchanged admin-only fields (whole-row PATCH stays convenient)', () => {
       const out = filterPatchByRole(
         { job_title: 'New', pipeline_status: 'Not Started', paid: false, number: 5 },

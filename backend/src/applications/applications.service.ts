@@ -261,16 +261,28 @@ export class ApplicationsService {
     return { updated: updated.length, failed, updated_ids: updated };
   }
 
-  /** Admin-only hard delete. */
+  /** Admins may delete any row; bidders may remove only unpaid pending/duplicate rows. */
   async bulkDelete(user: AuthUser, dto: BulkIdsDto) {
-    if (!isAdmin(user.role)) throw new ForbiddenException('Only an admin can delete applications');
-
     const rows = await this.prisma.jobApplication.findMany({
       where: { id: { in: dto.ids } },
-      select: { id: true, workspace_id: true },
+      select: { id: true, workspace_id: true, application_status: true, paid: true },
     });
+    if (rows.length === 0) throw new NotFoundException('No matching applications');
+
     const workspaceIds = [...new Set(rows.map((row) => row.workspace_id))];
     for (const workspaceId of workspaceIds) await this.access.assertCanEdit(user, workspaceId);
+
+    if (!isAdmin(user.role)) {
+      const blocked = rows.find((row) => (
+        row.paid || !['Pending', 'Duplicated'].includes(row.application_status)
+      ));
+      if (blocked) {
+        throw new ForbiddenException(
+          'Bidders and bidder managers can delete only unpaid Pending or Duplicated applications',
+        );
+      }
+    }
+
     const result = await this.prisma.jobApplication.deleteMany({ where: { id: { in: rows.map((row) => row.id) } } });
     return { deleted: result.count };
   }

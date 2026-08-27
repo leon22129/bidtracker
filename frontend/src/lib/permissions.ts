@@ -15,6 +15,14 @@ export const ADMIN_ONLY_FIELDS = new Set<keyof JobApplication>([
   'workspace_id',
 ]);
 
+const DUPLICATED_EDITABLE_FIELDS = new Set<keyof JobApplication>([
+  'company_name',
+  'job_title',
+  'job_source',
+  'note',
+  'resume_link',
+]);
+
 export function isAdmin(user: Pick<User, 'role'> | null | undefined): boolean {
   return user?.role === 'admin' || user?.role === 'super_admin';
 }
@@ -31,6 +39,7 @@ export function canEditField(
   if (access !== 'edit') return false;
   if (row.paid) return false;                 // paid rows are locked
   if (row.application_status === 'Rejected') return false;
+  if (row.application_status === 'Duplicated' && !DUPLICATED_EDITABLE_FIELDS.has(field)) return false;
   if (ADMIN_ONLY_FIELDS.has(field)) return false;
   return true;
 }
@@ -50,8 +59,15 @@ export function allowedStatusTransitions(
   return ['Rejected'];
 }
 
-export function canDeleteApplications(user: Pick<User, 'role'> | null): boolean {
-  return isAdmin(user);
+export function canDeleteApplications(
+  user: Pick<User, 'role'> | null,
+  rows: Pick<JobApplication, 'application_status' | 'paid'>[] = [],
+): boolean {
+  return isAdmin(user) || (
+    rows.length > 0 && rows.every((row) => (
+      !row.paid && (row.application_status === 'Pending' || row.application_status === 'Duplicated')
+    ))
+  );
 }
 
 export function canManageUsers(user: Pick<User, 'role'> | null): boolean {
@@ -81,6 +97,9 @@ export function whyLocked(
   if (access === 'view') return 'You have view-only access to this workspace';
   if (row.paid) return 'This row is paid and locked — only an admin can edit it';
   if (row.application_status === 'Rejected') return 'Rejected applications are locked — only an admin can edit them';
+  if (row.application_status === 'Duplicated') {
+    return 'Duplicated applications only allow company, title, source, note, and resume edits';
+  }
   if (ADMIN_ONLY_FIELDS.has(field)) return 'Only an admin can change this field';
   return 'You do not have permission to edit this';
 }

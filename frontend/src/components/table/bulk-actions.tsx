@@ -92,7 +92,7 @@ export function BulkActionsBar(props: Props) {
           />
         )}
 
-        {canDeleteApplications(user) && (
+        {canDeleteApplications(user, selectedRows) && (
           <button
             type="button"
             className="rounded border border-red-500 bg-red-600 px-2 py-1 text-2xs font-medium

@@ -61,7 +61,6 @@ export class ApplicationsController {
 
   @Post('bulk-delete')
   @HttpCode(200)
-  @Roles('admin', 'super_admin')
   bulkDelete(@CurrentUser() user: AuthUser, @Body() dto: BulkIdsDto) {
     return this.applications.bulkDelete(user, dto);
   }
