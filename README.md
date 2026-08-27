@@ -25,6 +25,7 @@ No managed services, no paid dependencies, runs on the smallest VPS you can rent
 9. [Deployment](#deployment)
 10. [Backup &amp; restore](#backup--restore)
 11. [Operations reference](#operations-reference)
+12. [Import file format](#import-file-format)
 
 ---
 
@@ -703,10 +704,91 @@ curl -X POST localhost:3000/api/payments/weekly/generate \
 | Import reports many skipped rows           | Open the skip list on the results panel — it gives a reason per row. Usually a missing/unparseable URL column.                                                                                      |
 | Company/title columns arrive blank         | Career sites block bots or time out. This is the specified fallback; fill them in on the table, or retry with enrichment on.                                                                         |
 | Weekly report shows an amber "Live" figure | Rows changed after settlement. Expected when an admin edits history; regenerate the week if the new figure is the correct one.                                                                       |
-| Table scrolls but rows stay blank          | Backend unreachable — check`docker compose ps` and `/api/health`.                                                                                                                               |
+| Table scrolls but rows stay blank          | Backend unreachable — check`docker compose ps` and `/api/health`.     
+
+## Import file format
+
+Ready-to-use templates: **[docs/import-template.xlsx](docs/import-template.xlsx)** ·
+[docs/import-template.csv](docs/import-template.csv). Regenerate with `cd backend && npm run template`.
+
+One header row, then one row per application. **`URL` is the only required column** — everything else
+can be blank or absent entirely.
+
+| Column | Required | Accepts | Blank means |
+| --- | --- | --- | --- |
+| `URL` | **yes** | any `http(s)` URL. Hyperlink cells, `HYPERLINK()` formulas and rich text all work — the link target is read, not the display text | row is skipped |
+| `Date` | no | `YYYY-MM-DD`, `M/D/YYYY`, an ISO datetime, or a real Excel date cell | the date picked on the upload page (defaults to today) |
+| `Job Title` | no | free text | read from the job posting, if enrichment is on |
+| `Company Name` | no | free text | read from the job posting, if enrichment is on |
+| `Status` | no | `Pending`, `Applied`, `Rejected` | `Pending` |
+| `Note` | no | free text | empty |
+| `Resume Link` | no | any URL | empty |
+
+**Headers are fuzzy-matched.** Comparison is case-, space- and punctuation-insensitive, over a list of
+synonyms — so `JOB URL`, `Job_Url` and `link` all resolve to `URL`. Column **order is irrelevant** and
+unrecognised columns are ignored:
+
+| Field | Accepted headers |
+| --- | --- |
+| `url` | url, job url, link, job link, application url, job posting |
+| `date` | date, applied date, application date, day, submitted date |
+| `job_title` | job title, title, position, role, job name |
+| `company_name` | company name, company, employer, organization, org |
+| `application_status` | status, application status, app status |
+| `note` | note, notes, comment, comments, remark, remarks |
+| `resume_link` | resume link, resume, cv, cv link, resume url |
+
+The canonical list lives in `COLUMN_ALIASES` at
+[backend/src/import/import.service.ts:19](backend/src/import/import.service.ts#L19).
+
+### Rules worth knowing before you upload
+
+- **Only the first worksheet is read.** Extra sheets are ignored — which is where the template keeps its
+  instructions.
+- **Every non-empty row is a record.** Don't put notes or a totals row below your data; they come back
+  as `row 14: Missing URL`.
+- **Never write `Duplicated` in the Status column.** The system decides that by comparing normalised
+  URLs, and it overrides whatever the file says. A bidder or manager who tries gets the row imported as
+  `Pending` plus an explanatory line in the skip list; only an admin can set it, because it determines
+  who gets paid.
+- **Duplicate company names are fine.** Duplicate detection compares URLs only, so twenty rows for the
+  same employer are twenty valid applications.
+- **`Rejected` is a one-way door.** The transition allow-list is `Pending → Applied` and
+  `Applied → Rejected`, and it applies to imports too. Importing `Rejected` directly is fine; getting
+  back out of it needs an admin.
+- **Limits:** 20,000 rows and 25 MB per file (`MAX_UPLOAD_MB`). Split anything larger.
+- **Numbering is assigned on insert**, restarting at 1 for each distinct date. Any `Number` column in
+  your file is ignored.
+- **Semicolon-delimited CSV works** — the parser sniffs `;` vs `,` from the header line, so European
+  Excel exports need no conversion. UTF-8 BOM is stripped. Quoted fields with embedded commas,
+  newlines and doubled quotes parse per RFC 4180.
+
+### Preview first
+
+The upload page runs `POST /import/:workspaceId/preview` before anything is written and shows which
+columns it matched (green) and what's missing (red), plus the first five rows as parsed. If `URL` comes
+back unmatched the import is refused outright with the headers it did find. Use it — it costs nothing
+and catches a mis-named column before it becomes 500 skipped rows.
+
+### Two different features
+
+| | Add URLs | Import |
+| --- | --- | --- |
+| Input | one URL per line, pasted into a textarea | `.xlsx` / `.xls` / `.csv` file |
+| Date | one date for the whole batch | per row, from the `Date` column |
+| Other fields | none — title/company come from enrichment only | Job Title, Company Name, Status, Note, Resume Link |
+| Use it when | you just applied to a handful of jobs | you're migrating an existing spreadsheet |
+
+Both paths run the identical duplicate check, numbering, job-source detection and permission policy.
+
+---                                                                                                                          |
 
 # QUICK START COMMAND FOR LOCAL ENVIRONMENT
 
 ```PowerShell
 Start-Process powershell -ArgumentList '-NoExit','-Command','Set-Location .\backend; npm run start:dev'; Start-Process powershell -ArgumentList '-NoExit','-Command','Set-Location .\frontend; npm run dev'
+```
+
+```command
+cloudflared tunnel --url http://localhost:3000
 ```

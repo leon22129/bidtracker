@@ -19,8 +19,9 @@ export const PIPELINE_STATUSES = [
 export type PipelineStatus = (typeof PIPELINE_STATUSES)[number];
 
 export const JOB_SOURCES = [
-  'Greenhouse', 'Workday', 'ADP', 'Dayforce', 'Lever', 'SmartRecruiters', 'iCIMS', 'Taleo',
-  'LinkedIn', 'Indeed', 'ZipRecruiter', 'Company Career Page', 'Other',
+  'Greenhouse', 'Workday', 'ADP', 'AshbyHQ', 'BambooHR', 'JobDiva', 'Dayforce', 'UKG',
+  'PaycomOnline', 'Jobvite', 'Lever', 'SmartRecruiters', 'iCIMS', 'Zoho Recruit', 'Paylocity',
+  'Rippling', 'Taleo', 'LinkedIn', 'Indeed', 'ZipRecruiter', 'Company Career Page', 'Other',
 ] as const;
 export type JobSource = (typeof JOB_SOURCES)[number];
 

@@ -1,0 +1,5 @@
+﻿Date,Job Title,Company Name,URL,Status,Note,Resume Link
+2026-08-24,Senior Backend Engineer,Acme Corp,https://boards.greenhouse.io/acme/jobs/1234567,Applied,Referred by a friend,https://drive.example.com/resume-backend.pdf
+2026-08-24,,,https://jobs.lever.co/globex/8f3c1a2b-0000-4444-9999-abcdef123456,Applied,Title and company left blank on purpose - filled in automatically,
+2026-08-25,Platform Engineer,Initech,https://initech.wd1.myworkdayjobs.com/careers/job/Platform-Engineer_R-9911,Pending,,
+2026-08-25,Site Reliability Engineer,Hooli,https://careers.hooli.com/job/sre-2026,Rejected,Auto-rejected same day,

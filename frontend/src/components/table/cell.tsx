@@ -28,11 +28,13 @@ interface CellProps {
  */
 export function Cell({ row, column, user, access, boundary, onCommit }: CellProps) {
   const [editing, setEditing] = useState(false);
+  const [customSource, setCustomSource] = useState(false);
   const editable = column.editor !== 'readonly' && canEditField(user, access, row, column.key);
   const lockReason = whyLocked(user, access, row, column.key);
 
   function commit(value: unknown) {
     setEditing(false);
+    setCustomSource(false);
     const current = row[column.key];
     const normalisedCurrent = current === null ? '' : current;
     const normalisedNext = value === null ? '' : value;
@@ -85,6 +87,30 @@ export function Cell({ row, column, user, access, boundary, onCommit }: CellProp
         ? allowedStatusTransitions(user, row.application_status)
         : (column.options ?? []);
 
+    if (column.key === 'job_source' && customSource) {
+      return (
+        <div className="cell">
+          <input
+            autoFocus
+            type="text"
+            aria-label="Custom job source"
+            placeholder="Enter job source"
+            className="h-6 w-full rounded border border-blue-400 px-1 text-xs text-gray-900 outline-none"
+            defaultValue={String(row[column.key] ?? '')}
+            onFocus={(e) => e.currentTarget.select()}
+            onBlur={(e) => commit(e.target.value.trim())}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+              if (e.key === 'Escape') {
+                setCustomSource(false);
+                setEditing(false);
+              }
+            }}
+          />
+        </div>
+      );
+    }
+
     return (
       <div className="cell">
         <select
@@ -92,7 +118,13 @@ export function Cell({ row, column, user, access, boundary, onCommit }: CellProp
           className="h-6 w-full rounded border border-blue-400 bg-white px-1 text-xs text-gray-900 outline-none"
           defaultValue={String(row[column.key] ?? '')}
           onBlur={() => setEditing(false)}
-          onChange={(e) => commit(e.target.value)}
+          onChange={(e) => {
+            if (column.key === 'job_source' && e.target.value === '__custom__') {
+              setCustomSource(true);
+              return;
+            }
+            commit(e.target.value);
+          }}
           onKeyDown={(e) => e.key === 'Escape' && setEditing(false)}
         >
           {/* The row's current value is always present so the select can render it even when the
@@ -105,6 +137,7 @@ export function Cell({ row, column, user, access, boundary, onCommit }: CellProp
               {opt}
             </option>
           ))}
+          {column.key === 'job_source' && <option value="__custom__">+ Add custom source...</option>}
         </select>
       </div>
     );

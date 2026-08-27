@@ -16,7 +16,8 @@
     "seed": "ts-node prisma/seed.ts",
     "test": "jest",
     "smoke": "node smoke.mjs",
-    "perf": "node perf.mjs"
+    "perf": "node perf.mjs",
+    "template": "node make-import-template.cjs"
   },
   "dependencies": {
     "@nestjs/common": "^10.4.15",
