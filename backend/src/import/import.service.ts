@@ -10,7 +10,7 @@ import { AuthUser } from '../common/decorators/current-user.decorator';
 import { APPLICATION_STATUSES, ApplicationStatus, MAX_ROWS_PER_INGEST } from '../common/constants';
 import { assertStatusTransition } from '../common/policies/application.policy';
 import { toDayStart, todayUtc } from '../common/utils/date.util';
-import { detectJobSource, looksLikeUrl, normalizeUrl } from '../common/utils/url.util';
+import { detectJobSource, looksLikeUrl, normalizeUrl, normalizeCompanyName } from '../common/utils/url.util';
 
 /**
  * Column aliases. Real-world spreadsheets from bidders never use exactly the header you asked for, so
@@ -169,6 +169,7 @@ export class ImportService {
     const verdicts = await this.duplicates.classifyBatch(
       workspaceId,
       parsed.map((p) => p.url),
+      parsed.map((p) => p.company_name),
     );
 
     // --- Pass 3: enrich only the rows actually missing a title/company ------
@@ -195,6 +196,8 @@ export class ImportService {
       rows.forEach((row, idx) => {
         const verdict = verdicts[parsed.indexOf(row)];
         const meta = enrichment.get(row.url);
+        const finalCompanyName = row.company_name ?? meta?.company_name ?? null;
+        const normalizedCompany = normalizeCompanyName(finalCompanyName ?? '');
         inserts.push({
           workspace_id: workspaceId,
           date,
@@ -206,7 +209,8 @@ export class ImportService {
           application_status: verdict?.is_duplicate ? 'Duplicated' : row.status,
           pipeline_status: 'Not Started',
           job_title: row.job_title ?? meta?.job_title ?? null,
-          company_name: row.company_name ?? meta?.company_name ?? null,
+          company_name: finalCompanyName,
+          normalized_company_name: normalizedCompany || null,
           note: row.note,
           resume_link: row.resume_link,
           created_by_user_id: user.id,

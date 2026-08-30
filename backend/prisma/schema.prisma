@@ -98,11 +98,12 @@ model JobApplication {
   date   DateTime
   number Int
 
-  job_title      String?
-  company_name   String? // NEVER part of duplicate detection
-  url            String
-  normalized_url String // canonical form — the duplicate key
-  job_source     String  @default("Other")
+  job_title           String?
+  company_name        String? // for enrichment and display
+  normalized_company_name String? // canonical form for company-name duplicate detection
+  url                 String
+  normalized_url      String  // canonical form — URL duplicate key
+  job_source          String  @default("Other")
 
   application_status String @default("Pending")     // Pending | Applied | Rejected | Duplicated
   pipeline_status    String @default("Not Started") // admin-managed recruiting stage
@@ -130,7 +131,9 @@ model JobApplication {
   @@index([workspace_id, job_source])
   @@index([workspace_id, paid])
   @@index([workspace_id, normalized_url])
+  @@index([workspace_id, normalized_company_name])
   @@index([normalized_url])
+  @@index([normalized_company_name])
   @@index([url])
   @@index([date])
   @@index([workspace_id, created_at])

@@ -261,3 +261,34 @@ export function extractTitleFromUrl(raw: string): string | null {
   }
   return null;
 }
+
+// ---------------------------------------------------------------------------
+// Company name normalization for duplicate detection
+// ---------------------------------------------------------------------------
+
+/**
+ * Normalizes company names for duplicate detection.
+ *
+ * Rules:
+ *   - Keep only: a-z, A-Z, 0-9
+ *   - Remove every other character (spaces, punctuation, hyphens, underscores, apostrophes, etc.)
+ *   - Do not replace removed characters with spaces
+ *   - Convert result to lowercase
+ *   - Return empty string if the normalized result is empty
+ *
+ * Examples:
+ *   "ABC Inc."       → "abcinc"
+ *   "ABC, Inc"       → "abcinc"
+ *   "ABC-INC"        → "abcinc"
+ *   "abc inc"        → "abcinc"
+ *   "ABC & Inc."     → "abcinc"
+ *   "ABC_Inc"        → "abcinc"
+ *   ""               → ""
+ *   "   "            → ""
+ */
+export function normalizeCompanyName(raw: string): string {
+  if (!raw) return '';
+  return raw
+    .replace(/[^a-zA-Z0-9]/g, '')
+    .toLowerCase();
+}

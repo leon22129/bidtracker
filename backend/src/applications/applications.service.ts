@@ -16,7 +16,7 @@ import {
   assertRowNotLocked, assertStatusTransition, filterPatchByRole, isAdmin,
 } from '../common/policies/application.policy';
 import { endOfDay, toDayStart } from '../common/utils/date.util';
-import { detectJobSource, looksLikeUrl, normalizeUrl } from '../common/utils/url.util';
+import { detectJobSource, looksLikeUrl, normalizeUrl, normalizeCompanyName } from '../common/utils/url.util';
 import {
   BulkIdsDto, BulkUpdateApplicationsDto, CreateFromUrlsDto, QueryApplicationsDto,
   UpdateApplicationDto, UpdatePipelineDto,
@@ -155,7 +155,12 @@ export class ApplicationsService {
       data.normalized_url = normalized;
       data.job_source = detectJobSource(url);
 
-      const [verdict] = await this.duplicates.classifyBatch(row.workspace_id, [url], row.id);
+      const [verdict] = await this.duplicates.classifyBatch(
+        row.workspace_id,
+        [url],
+        [row.company_name],
+        row.id,
+      );
       if (verdict.is_duplicate && isAdmin(user.role)) {
         data.application_status = 'Duplicated';
       } else if (verdict.is_duplicate) {
@@ -164,6 +169,34 @@ export class ApplicationsService {
             '(duplicates affect payment); ask an admin if this is intentional.',
         );
       }
+    }
+
+    // Changing company name can also create a duplicate.
+    if (patch.company_name !== undefined && patch.company_name !== row.company_name) {
+      const newCompanyName = emptyToNull(patch.company_name);
+      const normalizedNew = normalizeCompanyName(newCompanyName ?? '');
+      const normalizedOld = normalizeCompanyName(row.company_name ?? '');
+
+      // Only check for duplicates if the normalized form actually changed
+      if (normalizedNew && normalizedNew !== normalizedOld) {
+        const [verdict] = await this.duplicates.classifyBatch(
+          row.workspace_id,
+          [row.url],
+          [newCompanyName],
+          row.id,
+        );
+        if (verdict.is_duplicate && isAdmin(user.role)) {
+          data.application_status = 'Duplicated';
+        } else if (verdict.is_duplicate) {
+          throw new BadRequestException(
+            `Company name "${newCompanyName}" already exists. Editing a row into a duplicate is not allowed ` +
+              '(duplicates affect payment); ask an admin if this is intentional.',
+          );
+        }
+      }
+      // Always update the company_name and its normalized form
+      data.company_name = newCompanyName;
+      data.normalized_company_name = normalizedNew || null;
     }
 
     // Explicit job_source override wins over re-detection.
@@ -180,7 +213,7 @@ export class ApplicationsService {
       }
     }
 
-    for (const key of ['job_title', 'company_name', 'note', 'resume_link'] as const) {
+    for (const key of ['job_title', 'note', 'resume_link'] as const) {
       if (patch[key] !== undefined) (data as any)[key] = emptyToNull(patch[key]);
     }
     if (patch.application_status !== undefined && data.application_status === undefined) {
@@ -327,8 +360,16 @@ export class ApplicationsService {
       );
     }
 
-    const verdicts = await this.duplicates.classifyBatch(dto.workspace_id, valid);
+    // Enrich FIRST to extract company names, then classify with company names for duplicate detection
     const enrichment = await this.metadata.enrichMany(valid, dto.enrich !== false);
+    const companyNamesFromEnrichment = valid.map((url) => enrichment.get(url)?.company_name ?? null);
+
+    // Now classify with the enriched company names so company name duplicates are detected
+    const verdicts = await this.duplicates.classifyBatch(
+      dto.workspace_id,
+      valid,
+      companyNamesFromEnrichment,
+    );
 
     const startNumber = await this.numbering.reserveBlock(
       this.prisma, dto.workspace_id, date, valid.length,
@@ -337,6 +378,7 @@ export class ApplicationsService {
     const rows = valid.map((url, i) => {
       const verdict = verdicts[i];
       const meta = enrichment.get(url) ?? { company_name: null, job_title: null };
+      const normalizedCompany = normalizeCompanyName(meta.company_name ?? '');
       return {
         workspace_id: dto.workspace_id,
         date,
@@ -349,6 +391,7 @@ export class ApplicationsService {
         application_status: (verdict.is_duplicate ? 'Duplicated' : 'Pending') as ApplicationStatus,
         pipeline_status: 'Not Started',
         company_name: meta.company_name,
+        normalized_company_name: normalizedCompany || null,
         job_title: meta.job_title,
         created_by_user_id: user.id,
       };
@@ -366,6 +409,7 @@ export class ApplicationsService {
         .map((v) => ({
           url: v.url,
           reason: v.reason,
+          duplicate_type: v.duplicate_type,
           existing_in: v.existing
             ? `${v.existing.workspace_name} #${v.existing.number} (${v.existing.date.toISOString().slice(0, 10)})`
             : 'this batch',
