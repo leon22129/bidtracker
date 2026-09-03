@@ -10,7 +10,14 @@ import { AuthUser } from '../common/decorators/current-user.decorator';
 import { APPLICATION_STATUSES, ApplicationStatus, MAX_ROWS_PER_INGEST } from '../common/constants';
 import { assertStatusTransition } from '../common/policies/application.policy';
 import { toDayStart, todayUtc } from '../common/utils/date.util';
-import { detectJobSource, looksLikeUrl, normalizeUrl, normalizeCompanyName } from '../common/utils/url.util';
+import {
+  BANNED_URL_NOTE,
+  detectJobSource,
+  isBannedUrl,
+  looksLikeUrl,
+  normalizeUrl,
+  normalizeCompanyName,
+} from '../common/utils/url.util';
 
 /**
  * Column aliases. Real-world spreadsheets from bidders never use exactly the header you asked for, so
@@ -198,6 +205,7 @@ export class ImportService {
         const meta = enrichment.get(row.url);
         const finalCompanyName = row.company_name ?? meta?.company_name ?? null;
         const normalizedCompany = normalizeCompanyName(finalCompanyName ?? '');
+        const banned = isBannedUrl(row.url);
         inserts.push({
           workspace_id: workspaceId,
           date,
@@ -205,13 +213,13 @@ export class ImportService {
           url: row.url,
           normalized_url: verdict?.normalized_url ?? normalizeUrl(row.url),
           job_source: detectJobSource(row.url),
-          // A duplicate URL always wins over whatever the spreadsheet claimed the status was.
-          application_status: verdict?.is_duplicate ? 'Duplicated' : row.status,
+          // Banned URLs are auto-rejected, regardless of spreadsheet status or duplicate checks.
+          application_status: banned ? 'Rejected' : verdict?.is_duplicate ? 'Duplicated' : row.status,
           pipeline_status: 'Not Started',
           job_title: row.job_title ?? meta?.job_title ?? null,
           company_name: finalCompanyName,
           normalized_company_name: normalizedCompany || null,
-          note: row.note,
+          note: banned ? BANNED_URL_NOTE : row.note,
           resume_link: row.resume_link,
           created_by_user_id: user.id,
         });

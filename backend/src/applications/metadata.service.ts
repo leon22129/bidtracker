@@ -26,6 +26,8 @@ export class MetadataService {
   private readonly timeoutMs = Number(process.env.URL_FETCH_TIMEOUT_MS || 6000);
   private readonly concurrency = Number(process.env.URL_FETCH_CONCURRENCY || 5);
   private readonly maxBytes = 512 * 1024; // enough for <head>; avoids downloading whole SPAs
+  private readonly cacheTtlMs = 10 * 60 * 1000;
+  private readonly urlCache = new Map<string, { expiresAt: number; metadata: UrlMetadata }>();
 
   /** URL-only guess. Always available, no network, never throws. */
   fromUrlOnly(url: string): UrlMetadata {
@@ -41,11 +43,16 @@ export class MetadataService {
    */
   async enrichMany(urls: string[], enable = true): Promise<Map<string, UrlMetadata>> {
     const result = new Map<string, UrlMetadata>();
-    for (const url of urls) result.set(url, this.fromUrlOnly(url));
+    const uniqueUrls = [...new Set(urls)];
 
-    if (!enable || !this.enabled || urls.length === 0) return result;
+    for (const url of uniqueUrls) {
+      const cached = this.getCached(url);
+      result.set(url, cached ?? this.fromUrlOnly(url));
+    }
 
-    const queue = [...new Set(urls)];
+    if (!enable || !this.enabled || uniqueUrls.length === 0) return result;
+
+    const queue = uniqueUrls.filter((url) => !this.getCached(url));
     const workers = Array.from({ length: Math.min(this.concurrency, queue.length) }, async () => {
       while (queue.length) {
         const url = queue.shift();
@@ -54,14 +61,33 @@ export class MetadataService {
         if (!fetched) continue;
         const base = result.get(url)!;
         // Fetched metadata wins over URL heuristics, but never overwrites a value with null.
-        result.set(url, {
+        const merged = {
           company_name: fetched.company_name ?? base.company_name,
           job_title: fetched.job_title ?? base.job_title,
-        });
+        };
+        this.setCache(url, merged);
+        result.set(url, merged);
       }
     });
     await Promise.all(workers);
     return result;
+  }
+
+  private getCached(url: string): UrlMetadata | null {
+    const cached = this.urlCache.get(url);
+    if (!cached) return null;
+    if (cached.expiresAt <= Date.now()) {
+      this.urlCache.delete(url);
+      return null;
+    }
+    return cached.metadata;
+  }
+
+  private setCache(url: string, metadata: UrlMetadata) {
+    this.urlCache.set(url, {
+      expiresAt: Date.now() + this.cacheTtlMs,
+      metadata,
+    });
   }
 
   private async fetchOne(url: string): Promise<UrlMetadata | null> {

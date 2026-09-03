@@ -48,6 +48,9 @@ describe('extractCompanyFromUrl', () => {
   it('reads the tenant out of path-based ATS hosts', () => {
     expect(extractCompanyFromUrl('https://boards.greenhouse.io/acme-corp/jobs/1')).toBe('Acme Corp');
     expect(extractCompanyFromUrl('https://jobs.lever.co/nubank/xyz')).toBe('Nubank');
+    expect(extractCompanyFromUrl('https://jobs.jobvite.com/shutterfly-fr/job/oz0EAfwx')).toBe('Shutterfly');
+    expect(extractCompanyFromUrl('https://ats.rippling.com/aalyria-careers/jobs/123')).toBe('Aalyria');
+    expect(extractCompanyFromUrl('https://jobs.dayforcehcm.com/en-US/navex/jobopenings/jobs/4245')).toBe('Navex');
   });
 
   it('reads the tenant out of subdomain-based ATS hosts', () => {
@@ -57,6 +60,11 @@ describe('extractCompanyFromUrl', () => {
   it('returns null for aggregators that do not name the company in the URL', () => {
     expect(extractCompanyFromUrl('https://www.linkedin.com/jobs/view/123')).toBeNull();
     expect(extractCompanyFromUrl('https://www.indeed.com/viewjob?jk=1')).toBeNull();
+    expect(
+      extractCompanyFromUrl(
+        'https://workforcenow.adp.com/mascsr/default/mdf/recruitment/recruitment.html?cid=abc&jobId=588192',
+      ),
+    ).toBeNull();
   });
 
   it('falls back to the company domain', () => {

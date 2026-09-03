@@ -16,7 +16,14 @@ import {
   assertRowNotLocked, assertStatusTransition, filterPatchByRole, isAdmin,
 } from '../common/policies/application.policy';
 import { endOfDay, toDayStart } from '../common/utils/date.util';
-import { detectJobSource, looksLikeUrl, normalizeUrl, normalizeCompanyName } from '../common/utils/url.util';
+import {
+  BANNED_URL_NOTE,
+  detectJobSource,
+  isBannedUrl,
+  looksLikeUrl,
+  normalizeUrl,
+  normalizeCompanyName,
+} from '../common/utils/url.util';
 import {
   BulkIdsDto, BulkUpdateApplicationsDto, CreateFromUrlsDto, QueryApplicationsDto,
   UpdateApplicationDto, UpdatePipelineDto,
@@ -155,19 +162,24 @@ export class ApplicationsService {
       data.normalized_url = normalized;
       data.job_source = detectJobSource(url);
 
-      const [verdict] = await this.duplicates.classifyBatch(
-        row.workspace_id,
-        [url],
-        [row.company_name],
-        row.id,
-      );
-      if (verdict.is_duplicate && isAdmin(user.role)) {
-        data.application_status = 'Duplicated';
-      } else if (verdict.is_duplicate) {
-        throw new BadRequestException(
-          'That URL already exists in the system. Editing a row into a duplicate is not allowed ' +
-            '(duplicates affect payment); ask an admin if this is intentional.',
+      if (isBannedUrl(url)) {
+        data.application_status = 'Rejected';
+        data.note = BANNED_URL_NOTE;
+      } else {
+        const [verdict] = await this.duplicates.classifyBatch(
+          row.workspace_id,
+          [url],
+          [row.company_name],
+          row.id,
         );
+        if (verdict.is_duplicate && isAdmin(user.role)) {
+          data.application_status = 'Duplicated';
+        } else if (verdict.is_duplicate) {
+          throw new BadRequestException(
+            'That URL already exists in the system. Editing a row into a duplicate is not allowed ' +
+              '(duplicates affect payment); ask an admin if this is intentional.',
+          );
+        }
       }
     }
 
@@ -218,6 +230,11 @@ export class ApplicationsService {
     }
     if (patch.application_status !== undefined && data.application_status === undefined) {
       data.application_status = patch.application_status;
+    }
+    const finalUrl = (data.url ?? row.url ?? '').toString().trim();
+    if (finalUrl && isBannedUrl(finalUrl)) {
+      data.application_status = 'Rejected';
+      data.note = BANNED_URL_NOTE;
     }
     if (patch.pipeline_status !== undefined) data.pipeline_status = patch.pipeline_status;
     if (patch.paid !== undefined && isAdmin(user.role)) data.paid = patch.paid;
@@ -379,6 +396,7 @@ export class ApplicationsService {
       const verdict = verdicts[i];
       const meta = enrichment.get(url) ?? { company_name: null, job_title: null };
       const normalizedCompany = normalizeCompanyName(meta.company_name ?? '');
+      const banned = isBannedUrl(url);
       return {
         workspace_id: dto.workspace_id,
         date,
@@ -388,11 +406,12 @@ export class ApplicationsService {
         job_source: detectJobSource(url),
         // Duplicates are flagged by the SYSTEM here — this is the one path where a non-admin's action
         // results in a `Duplicated` row, and it is not a user-chosen value.
-        application_status: (verdict.is_duplicate ? 'Duplicated' : 'Pending') as ApplicationStatus,
+        application_status: (banned ? 'Rejected' : verdict.is_duplicate ? 'Duplicated' : 'Pending') as ApplicationStatus,
         pipeline_status: 'Not Started',
         company_name: meta.company_name,
         normalized_company_name: normalizedCompany || null,
         job_title: meta.job_title,
+        note: banned ? BANNED_URL_NOTE : null,
         created_by_user_id: user.id,
       };
     });
@@ -472,7 +491,9 @@ export class ApplicationsService {
 
     const lines = urlsText.split(/[\r\n]+/).map((l) => l.trim()).filter(Boolean).slice(0, 500);
     const valid = lines.filter(looksLikeUrl);
-    const verdicts = await this.duplicates.classifyBatch(workspaceId, valid);
+    const enrichment = await this.metadata.enrichMany(valid, true);
+    const companyNamesFromEnrichment = valid.map((url) => enrichment.get(url)?.company_name ?? null);
+    const verdicts = await this.duplicates.classifyBatch(workspaceId, valid, companyNamesFromEnrichment);
 
     return {
       total_lines: lines.length,

@@ -56,6 +56,67 @@ export function ensureScheme(raw: string): string {
   return `https://${s}`;
 }
 
+export const BANNED_URL_NOTE = 'this job is in banned list';
+
+const DEFAULT_BANNED_URL_PATTERNS = [
+  'sundayy',
+  'remotehunter',
+  'alignerr',
+  'jackandjill',
+  'fetchjobs',
+  'afterquery',
+  'hire feed',
+  'bestjobtool',
+  'haystack',
+  'gdit',
+  'saic',
+  'accenture',
+  'amazon',
+  'turing',
+  'fullstacklabs',
+  'infosys',
+  'tcs',
+  'collabera',
+  'hcl',
+  'agileengine',
+  'pearson',
+  'osc global',
+  'teamworxsecurity',
+  'jackhenry',
+  'github',
+  'cvshealth',
+  'capitalone',
+  'brightvisiontechnologies',
+  'yohrconsultancy.hiresome.ai',
+  'jobs.micro1.ai',
+  'yoailabs',
+  'mercor',
+  'theladders',
+  'teksystems',
+  'caci',
+  'affirm',
+  'maximus',
+  'mindrift',
+  'peraton',
+] as const;
+
+export function getBannedUrlPatterns(): string[] {
+  const raw = process.env.BANNED_URL_PATTERNS?.trim();
+  const envPatterns = raw
+    ? raw.split(/[\n,;]+/).map((value) => value.trim().toLowerCase()).filter(Boolean)
+    : [];
+
+  const merged = [...DEFAULT_BANNED_URL_PATTERNS.map((p) => p.toLowerCase()), ...envPatterns];
+  return [...new Set(merged.filter(Boolean))];
+}
+
+export function isBannedUrl(raw: string): boolean {
+  const value = raw?.trim();
+  if (!value) return false;
+  const haystack = value.toLowerCase();
+  return getBannedUrlPatterns().some((pattern) => haystack.includes(pattern));
+}
+
 export function normalizeUrl(raw: string): string {
   const input = ensureScheme(raw);
   let u: URL;
@@ -174,10 +235,22 @@ export function extractCompanyFromUrl(raw: string): string | null {
   const first = segments[0]?.toLowerCase();
 
   // Tenant-in-path ATS hosts
-  if (/greenhouse\.io$|lever\.co$|smartrecruiters\.com$|ashbyhq\.com$|workable\.com$/i.test(host)) {
+  if (
+    /greenhouse\.io$|lever\.co$|smartrecruiters\.com$|ashbyhq\.com$|workable\.com$|jobvite\.com$|rippling\.com$|dayforcehcm\.com$/i.test(
+      host,
+    )
+  ) {
     const skip = new Set(['embed', 'jobs', 'job', 'careers', 'o', 'v', 'api']);
-    const tenant = segments.find((s) => !skip.has(s.toLowerCase()) && !/^\d+$/.test(s));
-    if (tenant) return prettifyCompany(tenant);
+    const tenant = segments.find(
+      (s) => !skip.has(s.toLowerCase()) && !/^\d+$/.test(s) && !/^[a-z]{2}(?:-[a-z]{2})?$/i.test(s),
+    );
+    if (tenant) return prettifyCompanyTenant(tenant);
+  }
+
+  // Some vendor URLs contain no company identifier at all. Do not mistake the vendor for the
+  // employer; page metadata or manual entry must supply the company name.
+  if (/^(?:workforcenow\.)?adp\.com$/i.test(host) || /^workforcenow\.cloud\.adp\.com$/i.test(host)) {
+    return null;
   }
 
   // Tenant-in-subdomain ATS hosts (Workday, iCIMS, Taleo, Dayforce, ADP)
@@ -217,6 +290,13 @@ export function prettifyCompany(slug: string): string {
     .split(' ')
     .map((w) => (w.length <= 3 && w === w.toUpperCase() ? w : w.charAt(0).toUpperCase() + w.slice(1)))
     .join(' ');
+}
+
+function prettifyCompanyTenant(slug: string): string {
+  const cleaned = slug
+    .replace(/[-_](?:careers?|jobs?)$/i, '')
+    .replace(/[-_](?:[a-z]{2}|[a-z]{2}-[a-z]{2})$/i, '');
+  return prettifyCompany(cleaned);
 }
 
 // ---------------------------------------------------------------------------
