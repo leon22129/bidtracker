@@ -236,7 +236,7 @@ export function extractCompanyFromUrl(raw: string): string | null {
 
   // Tenant-in-path ATS hosts
   if (
-    /greenhouse\.io$|lever\.co$|smartrecruiters\.com$|ashbyhq\.com$|workable\.com$|jobvite\.com$|rippling\.com$|dayforcehcm\.com$/i.test(
+    /greenhouse\.io$|lever\.co$|smartrecruiters\.com$|ashbyhq\.com$|workable\.com$|jobvite\.com$|rippling\.com$|dayforcehcm\.com$|gem\.com$/i.test(
       host,
     )
   ) {

@@ -36,7 +36,7 @@ describe('MetadataService', () => {
     global.fetch = fetchSpy as typeof fetch;
 
     const service = new MetadataService();
-    const urls = ['https://example.com/jobs/senior-engineer'];
+    const urls = ['https://www.linkedin.com/jobs/view/123'];
 
     const first = await service.enrichMany(urls, true);
     const second = await service.enrichMany(urls, true);
@@ -50,6 +50,27 @@ describe('MetadataService', () => {
       company_name: 'Acme',
       job_title: 'Senior Engineer',
     });
+  });
+
+  it('uses the Rippling tenant from the URL instead of the ATS vendor metadata', async () => {
+    const service = new MetadataService();
+    const metadata = service.parseHtml(
+      '<html><head><title>Keebler Health | Rippling</title>' +
+        '<meta property="og:site_name" content="Rippling" /></head></html>',
+      'https://ats.rippling.com/keeblerhealth/jobs/88f20fbd-e190-4478-a99e-81c284e426bd',
+    );
+
+    expect(metadata.company_name).toBe('Keeblerhealth');
+  });
+
+  it('falls back to HTML company metadata when the URL has no company name', () => {
+    const service = new MetadataService();
+    const metadata = service.parseHtml(
+      '<html><head><meta property="og:site_name" content="Acme Health" /></head></html>',
+      'https://www.linkedin.com/jobs/view/123',
+    );
+
+    expect(metadata.company_name).toBe('Acme Health');
   });
 
   it('flags URLs containing any configured banned fragment', () => {

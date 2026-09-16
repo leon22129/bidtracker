@@ -20,6 +20,7 @@ export default function WorkspacesPage() {
   const [newName, setNewName] = useState('');
   const [newOwner, setNewOwner] = useState('');
   const [managing, setManaging] = useState<Workspace | null>(null);
+  const [reassigning, setReassigning] = useState<Workspace | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -213,6 +214,13 @@ export default function WorkspacesPage() {
                     <button
                       type="button"
                       className="btn-secondary btn-xs"
+                      onClick={() => setReassigning(w)}
+                    >
+                      Reassign owner
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-secondary btn-xs"
                       onClick={() => toggleArchive(w)}
                     >
                       {w.is_archived ? 'Unarchive' : 'Archive'}
@@ -241,7 +249,94 @@ export default function WorkspacesPage() {
           onChanged={load}
         />
       )}
+
+      {reassigning && admin && (
+        <OwnerModal
+          workspace={reassigning}
+          users={users}
+          onClose={() => setReassigning(null)}
+          onChanged={load}
+        />
+      )}
     </main>
+  );
+}
+
+function OwnerModal({
+  workspace,
+  users,
+  onClose,
+  onChanged,
+}: {
+  workspace: Workspace;
+  users: User[];
+  onClose: () => void;
+  onChanged: () => Promise<void>;
+}) {
+  const toast = useToast();
+  const [ownerId, setOwnerId] = useState(workspace.owner_user_id);
+  const [busy, setBusy] = useState(false);
+
+  async function reassign() {
+    if (!ownerId || ownerId === workspace.owner_user_id) return;
+    setBusy(true);
+    try {
+      await api.updateWorkspace(workspace.id, { owner_user_id: ownerId });
+      const owner = users.find((user) => user.id === ownerId);
+      toast.success(`Owner changed to ${owner?.username ?? 'the selected user'}`);
+      await onChanged();
+      onClose();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not reassign owner');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/30 p-4">
+      <div className="card w-full max-w-md p-5">
+        <h2 className="text-sm font-semibold">Reassign owner — {workspace.name}</h2>
+        <p className="mt-1 text-2xs text-gray-500">
+          The new owner receives payment credit for future applied rows in this workspace. Existing
+          payment records are unchanged.
+        </p>
+
+        <div className="mt-4">
+          <label className="label" htmlFor="workspace-owner">
+            New owner
+          </label>
+          <select
+            id="workspace-owner"
+            className="input"
+            value={ownerId}
+            onChange={(e) => setOwnerId(e.target.value)}
+          >
+            {users
+              .filter((user) => user.is_active)
+              .map((user) => (
+                <option key={user.id} value={user.id}>
+                  {user.username} ({user.role})
+                </option>
+              ))}
+          </select>
+        </div>
+
+        <div className="mt-5 flex justify-end gap-2">
+          <button type="button" className="btn-secondary" onClick={onClose} disabled={busy}>
+            Cancel
+          </button>
+          <button
+            type="button"
+            className="btn-primary"
+            onClick={() => void reassign()}
+            disabled={busy || ownerId === workspace.owner_user_id}
+          >
+            {busy ? 'Saving…' : 'Save owner'}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 

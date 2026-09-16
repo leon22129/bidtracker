@@ -60,9 +60,10 @@ export class MetadataService {
         const fetched = await this.fetchOne(url);
         if (!fetched) continue;
         const base = result.get(url)!;
-        // Fetched metadata wins over URL heuristics, but never overwrites a value with null.
+        // The URL tenant is authoritative when present; HTML is the fallback for URLs that do not
+        // identify the employer themselves.
         const merged = {
-          company_name: fetched.company_name ?? base.company_name,
+          company_name: base.company_name ?? fetched.company_name,
           job_title: fetched.job_title ?? base.job_title,
         };
         this.setCache(url, merged);
@@ -147,8 +148,12 @@ export class MetadataService {
 
     // Explicit `string | null` (rather than inferred `string`) because every step below may legitimately
     // clear a value back to null, and the fallbacks at the end return null when they can't derive one.
+    // Prefer the URL tenant because ATS page metadata may identify the vendor. HTML metadata is a
+    // fallback for URLs whose structure does not contain the employer name.
     let company: string | null =
-      nonEmpty(ldJson.company) ?? nonEmpty(decodeEntities(og('og:site_name') ?? ''));
+      safe(() => extractCompanyFromUrl(url)) ??
+      nonEmpty(ldJson.company) ??
+      nonEmpty(decodeEntities(og('og:site_name') ?? ''));
     let title: string | null =
       nonEmpty(ldJson.title) ?? nonEmpty(decodeEntities(og('og:title') ?? ''));
 
@@ -163,10 +168,8 @@ export class MetadataService {
       const m = atPattern.exec(title);
       if (m) {
         title = this.cleanTitle(m[1], company);
-        if (!company) company = this.cleanCompany(m[2]);
       }
     }
-    if (!company) company = safe(() => extractCompanyFromUrl(url));
     if (!title) title = safe(() => extractTitleFromUrl(url));
 
     return {

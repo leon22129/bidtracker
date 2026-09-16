@@ -51,10 +51,13 @@ describe('extractCompanyFromUrl', () => {
     expect(extractCompanyFromUrl('https://jobs.jobvite.com/shutterfly-fr/job/oz0EAfwx')).toBe('Shutterfly');
     expect(extractCompanyFromUrl('https://ats.rippling.com/aalyria-careers/jobs/123')).toBe('Aalyria');
     expect(extractCompanyFromUrl('https://jobs.dayforcehcm.com/en-US/navex/jobopenings/jobs/4245')).toBe('Navex');
+    expect(extractCompanyFromUrl('https://jobs.ashbyhq.com/commure/a48d6f50-093f-4008-abb3-3fe3626381d1')).toBe('Commure');
+    expect(extractCompanyFromUrl('https://jobs.gem.com/bigpanda/am9icG9zdDpnBhVy7828ukBg7JowC_uG')).toBe('Bigpanda');
   });
 
   it('reads the tenant out of subdomain-based ATS hosts', () => {
     expect(extractCompanyFromUrl('https://acme.wd5.myworkdayjobs.com/en-US/careers')).toBe('Acme');
+    expect(extractCompanyFromUrl('https://veralto.wd1.myworkdayjobs.com/veraltocorporatejobs/job/Vancouver-British-Columbia-Canada/AI-Software-Engineering-Lead_R10268260-2')).toBe('Veralto');
   });
 
   it('returns null for aggregators that do not name the company in the URL', () => {
