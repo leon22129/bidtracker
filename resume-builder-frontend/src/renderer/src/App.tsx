@@ -467,7 +467,7 @@ export default function Home() {
                         }}
                         className="shrink-0 rounded px-2 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
                       >
-                        Edit settings
+                        <Pencil className="h-3.5 w-3.5" />
                       </button>
                     </DropdownMenuItem>
                   ))
@@ -618,7 +618,6 @@ export default function Home() {
                 tabLabel={tab.label}
                 legacyProfileId={legacyProfileIdRef.current}
                 onProfileUpdated={handleProfileUpdated}
-                onProfileDeleted={handleProfileDeleted}
                 onGeneratingChange={(_, generating) =>
                   handleGeneratingChange(tab.tabId, generating)
                 }
@@ -628,9 +627,6 @@ export default function Home() {
                 triggerPreview={triggerPreviewFor === tab.tabId}
                 onPreviewTriggered={() => setTriggerPreviewFor(null)}
                 settingsOpen={settingsProfileId === profile.id}
-                onSettingsOpenChange={(open) =>
-                  setSettingsProfileId(open ? profile.id : null)
-                }
               />
             </div>
           );

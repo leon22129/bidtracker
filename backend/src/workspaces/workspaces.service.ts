@@ -135,10 +135,17 @@ export class WorkspacesService {
   }
 
   async listProfiles(user: AuthUser) {
+    const ownership = user.role === 'admin' || user.role === 'super_admin'
+      ? { OR: [{ user_id: user.id }, { created_by_user_id: user.id }] }
+      : { user_id: user.id };
+
     return this.prisma.resumeProfile.findMany({
-      where: user.role === 'admin' || user.role === 'super_admin'
-        ? { OR: [{ user_id: user.id }, { created_by_user_id: user.id }] }
-        : { user_id: user.id },
+      where: {
+        AND: [
+          ownership,
+          { workspaces: { some: { is_archived: false } } },
+        ],
+      },
       orderBy: { name: 'asc' },
     }).then((profiles) => profiles.map((profile) => this.toProfile(profile)));
   }

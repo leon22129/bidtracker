@@ -1,11 +1,12 @@
 # ============================================================================
-# BidTracker - Production + Cloudflare Quick Tunnel
+# BidTracker - Production + optional Cloudflare Quick Tunnel
 #
 # Usage:
 #   .\start.ps1
 #   .\start.ps1 --rebuild
+#   .\start.ps1 --no-cloudflare
 #
-# Ctrl+C stops backend, both frontends, and Cloudflare tunnel.
+# Ctrl+C stops backend, both frontends, and the optional Cloudflare tunnel.
 # ============================================================================
 
 $ErrorActionPreference = "Stop"
@@ -27,6 +28,7 @@ $HealthUrl = "$FrontendUrl/api/health"
 $ResumeBuilderUrl = "http://127.0.0.1:3002"
 
 $Rebuild = $false
+$NoCloudflare = $false
 $Processes = @()
 
 $LogDirectory = Join-Path $env:TEMP "bidtracker"
@@ -50,20 +52,28 @@ foreach ($Arg in $args) {
             $Rebuild = $true
         }
 
+        "--no-cloudflare" {
+            $NoCloudflare = $true
+        }
+
+        "--local" {
+            $NoCloudflare = $true
+        }
+
         "--help" {
-            Write-Host "Usage: .\start.ps1 [--rebuild]"
+            Write-Host "Usage: .\start.ps1 [--rebuild] [--no-cloudflare]"
             exit 0
         }
 
         "-h" {
-            Write-Host "Usage: .\start.ps1 [--rebuild]"
+            Write-Host "Usage: .\start.ps1 [--rebuild] [--no-cloudflare]"
             exit 0
         }
 
         default {
             Write-Host ""
             Write-Host "Unknown option: $Arg" -ForegroundColor Red
-            Write-Host "Usage: .\start.ps1 [--rebuild]"
+            Write-Host "Usage: .\start.ps1 [--rebuild] [--no-cloudflare]"
             Write-Host ""
             exit 2
         }
@@ -190,7 +200,7 @@ if (!(Get-Command npm.cmd -ErrorAction SilentlyContinue)) {
     Die "npm was not found in PATH."
 }
 
-if (!(Get-Command cloudflared.exe -ErrorAction SilentlyContinue)) {
+if (!$NoCloudflare -and !(Get-Command cloudflared.exe -ErrorAction SilentlyContinue)) {
     Die "cloudflared was not found in PATH."
 }
 
@@ -431,9 +441,14 @@ if (!$LocalHealthy) {
     Die "application did not become ready within 60 seconds."
 }
 
-# ============================================================================
-# Start Cloudflare Quick Tunnel
-# ============================================================================
+if ($NoCloudflare) {
+    $Public = $FrontendUrl
+    $Reachable = $true
+}
+else {
+    # ========================================================================
+    # Start Cloudflare Quick Tunnel
+    # ========================================================================
 
 Say "opening Cloudflare tunnel"
 
@@ -557,12 +572,17 @@ for ($i = 1; $i -le 30; $i++) {
 
     Start-Sleep -Seconds 2
 }
+}
 
 # ============================================================================
 # Display
 # ============================================================================
 
-if ($Reachable) {
+if ($NoCloudflare) {
+    $Status = "local mode; Cloudflare tunnel disabled"
+    $StatusColor = "Green"
+}
+elseif ($Reachable) {
     $Status = "verified reachable from the internet"
     $StatusColor = "Green"
 }
@@ -588,8 +608,13 @@ Write-Host "  Backend:   http://127.0.0.1:3001"
 Write-Host "  Frontend:  http://127.0.0.1:3000"
 Write-Host "  Resume:    http://127.0.0.1:3002"
 Write-Host ""
-Write-Host "  Temporary Cloudflare Quick Tunnel."
-Write-Host "  The URL changes when you run the script again."
+if ($NoCloudflare) {
+    Write-Host "  Cloudflare disabled; use the local URL above."
+}
+else {
+    Write-Host "  Temporary Cloudflare Quick Tunnel."
+    Write-Host "  The URL changes when you run the script again."
+}
 Write-Host ""
 Write-Host "  Press Ctrl+C to stop everything."
 Write-Host ""
@@ -624,7 +649,7 @@ try {
             break
         }
 
-        if ($CloudflareProcess.HasExited) {
+        if ($null -ne $CloudflareProcess -and $CloudflareProcess.HasExited) {
             Write-Host ""
             Write-Host "WARNING: Cloudflare tunnel has stopped." -ForegroundColor Yellow
             break

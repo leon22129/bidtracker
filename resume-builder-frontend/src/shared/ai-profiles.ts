@@ -56,6 +56,7 @@ export type GenerateResumeInput = {
 
 export type GenerateResumeResult = {
   tailored_resume: string
+  full_name?: string
 }
 
 export type AiProfilesApi = {

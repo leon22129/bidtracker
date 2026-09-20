@@ -13,12 +13,12 @@ import {
 } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Spinner } from "@/components/ui/spinner";
+import { ToastAction } from "@/components/ui/toast";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { toast } from "@/components/ui/use-toast";
 import { ResumePreview } from "@/components/resume-preview";
 import { FunnyLoadingBar } from "@/components/funny-loading-bar";
-import { ProfileSettingsDialog } from "@/components/profile-settings-dialog";
 import {
   Dialog,
   DialogContent,
@@ -60,13 +60,11 @@ interface ProfileWorkspaceProps {
   tabLabel: string;
   legacyProfileId: string | null;
   onProfileUpdated: (updated: AiProfile) => void;
-  onProfileDeleted: (profileId: string) => void;
   onGeneratingChange: (profileId: string, generating: boolean) => void;
   onGenerationComplete: (profileId: string, companyName?: string) => void;
   triggerPreview: boolean;
   onPreviewTriggered: () => void;
   settingsOpen: boolean;
-  onSettingsOpenChange: (open: boolean) => void;
 }
 
 export function ProfileWorkspace({
@@ -79,7 +77,6 @@ export function ProfileWorkspace({
   triggerPreview,
   onPreviewTriggered,
   settingsOpen,
-  onSettingsOpenChange,
 }: ProfileWorkspaceProps) {
   // Operational settings synced from profile
   const [selectedTemplate, setSelectedTemplate] =
@@ -231,10 +228,11 @@ export function ProfileWorkspace({
       }
 
       const generatedPersonalInfo = {
-        ...profile.personalInfo,
+        ...personalInfo,
+        fullName: data.full_name?.trim() || personalInfo.fullName || profile.personalInfo.fullName,
         ...(profile.updateHeadline ?? true) && parsed.main_title?.trim()
           ? { title: parsed.main_title.trim() }
-          : { title: profile.personalInfo.title },
+          : { title: personalInfo.title },
       };
       if (generatedPersonalInfo !== personalInfo) setPersonalInfo(generatedPersonalInfo);
 
@@ -374,11 +372,12 @@ export function ProfileWorkspace({
           ? targetCompanyName.replace(/[^a-zA-Z0-9 _-]/g, "_")
           : "";
       const safeFolder = `${yyyy}-${mm}-${dd}_${hh}-${mm1}-${ss}${safeCompany ? ` - ${safeCompany}` : ""}`;
-      const safeFullName = personalInfo.fullName
-        ? String(personalInfo.fullName)
-            .trim()
-            .replace(/[^a-zA-Z0-9 _-]/g, "_")
-        : "resume";
+      const safeFullName = "Resume";
+      const savedJobDescription = downloadJDWithPDF
+        ? targetResumeData.rateInJd === false && targetResumeData.annualSalary && targetResumeData.hourlyRate
+          ? `${jobDescription.trim()}\n\nEstimated Salary Expectation (salary not mentioned in this JD)\nAnnual: ${targetResumeData.annualSalary}\nHourly: ${targetResumeData.hourlyRate}`
+          : jobDescription
+        : undefined;
 
       let folderPath: string | undefined;
       const shouldSaveInFolder = effectiveSaveInFolder || autoDownload;
@@ -390,7 +389,7 @@ export function ProfileWorkspace({
           true,
           selectedTemplate,
           safeFolder,
-          downloadJDWithPDF ? jobDescription : undefined,
+          savedJobDescription,
           profile.id,
         );
         folderPath = r.folderPath;
@@ -401,7 +400,7 @@ export function ProfileWorkspace({
               personalInfo,
               companyName: targetCompanyName || "",
             },
-            `${safeFullName} - Cover Letter.pdf`,
+            `Cover Letter.pdf`,
             true,
             effectiveCoverLetterTemplate,
             safeFolder,
@@ -409,9 +408,7 @@ export function ProfileWorkspace({
           );
         }
       } else {
-        const filename = safeCompany
-          ? `${safeFullName} - ${safeCompany}.pdf`
-          : `${safeFullName}.pdf`;
+        const filename = `${safeFullName}.pdf`;
         const r = await generateResumePDF(
           targetResumeData,
           filename,
@@ -420,9 +417,7 @@ export function ProfileWorkspace({
         );
         folderPath = r.folderPath;
         if (effectiveGenerateCoverLetter && targetCoverLetterText) {
-          const clFilename = safeCompany
-            ? `${safeFullName} - ${safeCompany} - Cover Letter.pdf`
-            : `${safeFullName} - Cover Letter.pdf`;
+          const clFilename = `Cover Letter.pdf`;
           await generateCoverLetterPDF(
             {
               text: targetCoverLetterText,
@@ -442,6 +437,28 @@ export function ProfileWorkspace({
           ? "Resume + Cover Letter Downloaded"
           : "Resume Downloaded",
         description: folderPath || undefined,
+        action: (
+          <ToastAction
+            altText="Open downloaded folder"
+            onClick={() => {
+              if (folderPath) {
+                const fileUrl = folderPath.startsWith("file://")
+                  ? folderPath
+                  : `file:///${folderPath.replace(/\\/g, "/")}`;
+                window.open(fileUrl, "_blank", "noopener,noreferrer");
+                return;
+              }
+
+              toast({
+                title: "Folder location unavailable",
+                description:
+                  "Your browser saved the file but does not expose its local path to open Windows Explorer.",
+              });
+            }}
+          >
+            Open folder
+          </ToastAction>
+        ),
       });
     } catch (err) {
       console.error("PDF generation error:", err);

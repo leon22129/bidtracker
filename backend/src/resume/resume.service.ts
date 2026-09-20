@@ -64,16 +64,17 @@ export class ResumeService {
     const profile = await this.findAccessibleProfile(user, dto.profile_id);
     if (!profile) throw new BadRequestException('Profile is not assigned to your account');
     if (dto.job_description && dto.kind === 'jobEligibility') {
-      return { tailored_resume: await this.openAi(buildJobEligibilityPrompt(dto.job_description)) };
+      return { tailored_resume: await this.openAi(buildJobEligibilityPrompt(dto.job_description)), full_name: profile.full_name };
     }
     if (dto.job_description && dto.kind === 'resume') {
-      return { tailored_resume: await this.openAi(this.resumePrompt(profile, dto.job_description)) };
+      return { tailored_resume: await this.openAi(this.resumePrompt(profile, dto.job_description)), full_name: profile.full_name };
     }
     if (dto.job_description && dto.kind === 'applicationAnswers' && dto.questions?.length) {
       return {
         tailored_resume: await this.openAi(
           buildApplicationAnswersPrompt(dto.job_description, dto.resume ?? {}, dto.questions),
         ),
+        full_name: profile.full_name,
       };
     }
     throw new BadRequestException('A supported generation kind and its required data are needed');

@@ -302,7 +302,12 @@ function ProfileModal({
       await api.updateWorkspace(workspace.id, {
         profile_name: name,
         career_path: careerPath,
-        ...personal,
+        full_name: personal.fullName,
+        title: personal.title,
+        email: personal.email,
+        phone: personal.phone,
+        location: personal.location,
+        linkedin: personal.linkedin,
         education,
         certifications,
         update_headline: updateHeadline,

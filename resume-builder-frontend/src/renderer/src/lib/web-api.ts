@@ -73,8 +73,7 @@ const webAiProfiles: AiProfilesApi = {
         Authorization: `Bearer ${localStorage.getItem(TOKEN_KEY) || ""}`,
       },
       body: JSON.stringify({
-        update_headline: input.updateHeadline,
-        use_generated_role_titles: input.useGeneratedRoleTitles,
+        full_name: input.personalInfo?.fullName || "",
         template: input.template,
         save_in_folder: input.saveInFolder,
         auto_download: input.autoDownload,
@@ -123,10 +122,10 @@ const webAiProfiles: AiProfilesApi = {
         resume: input.resume,
       }),
     })
-    const data = await response.json().catch(() => null) as { tailored_resume?: string; error?: string } | null
+    const data = await response.json().catch(() => null) as { tailored_resume?: string; full_name?: string; error?: string } | null
     if (!response.ok) throw new Error(data?.error || `Generation failed (${response.status}).`)
     if (!data?.tailored_resume) throw new Error("The AI provider returned an empty response.")
-    return { tailored_resume: data.tailored_resume }
+    return { tailored_resume: data.tailored_resume, full_name: data.full_name }
   },
 }
 

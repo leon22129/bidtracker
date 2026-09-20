@@ -44,6 +44,17 @@ docker compose logs -f backend      # watch for "Default admin created"
 Open [http://localhost:3000](http://localhost:3000) and sign in with `DEFAULT_ADMIN_EMAIL` /
 `DEFAULT_ADMIN_PASSWORD`. Change the password immediately from **Account**.
 
+On Windows, `start.ps1` starts the local services and a temporary Cloudflare Quick Tunnel by
+default. To run without Cloudflare, use:
+
+```powershell
+.\start.ps1 --no-cloudflare
+```
+
+Use [http://127.0.0.1:3000](http://127.0.0.1:3000) for BidTracker and
+[http://127.0.0.1:3002](http://127.0.0.1:3002) for Resume Builder. `--local` is an alias for
+`--no-cloudflare`.
+
 ### Local development (two terminals)
 
 ```bash
