@@ -54,6 +54,7 @@ import {
   parseGeneratedResume,
   getResumeDetailsForProfile,
 } from "@/lib/profile-utils";
+import { chooseProfileDirectory, getProfileDownloadPaths } from "@/lib/extension-storage";
 
 interface ProfileWorkspaceProps {
   profile: AiProfile;
@@ -65,6 +66,7 @@ interface ProfileWorkspaceProps {
   triggerPreview: boolean;
   onPreviewTriggered: () => void;
   settingsOpen: boolean;
+  isActive: boolean;
 }
 
 export function ProfileWorkspace({
@@ -77,6 +79,7 @@ export function ProfileWorkspace({
   triggerPreview,
   onPreviewTriggered,
   settingsOpen,
+  isActive,
 }: ProfileWorkspaceProps) {
   // Operational settings synced from profile
   const [selectedTemplate, setSelectedTemplate] =
@@ -118,6 +121,7 @@ export function ProfileWorkspace({
   // UI state
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewEditable, setPreviewEditable] = useState(false);
+  const [downloadLocationPromptOpen, setDownloadLocationPromptOpen] = useState(false);
 
   const syncFromProfile = (p: AiProfile) => {
     setSelectedTemplate(
@@ -197,7 +201,7 @@ export function ProfileWorkspace({
       if (rejectionReasons.length > 0) {
         const reason = `This position was skipped because it ${rejectionReasons.join(", ")}.`;
         setError(reason);
-        toast({ title: "Position skipped", description: eligibility.reason || reason });
+        if (isActive) toast({ title: "Position skipped", description: eligibility.reason || reason });
         return;
       }
 
@@ -217,7 +221,7 @@ export function ProfileWorkspace({
 
       if (parsed.error) {
         const msg = String(parsed.error).trim();
-        toast({ title: "Generation skipped", description: msg });
+        if (isActive) toast({ title: "Generation skipped", description: msg });
         setError(msg);
         return;
       }
@@ -280,7 +284,7 @@ export function ProfileWorkspace({
         "Failed to generate resume with the selected profile.",
       );
       setError(msg);
-      toast({ title: "Generation Failed", description: msg });
+      if (isActive) toast({ title: "Generation Failed", description: msg });
     } finally {
       setIsGenerating(false);
     }
@@ -328,7 +332,7 @@ export function ProfileWorkspace({
     } catch (err) {
       const msg = getFriendlyErrorMessage(err, "Failed to generate application answers.");
       setApplicationError(msg);
-      toast({ title: "Answer Generation Failed", description: msg });
+      if (isActive) toast({ title: "Answer Generation Failed", description: msg });
     } finally {
       setIsGeneratingAnswers(false);
     }
@@ -345,6 +349,7 @@ export function ProfileWorkspace({
   ) => {
     const targetResumeData = overrideData ?? resumeData;
     if (!targetResumeData || isDownloading) return;
+    setError("");
     setIsDownloading(true);
 
     try {
@@ -382,7 +387,18 @@ export function ProfileWorkspace({
       let folderPath: string | undefined;
       const shouldSaveInFolder = effectiveSaveInFolder || autoDownload;
 
+      let downloadPath: string | undefined;
       if (shouldSaveInFolder) {
+        const paths = await getProfileDownloadPaths();
+        downloadPath = paths[profile.id];
+        if (!downloadPath) {
+          if (isGenerating) {
+            throw new Error("Choose a download location in Settings before enabling automatic download.");
+          }
+          setIsDownloading(false);
+          setDownloadLocationPromptOpen(true);
+          return;
+        }
         const r = await generateResumePDF(
           targetResumeData,
           `${safeFullName}.pdf`,
@@ -391,6 +407,7 @@ export function ProfileWorkspace({
           safeFolder,
           savedJobDescription,
           profile.id,
+          downloadPath,
         );
         folderPath = r.folderPath;
         if (effectiveGenerateCoverLetter && targetCoverLetterText) {
@@ -405,6 +422,7 @@ export function ProfileWorkspace({
             effectiveCoverLetterTemplate,
             safeFolder,
             profile.id,
+            downloadPath,
           );
         }
       } else {
@@ -414,6 +432,7 @@ export function ProfileWorkspace({
           filename,
           false,
           selectedTemplate,
+          undefined,
         );
         folderPath = r.folderPath;
         if (effectiveGenerateCoverLetter && targetCoverLetterText) {
@@ -427,17 +446,21 @@ export function ProfileWorkspace({
             clFilename,
             false,
             effectiveCoverLetterTemplate,
+            undefined,
           );
         }
       }
 
       const hasCoverLetter = effectiveGenerateCoverLetter && !!targetCoverLetterText;
-      toast({
+      setError("");
+      if (isActive) toast({
         title: hasCoverLetter
           ? "Resume + Cover Letter Downloaded"
           : "Resume Downloaded",
-        description: folderPath || undefined,
-        action: (
+        description: folderPath || (shouldSaveInFolder && downloadPath
+          ? `Saved under ${downloadPath}`
+          : "Saved to Chrome Downloads"),
+        action: folderPath ? (
           <ToastAction
             altText="Open downloaded folder"
             onClick={() => {
@@ -449,7 +472,7 @@ export function ProfileWorkspace({
                 return;
               }
 
-              toast({
+              if (isActive) toast({
                 title: "Folder location unavailable",
                 description:
                   "Your browser saved the file but does not expose its local path to open Windows Explorer.",
@@ -458,11 +481,11 @@ export function ProfileWorkspace({
           >
             Open folder
           </ToastAction>
-        ),
+        ) : undefined,
       });
     } catch (err) {
       console.error("PDF generation error:", err);
-      setError("Failed to generate PDF. Please try again.");
+      setError(getFriendlyErrorMessage(err, "Failed to download the PDF. Please try again."));
     } finally {
       setIsDownloading(false);
     }
@@ -718,6 +741,34 @@ export function ProfileWorkspace({
         </Button>
         </DialogFooter>
       </DialogContent>
+      </Dialog>
+
+      <Dialog open={downloadLocationPromptOpen} onOpenChange={setDownloadLocationPromptOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Choose a download folder</DialogTitle>
+            <DialogDescription>
+              Select a folder for {profile.name || "this profile"}. Resume AI will remember it for future downloads.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDownloadLocationPromptOpen(false)}>Cancel</Button>
+            <Button
+              onClick={() => {
+                void chooseProfileDirectory(profile.id).then((selectedPath) => {
+                  if (!selectedPath) return;
+                  setDownloadLocationPromptOpen(false);
+                  void handleDownloadPDF();
+                }).catch((err) => {
+                  if ((err as DOMException)?.name === "AbortError") return;
+                  setError(getFriendlyErrorMessage(err, "Unable to choose a download folder."));
+                });
+              }}
+            >
+              Choose folder
+            </Button>
+          </DialogFooter>
+        </DialogContent>
       </Dialog>
     </div>
   );

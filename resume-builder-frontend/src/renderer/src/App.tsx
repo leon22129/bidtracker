@@ -45,17 +45,20 @@ import {
   Trash2,
   LogOut,
   User,
+  Settings,
 } from "lucide-react";
 import type { AiProfile } from "../../shared/ai-profiles";
 import type { WebAuthStatus } from "../../shared/auth";
 import { ProfileWorkspace } from "@/components/profile-workspace";
 import { ProfileSettingsOnlyDialog } from "@/components/profile-settings-only-dialog";
+import { ExtensionSettingsDialog } from "@/components/extension-settings-dialog";
 import { toast } from "@/components/ui/use-toast";
 import { ToastAction } from "@/components/ui/toast";
 import {
   getFriendlyErrorMessage,
   STORAGE_KEY_ACTIVE_TAB,
 } from "@/lib/profile-utils";
+import { getApiBaseUrl, getCurrentBrowserTabKey, setApiBaseUrl } from "@/lib/extension-storage";
 
 const STORAGE_KEY_OPEN_TABS = "resume_open_profile_tabs_v2";
 
@@ -78,8 +81,8 @@ function generateTabLabel(profile: AiProfile, existingTabs: Tab[]): string {
   return `${base} - ${n}`;
 }
 
-function persistTabs(tabs: Tab[]) {
-  localStorage.setItem(STORAGE_KEY_OPEN_TABS, JSON.stringify(tabs));
+function persistTabs(storagePrefix: string, tabs: Tab[]) {
+  localStorage.setItem(`${storagePrefix}:${STORAGE_KEY_OPEN_TABS}`, JSON.stringify(tabs));
 }
 
 // ─── App ──────────────────────────────────────────────────────────────────────
@@ -105,6 +108,10 @@ export default function Home() {
   const [webPassword, setWebPassword] = useState("");
   const [webAuthMessage, setWebAuthMessage] = useState("");
   const [isWebAuthRunning, setIsWebAuthRunning] = useState(false);
+  const [backendUrl, setBackendUrl] = useState("");
+  const [backendUrlMessage, setBackendUrlMessage] = useState("");
+  const [storagePrefix, setStoragePrefix] = useState("resume_ai:standalone");
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   // Profile settings dialog (edit mode)
   const [settingsProfileId, setSettingsProfileId] = useState<string | null>(
@@ -121,7 +128,7 @@ export default function Home() {
 
   // ─── Data loading ────────────────────────────────────────────────────────────
 
-  const loadData = async () => {
+  const loadData = async (prefix = storagePrefix) => {
     try {
       const loadedProfiles = await window.aiProfiles.list();
       setProfiles(loadedProfiles);
@@ -130,7 +137,7 @@ export default function Home() {
       const savedTabs: Tab[] = (() => {
         try {
           return JSON.parse(
-            localStorage.getItem(STORAGE_KEY_OPEN_TABS) || "[]",
+            localStorage.getItem(`${prefix}:${STORAGE_KEY_OPEN_TABS}`) || "[]",
           );
         } catch {
           return [];
@@ -148,33 +155,49 @@ export default function Home() {
           profileId: p.id,
           label: p.name || "Unnamed",
         }));
-        persistTabs(initialTabs);
+        persistTabs(prefix, initialTabs);
       }
       setTabs(initialTabs);
 
       // Restore active tab
       const savedActiveTabId =
-        localStorage.getItem(STORAGE_KEY_ACTIVE_TAB) || "";
+        localStorage.getItem(`${prefix}:${STORAGE_KEY_ACTIVE_TAB}`) || "";
       const resolvedActiveTabId =
         initialTabs.find((t) => t.tabId === savedActiveTabId)?.tabId ||
         initialTabs[0]?.tabId ||
         "";
       setActiveTabId(resolvedActiveTabId);
       if (resolvedActiveTabId)
-        localStorage.setItem(STORAGE_KEY_ACTIVE_TAB, resolvedActiveTabId);
+        localStorage.setItem(`${prefix}:${STORAGE_KEY_ACTIVE_TAB}`, resolvedActiveTabId);
     } catch {
       // ignore
     }
   };
 
   useEffect(() => {
-    legacyProfileIdRef.current = localStorage.getItem(STORAGE_KEY_ACTIVE_TAB);
-    void window.webAuth.status()
-      .then((status) => {
+    void getApiBaseUrl().then(setBackendUrl).catch(() => setBackendUrlMessage("Unable to load backend URL."));
+    void getCurrentBrowserTabKey().then((tabKey) => {
+      const prefix = `resume_ai:${tabKey}`;
+      setStoragePrefix(prefix);
+      legacyProfileIdRef.current = localStorage.getItem(`${prefix}:${STORAGE_KEY_ACTIVE_TAB}`);
+      return window.webAuth.status().then((status) => {
         setWebAuthStatus(status);
-        if (status.authenticated) void loadData();
-      })
+        if (status.authenticated) void loadData(prefix);
+      });
+    })
       .catch((err) => setWebAuthMessage(getFriendlyErrorMessage(err, "Unable to check your login.")));
+  }, []);
+
+  useEffect(() => {
+    const handleInvalidAuth = () => {
+      setWebAuthStatus({ authenticated: false });
+      setProfiles([]);
+      setTabs([]);
+      setActiveTabId("");
+      setWebAuthMessage("Your session expired. Please sign in again.");
+    };
+    window.addEventListener("resume-ai-auth-invalid", handleInvalidAuth);
+    return () => window.removeEventListener("resume-ai-auth-invalid", handleInvalidAuth);
   }, []);
 
   const handleWebLogin = async (event: FormEvent<HTMLFormElement>) => {
@@ -185,11 +208,20 @@ export default function Home() {
       const status = await window.webAuth.login(webUsername, webPassword);
       setWebAuthStatus(status);
       setWebPassword("");
-      if (status.authenticated) await loadData();
+      if (status.authenticated) await loadData(storagePrefix);
     } catch (err) {
       setWebAuthMessage(getFriendlyErrorMessage(err, "Unable to sign in."));
     } finally {
       setIsWebAuthRunning(false);
+    }
+  };
+
+  const handleBackendUrlSave = async () => {
+    try {
+      await setApiBaseUrl(backendUrl);
+      setBackendUrlMessage("Backend URL saved.");
+    } catch (err) {
+      setBackendUrlMessage(err instanceof Error ? err.message : "Unable to save backend URL.");
     }
   };
 
@@ -199,13 +231,14 @@ export default function Home() {
     setProfiles([]);
     setTabs([]);
     setActiveTabId("");
+    setSettingsOpen(false);
   };
 
   // ─── Tab operations ──────────────────────────────────────────────────────────
 
   const handleTabClick = (tabId: string) => {
     setActiveTabId(tabId);
-    localStorage.setItem(STORAGE_KEY_ACTIVE_TAB, tabId);
+    localStorage.setItem(`${storagePrefix}:${STORAGE_KEY_ACTIVE_TAB}`, tabId);
     setPendingResultTabIds((prev) => {
       const next = new Set(prev);
       next.delete(tabId);
@@ -234,11 +267,11 @@ export default function Home() {
         label: generateTabLabel(profile, prev),
       };
       const next = [...prev, newTab];
-      persistTabs(next);
+      persistTabs(storagePrefix, next);
       return next;
     });
     setActiveTabId(newTabId);
-    localStorage.setItem(STORAGE_KEY_ACTIVE_TAB, newTabId);
+    localStorage.setItem(`${storagePrefix}:${STORAGE_KEY_ACTIVE_TAB}`, newTabId);
   };
 
   const handleCloseTab = (tabId: string) => {
@@ -263,15 +296,15 @@ export default function Home() {
     });
     setTabs((prev) => {
       const next = prev.filter((t) => t.tabId !== tabId);
-      persistTabs(next);
+      persistTabs(storagePrefix, next);
       if (activeTabId === tabId) {
         const idx = prev.findIndex((t) => t.tabId === tabId);
         const nextActive =
           next[Math.max(0, idx - 1)]?.tabId || next[0]?.tabId || "";
         setActiveTabId(nextActive);
         if (nextActive)
-          localStorage.setItem(STORAGE_KEY_ACTIVE_TAB, nextActive);
-        else localStorage.removeItem(STORAGE_KEY_ACTIVE_TAB);
+          localStorage.setItem(`${storagePrefix}:${STORAGE_KEY_ACTIVE_TAB}`, nextActive);
+        else localStorage.removeItem(`${storagePrefix}:${STORAGE_KEY_ACTIVE_TAB}`);
       }
       return next;
     });
@@ -385,6 +418,26 @@ export default function Home() {
               <CardDescription>Use the credentials provided for your account.</CardDescription>
             </CardHeader>
             <CardContent>
+              <div className="mb-6 space-y-2 border-b pb-5">
+                <Field>
+                  <FieldLabel htmlFor="logged-out-backend-url">Backend API URL</FieldLabel>
+                  <div className="flex gap-2">
+                    <Input
+                      id="logged-out-backend-url"
+                      value={backendUrl}
+                      onChange={(event) => setBackendUrl(event.target.value)}
+                      placeholder="http://127.0.0.1:3001/api"
+                      type="url"
+                    />
+                    <Button type="button" variant="outline" onClick={() => void handleBackendUrlSave()}>
+                      Save
+                    </Button>
+                  </div>
+                  {backendUrlMessage && (
+                    <p className="text-xs text-muted-foreground">{backendUrlMessage}</p>
+                  )}
+                </Field>
+              </div>
               <form className="space-y-5" onSubmit={handleWebLogin}>
                 <Field>
                   <FieldLabel htmlFor="web-username">Username</FieldLabel>
@@ -479,6 +532,9 @@ export default function Home() {
             <Button type="button" variant="outline" size="sm" onClick={() => void handleWebLogout()}>
               <LogOut className="h-4 w-4 mr-1" />
               Sign out
+            </Button>
+            <Button type="button" variant="outline" size="sm" onClick={() => setSettingsOpen(true)} aria-label="Open settings">
+              <Settings className="h-4 w-4" />
             </Button>
           </div>
         </div>
@@ -627,6 +683,7 @@ export default function Home() {
                 triggerPreview={triggerPreviewFor === tab.tabId}
                 onPreviewTriggered={() => setTriggerPreviewFor(null)}
                 settingsOpen={settingsProfileId === profile.id}
+                isActive={tab.tabId === activeTabId}
               />
             </div>
           );
@@ -644,6 +701,14 @@ export default function Home() {
           onUpdated={handleProfileUpdated}
         />
       )}
+
+      <ExtensionSettingsDialog
+        open={settingsOpen}
+        onOpenChange={setSettingsOpen}
+        profiles={profiles}
+        username={webAuthStatus.username}
+        onLogout={() => void handleWebLogout()}
+      />
 
 
       <Toaster />

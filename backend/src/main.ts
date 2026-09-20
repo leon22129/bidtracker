@@ -56,7 +56,13 @@ async function bootstrap() {
     .map((o) => o.trim())
     .filter(Boolean);
   app.enableCors({
-    origin: origins.includes('*') ? true : origins,
+    origin: (origin, callback) => {
+      if (!origin || origins.includes('*') || origins.includes(origin) || origin.startsWith('chrome-extension://')) {
+        callback(null, true);
+        return;
+      }
+      callback(null, false);
+    },
     credentials: true,
     methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
   });

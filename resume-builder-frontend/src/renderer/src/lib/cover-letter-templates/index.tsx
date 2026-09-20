@@ -4,6 +4,8 @@ import type { CoverLetterData, CoverLetterTemplateId } from "./types"
 import { ClassicCoverLetterTemplate } from "./classic"
 import { ModernCoverLetterTemplate } from "./modern"
 import { MinimalCoverLetterTemplate } from "./minimal"
+import { downloadBlob } from "@/lib/chrome-downloads"
+import { getProfileDirectoryHandle } from "@/lib/extension-storage"
 
 export { COVER_LETTER_TEMPLATES, DEFAULT_COVER_LETTER_TEMPLATE } from "./types"
 export type { CoverLetterTemplateId, CoverLetterTemplateInfo, CoverLetterData } from "./types"
@@ -21,9 +23,18 @@ export async function generateCoverLetterPDF(
   templateId: CoverLetterTemplateId = "classic",
   folderName?: string,
   profileId?: string,
+  downloadPath?: string,
 ): Promise<void> {
   const TemplateComponent = templateComponents[templateId]
   const blob = await pdf(<TemplateComponent data={data} />).toBlob()
+
+  const chromeApi = (globalThis as { chrome?: { downloads?: unknown } }).chrome
+  const savedDirectoryHandle = saveInFolder && profileId ? await getProfileDirectoryHandle(profileId) : null
+  if (saveInFolder && downloadPath && chromeApi?.downloads && !savedDirectoryHandle) {
+    const prefix = [downloadPath, folderName, filename].filter(Boolean).join("/")
+    await downloadBlob(blob, prefix)
+    return
+  }
 
   if (saveInFolder) {
     try {
@@ -77,12 +88,5 @@ export async function generateCoverLetterPDF(
     }
   }
 
-  const url = URL.createObjectURL(blob)
-  const link = document.createElement("a")
-  link.href = url
-  link.download = filename
-  document.body.appendChild(link)
-  link.click()
-  document.body.removeChild(link)
-  URL.revokeObjectURL(url)
+  await downloadBlob(blob, filename)
 }

@@ -12,12 +12,30 @@ import {
   normalizeResumeEducation,
   normalizeResumePersonalInfo,
 } from "../../../shared/resume-profile"
-
-const API_BASE = (import.meta as any).env?.VITE_BIDTRACKER_API_URL || "http://127.0.0.1:3001/api"
-const TOKEN_KEY = "bidtracker_token"
+import { authStorage, getApiBaseUrl } from "@/lib/extension-storage"
 
 function createId() {
   return crypto.randomUUID()
+}
+
+class UnauthorizedError extends Error {
+  constructor() {
+    super("Your session has expired. Please sign in again.")
+    this.name = "UnauthorizedError"
+  }
+}
+
+async function apiFetch(path: string, init: RequestInit = {}): Promise<Response> {
+  const token = await authStorage.getToken()
+  const headers = new Headers(init.headers)
+  if (token) headers.set("Authorization", `Bearer ${token}`)
+  const response = await fetch(`${await getApiBaseUrl()}${path}`, { ...init, headers })
+  if (response.status === 401) {
+    await authStorage.clearToken()
+    window.dispatchEvent(new CustomEvent("resume-ai-auth-invalid"))
+    throw new UnauthorizedError()
+  }
+  return response
 }
 
 function createProfile(input: CreateAiProfileInput): AiProfile {
@@ -37,9 +55,7 @@ function createProfile(input: CreateAiProfileInput): AiProfile {
 
 const webAiProfiles: AiProfilesApi = {
   async list() {
-    const response = await fetch(`${API_BASE}/workspaces/profiles/assigned`, {
-      headers: { Authorization: `Bearer ${localStorage.getItem(TOKEN_KEY) || ""}` },
-    })
+    const response = await apiFetch("/workspaces/profiles/assigned")
     if (!response.ok) throw new Error("Unable to load assigned profiles.")
     const profiles = await response.json() as Array<any>
     return profiles.map((profile) => ({
@@ -66,11 +82,10 @@ const webAiProfiles: AiProfilesApi = {
     throw new Error("Profiles are created and assigned in BidTracker.")
   },
   async update(input: UpdateAiProfileInput) {
-    const response = await fetch(`${API_BASE}/workspaces/profiles/${input.id}`, {
+    const response = await apiFetch(`/workspaces/profiles/${input.id}`, {
       method: "PATCH",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${localStorage.getItem(TOKEN_KEY) || ""}`,
       },
       body: JSON.stringify({
         full_name: input.personalInfo?.fullName || "",
@@ -108,11 +123,10 @@ const webAiProfiles: AiProfilesApi = {
     throw new Error("Profiles are deleted in BidTracker.")
   },
   async generate(input: GenerateResumeInput): Promise<GenerateResumeResult> {
-    const response = await fetch(`${API_BASE}/resume/profile-generate`, {
+    const response = await apiFetch("/resume/profile-generate", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${localStorage.getItem(TOKEN_KEY) || ""}`,
       },
       body: JSON.stringify({
         profile_id: input.profileId,
@@ -131,29 +145,28 @@ const webAiProfiles: AiProfilesApi = {
 
 const webAuth: WebAuthApi = {
   async status(): Promise<WebAuthStatus> {
-    const token = localStorage.getItem(TOKEN_KEY)
+    const token = await authStorage.getToken()
     if (!token) return { authenticated: false }
-    const response = await fetch(`${API_BASE}/auth/me`, { headers: { Authorization: `Bearer ${token}` } })
+    const response = await apiFetch("/auth/me")
     if (!response.ok) {
-      localStorage.removeItem(TOKEN_KEY)
       return { authenticated: false }
     }
     const data = await response.json() as { username: string }
     return { authenticated: true, username: data.username }
   },
   async login(username, password) {
-    const response = await fetch(`${API_BASE}/auth/login`, {
+    const response = await apiFetch("/auth/login", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email: username, password }),
     })
     const data = await response.json().catch(() => null) as { access_token?: string; user?: { username: string }; message?: string } | null
     if (!response.ok || !data?.access_token) throw new Error(data?.message || "Unable to sign in.")
-    localStorage.setItem(TOKEN_KEY, data.access_token)
+    await authStorage.setToken(data.access_token)
     return { authenticated: true, username: data.user?.username || username }
   },
   async logout() {
-    localStorage.removeItem(TOKEN_KEY)
+    await authStorage.clearToken()
   },
 }
 
