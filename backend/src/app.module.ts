@@ -12,6 +12,7 @@ import { AnalyticsModule } from './analytics/analytics.module';
 import { HealthController } from './health.controller';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { AdminBootstrapService } from './bootstrap/admin-bootstrap.service';
+import { ResumeModule } from './resume/resume.module';
 
 @Module({
   imports: [
@@ -24,6 +25,7 @@ import { AdminBootstrapService } from './bootstrap/admin-bootstrap.service';
     ImportModule,
     PaymentsModule,
     AnalyticsModule,
+    ResumeModule,
   ],
   controllers: [HealthController],
   providers: [

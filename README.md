@@ -680,6 +680,16 @@ Full annotated list in [.env.example](.env.example). The ones worth knowing:
 | `MAX_UPLOAD_MB`                                    | `25`                  | Import file ceiling.                                                                   |
 | `DISABLE_CRON`                                     | `false`               | Set`true` on a staging copy so it can't produce authoritative-looking reports.       |
 | `ALLOW_BIDDER_PENDING_TO_REJECTED`                 | `false`               | Adds one extra transition beyond the spec's two.                                       |
+| `OPENAI_API_KEY`                                    | —                    | Server-only key used by `POST /api/resume/generate`; never send it to the browser.    |
+| `OPENAI_MODEL`                                      | `gpt-5.6-sol`        | OpenAI Responses API model used for eligibility, resume, and answer generation.        |
+
+### Resume generation
+
+`GET /api/workspaces/profiles/assigned` returns only profiles assigned to the authenticated user.
+`POST /api/resume/generate` accepts `{ workspace_id, url, profile_id?, questions? }`, fetches and checks
+the job description, generates the resume and optional application answers through OpenAI, and creates
+the application row only after the eligibility check and resume generation succeed. Workspace profile
+details are edited through `PATCH /api/workspaces/:id`.
 
 ### Common tasks
 

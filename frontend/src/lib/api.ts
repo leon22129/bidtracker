@@ -132,8 +132,19 @@ export const api = {
     request<Workspace>('/workspaces', { method: 'POST', body: JSON.stringify(data) }),
   updateWorkspace: (
     id: string,
-    data: Partial<{ name: string; owner_user_id: string; is_archived: boolean }>,
+    data: Partial<{
+      name: string; owner_user_id: string; is_archived: boolean; resume_profile_id: string;
+      profile_name: string; career_path: string; full_name: string; title: string; email: string;
+      phone: string; location: string; linkedin: string;
+      update_headline: boolean; use_generated_role_titles: boolean;
+      template: string; save_in_folder: boolean; auto_download: boolean;
+      download_jd_with_pdf: boolean; use_company_name: boolean;
+      generate_cover_letter: boolean; cover_letter_template: string;
+      education: Array<{ degree: string; school: string; year: string }>;
+      certifications: Array<{ name: string; issuer: string; year: string }>;
+    }>,
   ) => request<Workspace>(`/workspaces/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  assignedProfiles: () => request<Array<{ id: string; name: string }>>('/workspaces/profiles/assigned'),
   deleteWorkspace: (id: string) =>
     request<{ success: boolean; deleted_applications: number }>(`/workspaces/${id}`, {
       method: 'DELETE',
@@ -213,6 +224,10 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ workspace_id: workspaceId, urls }),
     }),
+  generateApplication: (data: { workspace_id: string; url: string; profile_id?: string; questions?: string[] }) =>
+    request<{ success: boolean; eligible: boolean; reason?: string; application?: JobApplication; resume?: unknown; answers?: unknown }>(
+      '/resume/generate', { method: 'POST', body: JSON.stringify(data) },
+    ),
 
   // ---- import ----
   importPreview: (workspaceId: string, file: File) => {

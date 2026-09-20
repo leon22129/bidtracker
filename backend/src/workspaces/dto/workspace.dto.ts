@@ -1,4 +1,4 @@
-import { IsBoolean, IsIn, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
+import { IsArray, IsBoolean, IsEmail, IsIn, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
 import { PERMISSION_TYPES, PermissionType } from '../../common/constants';
 
 export class CreateWorkspaceDto {
@@ -26,6 +26,86 @@ export class UpdateWorkspaceDto {
   @IsOptional()
   @IsBoolean()
   is_archived?: boolean;
+
+  @IsOptional()
+  @IsString()
+  resume_profile_id?: string;
+
+  @IsOptional()
+  @IsString()
+  profile_name?: string;
+
+  @IsOptional()
+  @IsString()
+  career_path?: string;
+
+  @IsOptional()
+  @IsString()
+  full_name?: string;
+
+  @IsOptional()
+  @IsString()
+  title?: string;
+
+  @IsOptional()
+  @IsEmail()
+  email?: string;
+
+  @IsOptional()
+  @IsString()
+  phone?: string;
+
+  @IsOptional()
+  @IsString()
+  location?: string;
+
+  @IsOptional()
+  @IsString()
+  linkedin?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  update_headline?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  use_generated_role_titles?: boolean;
+
+  @IsOptional()
+  @IsString()
+  template?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  save_in_folder?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  auto_download?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  download_jd_with_pdf?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  use_company_name?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  generate_cover_letter?: boolean;
+
+  @IsOptional()
+  @IsString()
+  cover_letter_template?: string;
+
+  @IsOptional()
+  @IsArray()
+  education?: Array<{ degree: string; school: string; year: string }>;
+
+  @IsOptional()
+  @IsArray()
+  certifications?: Array<{ name: string; issuer: string; year: string }>;
 }
 
 export class GrantPermissionDto {

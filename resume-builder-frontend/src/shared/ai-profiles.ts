@@ -1,0 +1,67 @@
+import type { ResumeCertification, ResumeEducation, ResumePersonalInfo } from "./resume-profile"
+
+export type AiProfile = {
+  id: string
+  name: string
+  careerPath: string
+  personalInfo: ResumePersonalInfo
+  education: ResumeEducation[]
+  certifications: ResumeCertification[]
+  updateHeadline?: boolean
+  useGeneratedRoleTitles?: boolean
+  template?: string
+  saveInFolder?: boolean
+  autoDownload?: boolean
+  companyName?: string
+  useCompanyName?: boolean
+  downloadJDWithPDF?: boolean
+  generateCoverLetter?: boolean
+  coverLetterTemplate?: string
+  baseResume?: string
+  createdAt: number
+  updatedAt: number
+}
+
+export type CreateAiProfileInput = {
+  name: string
+  careerPath: string
+  personalInfo?: ResumePersonalInfo
+  education?: ResumeEducation[]
+  certifications?: ResumeCertification[]
+  updateHeadline?: boolean
+  useGeneratedRoleTitles?: boolean
+  template?: string
+  saveInFolder?: boolean
+  autoDownload?: boolean
+  companyName?: string
+  useCompanyName?: boolean
+  downloadJDWithPDF?: boolean
+  generateCoverLetter?: boolean
+  coverLetterTemplate?: string
+  baseResume?: string
+}
+
+export type UpdateAiProfileInput = CreateAiProfileInput & {
+  id: string
+}
+
+export type GenerateResumeInput = {
+  profileId: string
+  prompt?: string
+  jobDescription?: string
+  questions?: string[]
+  resume?: unknown
+  kind?: "resume" | "applicationAnswers" | "jobEligibility"
+}
+
+export type GenerateResumeResult = {
+  tailored_resume: string
+}
+
+export type AiProfilesApi = {
+  list: () => Promise<AiProfile[]>
+  create: (input: CreateAiProfileInput) => Promise<AiProfile>
+  update: (input: UpdateAiProfileInput) => Promise<AiProfile>
+  delete: (profileId: string) => Promise<void>
+  generate: (input: GenerateResumeInput) => Promise<GenerateResumeResult>
+}

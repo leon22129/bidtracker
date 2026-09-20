@@ -32,6 +32,7 @@ export class WorkspacesService {
           include: { user: { select: { id: true, username: true, role: true } } },
         },
         _count: { select: { applications: true } },
+        resumeProfile: true,
       },
       orderBy: { name: 'asc' },
     });
@@ -45,6 +46,8 @@ export class WorkspacesService {
       is_archived: w.is_archived,
       created_at: w.created_at,
       updated_at: w.updated_at,
+      resume_profile_id: w.resume_profile_id,
+      profile: w.resumeProfile ? this.toProfile(w.resumeProfile) : null,
       application_count: w._count.applications,
       my_access:
         user.role === 'super_admin' || w.created_by_user_id === user.id || w.owner_user_id === user.id
@@ -80,11 +83,16 @@ export class WorkspacesService {
     const clash = await this.prisma.workspace.findUnique({ where: { name } });
     if (clash) throw new ConflictException('A workspace with that name already exists');
 
+    const profile = await this.prisma.resumeProfile.create({
+      data: { user_id: dto.owner_user_id, created_by_user_id: user.id, name },
+    });
+
     return this.prisma.workspace.create({
       data: {
         name,
         owner_user_id: dto.owner_user_id,
         created_by_user_id: user.id,
+        resume_profile_id: profile.id,
       },
       include: { owner: { select: { id: true, username: true, email: true } } },
     });
@@ -107,15 +115,117 @@ export class WorkspacesService {
       // snapshots and intentionally stay as they were.
     }
 
+    const profile = await this.ensureProfile(workspace);
+    const profileData = this.profileData(dto);
+    if (dto.profile_name !== undefined) profileData.name = dto.profile_name.trim();
+    if (Object.keys(profileData).length) {
+      await this.prisma.resumeProfile.update({ where: { id: profile.id }, data: profileData });
+    }
+
     return this.prisma.workspace.update({
       where: { id },
       data: {
         ...(dto.name !== undefined ? { name: dto.name.trim() } : {}),
         ...(dto.owner_user_id !== undefined ? { owner_user_id: dto.owner_user_id } : {}),
         ...(dto.is_archived !== undefined ? { is_archived: dto.is_archived } : {}),
+        ...(dto.resume_profile_id !== undefined ? { resume_profile_id: dto.resume_profile_id } : {}),
       },
-      include: { owner: { select: { id: true, username: true, email: true } } },
+      include: { owner: { select: { id: true, username: true, email: true } }, resumeProfile: true },
     });
+  }
+
+  async listProfiles(user: AuthUser) {
+    return this.prisma.resumeProfile.findMany({
+      where: user.role === 'admin' || user.role === 'super_admin'
+        ? { OR: [{ user_id: user.id }, { created_by_user_id: user.id }] }
+        : { user_id: user.id },
+      orderBy: { name: 'asc' },
+    }).then((profiles) => profiles.map((profile) => this.toProfile(profile)));
+  }
+
+  async updateProfile(profileId: string, dto: UpdateWorkspaceDto, user: AuthUser) {
+    const profile = await this.prisma.resumeProfile.findFirst({
+      where: {
+        id: profileId,
+        OR: user.role === 'admin' || user.role === 'super_admin'
+          ? [{ user_id: user.id }, { created_by_user_id: user.id }]
+          : [{ user_id: user.id }],
+      },
+    });
+    if (!profile) throw new NotFoundException('Profile not found');
+
+    const data = this.profileData(dto);
+    if (Object.keys(data).length) {
+      await this.prisma.resumeProfile.update({ where: { id: profileId }, data });
+    }
+    const updated = await this.prisma.resumeProfile.findUnique({ where: { id: profileId } });
+    return this.toProfile(updated);
+  }
+
+  async profileForWorkspace(user: AuthUser, workspaceId: string) {
+    await this.access.assertCanView(user, workspaceId);
+    const workspace = await this.prisma.workspace.findUnique({ where: { id: workspaceId } });
+    if (!workspace) throw new NotFoundException('Workspace not found');
+    return this.toProfile(await this.ensureProfile(workspace));
+  }
+
+  private async ensureProfile(workspace: { id: string; owner_user_id: string; created_by_user_id: string | null; resume_profile_id: string | null }) {
+    if (workspace.resume_profile_id) {
+      const existing = await this.prisma.resumeProfile.findUnique({ where: { id: workspace.resume_profile_id } });
+      if (existing) return existing;
+    }
+    const profile = await this.prisma.resumeProfile.create({
+      data: {
+        user_id: workspace.owner_user_id,
+        created_by_user_id: workspace.created_by_user_id,
+        name: `Profile for ${workspace.id}`,
+      },
+    });
+    await this.prisma.workspace.update({ where: { id: workspace.id }, data: { resume_profile_id: profile.id } });
+    return profile;
+  }
+
+  private profileData(dto: UpdateWorkspaceDto): Record<string, unknown> {
+    const data: Record<string, unknown> = {};
+    for (const [dtoKey, dbKey] of [
+      ['career_path', 'career_path'], ['full_name', 'full_name'], ['title', 'title'],
+      ['email', 'email'], ['phone', 'phone'], ['location', 'location'], ['linkedin', 'linkedin'],
+      ['update_headline', 'update_headline'], ['use_generated_role_titles', 'use_generated_role_titles'],
+      ['template', 'template'], ['save_in_folder', 'save_in_folder'], ['auto_download', 'auto_download'],
+      ['download_jd_with_pdf', 'download_jd_with_pdf'], ['use_company_name', 'use_company_name'],
+      ['generate_cover_letter', 'generate_cover_letter'], ['cover_letter_template', 'cover_letter_template'],
+    ]) {
+      if (dto[dtoKey as keyof UpdateWorkspaceDto] !== undefined) data[dbKey] = dto[dtoKey as keyof UpdateWorkspaceDto];
+    }
+    if (dto.education !== undefined) data.education_json = JSON.stringify(dto.education);
+    if (dto.certifications !== undefined) data.certifications_json = JSON.stringify(dto.certifications);
+    return data;
+  }
+
+  private toProfile(profile: any) {
+    const parse = (value: string) => {
+      try { return JSON.parse(value); } catch { return []; }
+    };
+    return {
+      id: profile.id,
+      name: profile.name,
+      career_path: profile.career_path,
+      personal_info: {
+        fullName: profile.full_name, title: profile.title, email: profile.email,
+        phone: profile.phone, location: profile.location, linkedin: profile.linkedin,
+      },
+      update_headline: profile.update_headline,
+      use_generated_role_titles: profile.use_generated_role_titles,
+      template: profile.template,
+      save_in_folder: profile.save_in_folder,
+      auto_download: profile.auto_download,
+      download_jd_with_pdf: profile.download_jd_with_pdf,
+      use_company_name: profile.use_company_name,
+      generate_cover_letter: profile.generate_cover_letter,
+      cover_letter_template: profile.cover_letter_template,
+      education: parse(profile.education_json),
+      certifications: parse(profile.certifications_json),
+    };
   }
 
   /** Cascades to applications, permissions and weekly reports. Admin-only, irreversible. */

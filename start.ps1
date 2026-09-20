@@ -5,7 +5,7 @@
 #   .\start.ps1
 #   .\start.ps1 --rebuild
 #
-# Ctrl+C stops backend, frontend, and Cloudflare tunnel.
+# Ctrl+C stops backend, both frontends, and Cloudflare tunnel.
 # ============================================================================
 
 $ErrorActionPreference = "Stop"
@@ -17,12 +17,14 @@ $ErrorActionPreference = "Stop"
 $Root = $PSScriptRoot
 $Backend = Join-Path $Root "backend"
 $Frontend = Join-Path $Root "frontend"
+$ResumeBuilder = Join-Path $Root "resume-builder-frontend"
 
 $BackendBuild = Join-Path $Backend "dist\main.js"
 $FrontendBuild = Join-Path $Frontend ".next"
 
 $FrontendUrl = "http://127.0.0.1:3000"
 $HealthUrl = "$FrontendUrl/api/health"
+$ResumeBuilderUrl = "http://127.0.0.1:3002"
 
 $Rebuild = $false
 $Processes = @()
@@ -172,6 +174,14 @@ if (!(Test-Path $Frontend)) {
     Die "Frontend directory not found: $Frontend"
 }
 
+if (!(Test-Path $ResumeBuilder)) {
+    Die "Resume-builder directory not found: $ResumeBuilder"
+}
+
+if (!(Test-Path (Join-Path $ResumeBuilder "node_modules"))) {
+    Die "Resume-builder dependencies are missing. Run: Push-Location resume-builder-frontend; npm install; Pop-Location"
+}
+
 if (!(Test-Path (Join-Path $Backend ".env"))) {
     Die "Backend .env not found: $Backend\.env"
 }
@@ -188,6 +198,7 @@ Say "checking ports"
 
 Stop-PortProcess -Port 3001
 Stop-PortProcess -Port 3000
+Stop-PortProcess -Port 3002
 
 Start-Sleep -Milliseconds 500
 
@@ -221,6 +232,10 @@ if ($Rebuild -or !(Test-Path $FrontendBuild)) {
 
     Say "building frontend"
 
+    if ($Rebuild -and (Test-Path $FrontendBuild)) {
+        Remove-Item $FrontendBuild -Recurse -Force
+    }
+
     Push-Location $Frontend
 
     try {
@@ -245,6 +260,9 @@ $BackendErr = Join-Path $LogDirectory "backend-err.log"
 $FrontendOut = Join-Path $LogDirectory "frontend-out.log"
 $FrontendErr = Join-Path $LogDirectory "frontend-err.log"
 
+$ResumeBuilderOut = Join-Path $LogDirectory "resume-builder-out.log"
+$ResumeBuilderErr = Join-Path $LogDirectory "resume-builder-err.log"
+
 $CloudflareOut = Join-Path $LogDirectory "cloudflared-out.log"
 $CloudflareErr = Join-Path $LogDirectory "cloudflared-err.log"
 
@@ -253,6 +271,8 @@ foreach ($Log in @(
     $BackendErr,
     $FrontendOut,
     $FrontendErr,
+    $ResumeBuilderOut,
+    $ResumeBuilderErr,
     $CloudflareOut,
     $CloudflareErr
 )) {
@@ -300,6 +320,25 @@ $Processes += $FrontendProcess
 Write-Host "Frontend PID: $($FrontendProcess.Id)"
 
 # ============================================================================
+# Start resume-builder frontend
+# ============================================================================
+
+Say "starting resume-builder"
+
+$ResumeBuilderProcess = Start-Process `
+    -FilePath "npm.cmd" `
+    -ArgumentList "run dev -- --host 127.0.0.1 --port 3002" `
+    -WorkingDirectory $ResumeBuilder `
+    -WindowStyle Hidden `
+    -RedirectStandardOutput $ResumeBuilderOut `
+    -RedirectStandardError $ResumeBuilderErr `
+    -PassThru
+
+$Processes += $ResumeBuilderProcess
+
+Write-Host "Resume-builder PID: $($ResumeBuilderProcess.Id)"
+
+# ============================================================================
 # Wait for application
 # ============================================================================
 
@@ -339,6 +378,21 @@ for ($i = 1; $i -le 60; $i++) {
         Die "frontend failed to start."
     }
 
+    if ($ResumeBuilderProcess.HasExited) {
+        Write-Host ""
+        Write-Host "Resume-builder stopped unexpectedly." -ForegroundColor Red
+
+        if (Test-Path $ResumeBuilderOut) {
+            Get-Content $ResumeBuilderOut -Tail 30
+        }
+
+        if (Test-Path $ResumeBuilderErr) {
+            Get-Content $ResumeBuilderErr -Tail 30
+        }
+
+        Die "resume-builder failed to start."
+    }
+
     try {
         $Response = Invoke-WebRequest `
             -Uri $HealthUrl `
@@ -347,9 +401,22 @@ for ($i = 1; $i -le 60; $i++) {
             -ErrorAction Stop
 
         if ($Response.StatusCode -eq 200) {
-            $LocalHealthy = $true
-            Write-Host "Application is ready." -ForegroundColor Green
-            break
+            try {
+                $ResumeBuilderResponse = Invoke-WebRequest `
+                    -Uri $ResumeBuilderUrl `
+                    -TimeoutSec 3 `
+                    -UseBasicParsing `
+                    -ErrorAction Stop
+
+                if ($ResumeBuilderResponse.StatusCode -eq 200) {
+                    $LocalHealthy = $true
+                    Write-Host "Application is ready." -ForegroundColor Green
+                    break
+                }
+            }
+            catch {
+                # Resume-builder is still starting.
+            }
         }
     }
     catch {
@@ -464,7 +531,9 @@ Say "checking public URL"
 
 $Reachable = $false
 
-for ($i = 1; $i -le 10; $i++) {
+# Quick Tunnel hostnames can take a little while to become reachable after
+# cloudflared prints the URL. Keep the local services alive while the edge settles.
+for ($i = 1; $i -le 30; $i++) {
 
     try {
 
@@ -517,6 +586,7 @@ Write-Host "============================================================" -Foreg
 Write-Host ""
 Write-Host "  Backend:   http://127.0.0.1:3001"
 Write-Host "  Frontend:  http://127.0.0.1:3000"
+Write-Host "  Resume:    http://127.0.0.1:3002"
 Write-Host ""
 Write-Host "  Temporary Cloudflare Quick Tunnel."
 Write-Host "  The URL changes when you run the script again."
@@ -545,6 +615,12 @@ try {
         if ($FrontendProcess.HasExited) {
             Write-Host ""
             Write-Host "WARNING: frontend has stopped." -ForegroundColor Yellow
+            break
+        }
+
+        if ($ResumeBuilderProcess.HasExited) {
+            Write-Host ""
+            Write-Host "WARNING: resume-builder has stopped." -ForegroundColor Yellow
             break
         }
 

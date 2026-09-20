@@ -21,6 +21,7 @@ export default function WorkspacesPage() {
   const [newOwner, setNewOwner] = useState('');
   const [managing, setManaging] = useState<Workspace | null>(null);
   const [reassigning, setReassigning] = useState<Workspace | null>(null);
+  const [editingProfile, setEditingProfile] = useState<Workspace | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -194,6 +195,13 @@ export default function WorkspacesPage() {
                 </Link>
                 {w.my_access === 'edit' && (
                   <>
+                    <button
+                      type="button"
+                      className="btn-secondary btn-xs"
+                      onClick={() => setEditingProfile(w)}
+                    >
+                      Edit profile
+                    </button>
                     <Link href={`/workspaces/${w.id}/add-urls`} className="btn-secondary btn-xs">
                       Add URLs
                     </Link>
@@ -258,8 +266,114 @@ export default function WorkspacesPage() {
           onChanged={load}
         />
       )}
+      {editingProfile && (
+        <ProfileModal workspace={editingProfile} onClose={() => setEditingProfile(null)} onChanged={load} />
+      )}
     </main>
   );
+}
+
+function ProfileModal({
+  workspace,
+  onClose,
+  onChanged,
+}: {
+  workspace: Workspace;
+  onClose: () => void;
+  onChanged: () => Promise<void>;
+}) {
+  const toast = useToast();
+  const profile = workspace.profile;
+  const [name, setName] = useState(profile?.name ?? workspace.name);
+  const [careerPath, setCareerPath] = useState(profile?.career_path ?? '');
+  const [personal, setPersonal] = useState(profile?.personal_info ?? {
+    fullName: '', title: '', email: '', phone: '', location: '', linkedin: '',
+  });
+  const [education, setEducation] = useState(profile?.education ?? [{ degree: '', school: '', year: '' }]);
+  const [certifications, setCertifications] = useState(profile?.certifications ?? []);
+  const [updateHeadline, setUpdateHeadline] = useState(profile?.update_headline ?? true);
+  const [useGeneratedRoleTitles, setUseGeneratedRoleTitles] = useState(profile?.use_generated_role_titles ?? true);
+  const [busy, setBusy] = useState(false);
+
+  async function save(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    try {
+      await api.updateWorkspace(workspace.id, {
+        profile_name: name,
+        career_path: careerPath,
+        ...personal,
+        education,
+        certifications,
+        update_headline: updateHeadline,
+        use_generated_role_titles: useGeneratedRoleTitles,
+      });
+      toast.success('Profile saved');
+      await onChanged();
+      onClose();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not save profile');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/30 p-4">
+      <form onSubmit={save} className="card max-h-[90vh] w-full max-w-2xl overflow-y-auto p-5">
+        <h2 className="text-sm font-semibold">Edit resume profile</h2>
+        <div className="mt-4 grid gap-3 sm:grid-cols-2">
+          <ProfileInput label="Profile name" value={name} onChange={setName} />
+          <ProfileInput label="Full name" value={personal.fullName} onChange={(v) => setPersonal({ ...personal, fullName: v })} />
+          <ProfileInput label="Title" value={personal.title} onChange={(v) => setPersonal({ ...personal, title: v })} />
+          <ProfileInput label="Email" type="email" value={personal.email} onChange={(v) => setPersonal({ ...personal, email: v })} />
+          <ProfileInput label="Phone" value={personal.phone} onChange={(v) => setPersonal({ ...personal, phone: v })} />
+          <ProfileInput label="Location" value={personal.location} onChange={(v) => setPersonal({ ...personal, location: v })} />
+          <ProfileInput label="LinkedIn" value={personal.linkedin} onChange={(v) => setPersonal({ ...personal, linkedin: v })} />
+        </div>
+        <label className="label mt-4" htmlFor="career-path">Career path</label>
+        <textarea id="career-path" className="input mt-1 min-h-32 font-mono text-xs" value={careerPath} onChange={(e) => setCareerPath(e.target.value)} />
+        <div className="mt-3 space-y-2">
+          <label className="flex items-center gap-2 text-xs text-gray-700">
+            <input type="checkbox" checked={updateHeadline} onChange={(e) => setUpdateHeadline(e.target.checked)} />
+            Update headline from generated resume
+          </label>
+          <label className="flex items-center gap-2 text-xs text-gray-700">
+            <input type="checkbox" checked={useGeneratedRoleTitles} onChange={(e) => setUseGeneratedRoleTitles(e.target.checked)} />
+            Use AI-generated job titles
+          </label>
+        </div>
+        <h3 className="mt-4 text-xs font-semibold">Education</h3>
+        {education.map((item, index) => (
+          <div key={index} className="mt-2 grid gap-2 sm:grid-cols-[1fr_1fr_8rem_auto]">
+            <ProfileInput label="Degree" value={item.degree} onChange={(v) => setEducation(education.map((x, i) => i === index ? { ...x, degree: v } : x))} />
+            <ProfileInput label="School" value={item.school} onChange={(v) => setEducation(education.map((x, i) => i === index ? { ...x, school: v } : x))} />
+            <ProfileInput label="Year" value={item.year} onChange={(v) => setEducation(education.map((x, i) => i === index ? { ...x, year: v } : x))} />
+            <button type="button" className="btn-danger btn-xs self-end" onClick={() => setEducation(education.filter((_, i) => i !== index))}>Remove</button>
+          </div>
+        ))}
+        <button type="button" className="btn-secondary btn-xs mt-2" onClick={() => setEducation([...education, { degree: '', school: '', year: '' }])}>Add education</button>
+        <h3 className="mt-4 text-xs font-semibold">Certifications</h3>
+        {certifications.map((item, index) => (
+          <div key={index} className="mt-2 grid gap-2 sm:grid-cols-[1fr_1fr_8rem_auto]">
+            <ProfileInput label="Name" value={item.name} onChange={(v) => setCertifications(certifications.map((x, i) => i === index ? { ...x, name: v } : x))} />
+            <ProfileInput label="Issuer" value={item.issuer} onChange={(v) => setCertifications(certifications.map((x, i) => i === index ? { ...x, issuer: v } : x))} />
+            <ProfileInput label="Year" value={item.year} onChange={(v) => setCertifications(certifications.map((x, i) => i === index ? { ...x, year: v } : x))} />
+            <button type="button" className="btn-danger btn-xs self-end" onClick={() => setCertifications(certifications.filter((_, i) => i !== index))}>Remove</button>
+          </div>
+        ))}
+        <button type="button" className="btn-secondary btn-xs mt-2" onClick={() => setCertifications([...certifications, { name: '', issuer: '', year: '' }])}>Add certification</button>
+        <div className="mt-5 flex justify-end gap-2">
+          <button type="button" className="btn-secondary" onClick={onClose} disabled={busy}>Cancel</button>
+          <button type="submit" className="btn-primary" disabled={busy}>{busy ? 'Saving…' : 'Save profile'}</button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+function ProfileInput({ label, value, onChange, type = 'text' }: { label: string; value: string; onChange: (value: string) => void; type?: string }) {
+  return <label className="label">{label}<input type={type} className="input mt-1" value={value} onChange={(e) => onChange(e.target.value)} /></label>;
 }
 
 function OwnerModal({

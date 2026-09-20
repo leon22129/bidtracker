@@ -18,6 +18,20 @@ export class WorkspacesController {
     return this.workspaces.findAllForUser(user, includeArchived === 'true');
   }
 
+  @Get('profiles/assigned')
+  profiles(@CurrentUser() user: AuthUser) {
+    return this.workspaces.listProfiles(user);
+  }
+
+  @Patch('profiles/:profileId')
+  updateProfile(
+    @Param('profileId') profileId: string,
+    @Body() dto: UpdateWorkspaceDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.workspaces.updateProfile(profileId, dto, user);
+  }
+
   @Get(':id')
   findOne(@CurrentUser() user: AuthUser, @Param('id') id: string) {
     return this.workspaces.findOne(user, id);
@@ -30,7 +44,6 @@ export class WorkspacesController {
   }
 
   @Patch(':id')
-  @Roles('admin', 'super_admin')
   update(@Param('id') id: string, @Body() dto: UpdateWorkspaceDto, @CurrentUser() user: AuthUser) {
     return this.workspaces.update(id, dto, user);
   }

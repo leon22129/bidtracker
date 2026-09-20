@@ -60,6 +60,33 @@ export interface Workspace {
   permissions?: WorkspacePermissionRow[];
   created_at: string;
   updated_at: string;
+  resume_profile_id?: string | null;
+  profile: ResumeProfile | null;
+}
+
+export interface ResumeProfile {
+  id: string;
+  name: string;
+  career_path: string;
+  personal_info: {
+    fullName: string;
+    title: string;
+    email: string;
+    phone: string;
+    location: string;
+    linkedin: string;
+  };
+  education: Array<{ degree: string; school: string; year: string }>;
+  certifications: Array<{ name: string; issuer: string; year: string }>;
+  update_headline: boolean;
+  use_generated_role_titles: boolean;
+  template: string;
+  save_in_folder: boolean;
+  auto_download: boolean;
+  download_jd_with_pdf: boolean;
+  use_company_name: boolean;
+  generate_cover_letter: boolean;
+  cover_letter_template: string;
 }
 
 export interface JobApplication {

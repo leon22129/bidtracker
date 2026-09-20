@@ -31,6 +31,8 @@ model User {
   ownedWorkspaces Workspace[]           @relation("WorkspaceOwner")
   createdWorkspaces Workspace[]         @relation("WorkspaceCreator")
   createdUsers     User[]               @relation("UserCreator")
+  resumeProfiles   ResumeProfile[]
+  createdResumeProfiles ResumeProfile[] @relation("ResumeProfileCreator")
   permissions     WorkspacePermission[]
   createdApplications JobApplication[]  @relation("CreatedBy")
   processedPaymentReports PaymentReport[] @relation("ProcessedBy")
@@ -60,11 +62,51 @@ model Workspace {
   creator      User?                 @relation("WorkspaceCreator", fields: [created_by_user_id], references: [id], onDelete: SetNull)
   permissions  WorkspacePermission[]
   applications JobApplication[]
+  resume_profile_id String?
+  resumeProfile ResumeProfile? @relation(fields: [resume_profile_id], references: [id], onDelete: SetNull)
 
   @@index([owner_user_id])
   @@index([created_by_user_id])
   @@index([is_archived])
+  @@index([resume_profile_id])
   @@map("workspaces")
+}
+
+// A resume-builder profile assigned to one bid-tracker user.
+model ResumeProfile {
+  id            String   @id @default(cuid())
+  user_id       String
+  created_by_user_id String?
+  name          String
+  career_path   String   @default("")
+  full_name     String   @default("")
+  title         String   @default("")
+  email         String   @default("")
+  phone         String   @default("")
+  location      String   @default("")
+  linkedin      String   @default("")
+  update_headline Boolean @default(true)
+  use_generated_role_titles Boolean @default(true)
+  template       String   @default("classic")
+  save_in_folder Boolean  @default(false)
+  auto_download  Boolean  @default(false)
+  download_jd_with_pdf Boolean @default(false)
+  use_company_name Boolean @default(true)
+  generate_cover_letter Boolean @default(false)
+  cover_letter_template String @default("classic")
+  education_json String  @default("[]")
+  certifications_json String @default("[]")
+  created_at    DateTime @default(now())
+  updated_at    DateTime @updatedAt
+
+  user       User        @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  creator    User?       @relation("ResumeProfileCreator", fields: [created_by_user_id], references: [id], onDelete: SetNull)
+  workspaces Workspace[]
+
+  @@unique([user_id, name])
+  @@index([user_id])
+  @@index([created_by_user_id])
+  @@map("resume_profiles")
 }
 
 // ---------------------------------------------------------------------------
