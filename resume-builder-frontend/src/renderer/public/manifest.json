@@ -29,9 +29,10 @@
   "host_permissions": [
     "http://localhost/*",
     "http://127.0.0.1/*",
-    "https://api.resume-ai.com/*"
+    "https://api.resume-ai.com/*",
+    "https://*.trycloudflare.com/*"
   ],
   "content_security_policy": {
-    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'; connect-src 'self' http://localhost:* http://127.0.0.1:* https://api.resume-ai.com"
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'; connect-src 'self' data: http://localhost:* http://127.0.0.1:* https://api.resume-ai.com https://*.trycloudflare.com"
   }
 }

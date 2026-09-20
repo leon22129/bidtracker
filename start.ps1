@@ -531,9 +531,13 @@ else {
 Write-Host ""
 Write-Host "============================================================" -ForegroundColor Green
 Write-Host ""
-Write-Host "  PUBLIC URL:" -ForegroundColor White
+Write-Host "  FRONTEND URL:" -ForegroundColor White
 Write-Host ""
 Write-Host "  $Public" -ForegroundColor Green
+Write-Host ""
+Write-Host "  BACKEND API URL:" -ForegroundColor White
+Write-Host ""
+Write-Host "  $Public/api" -ForegroundColor Green
 Write-Host ""
 Write-Host "  STATUS:" -ForegroundColor White
 Write-Host ""

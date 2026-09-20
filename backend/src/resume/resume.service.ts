@@ -64,6 +64,10 @@ export class ResumeService {
     const profile = await this.findAccessibleProfile(user, dto.profile_id);
     if (!profile) throw new BadRequestException('Profile is not assigned to your account');
     if (dto.job_description && dto.kind === 'jobEligibility') {
+      console.log('job eligibility prompt: ', buildJobEligibilityPrompt(dto.job_description));
+      console.log('job generation prompt: ', this.resumePrompt(profile, dto.job_description));
+    }
+    if (dto.job_description && dto.kind === 'jobEligibility') {
       return { tailored_resume: await this.openAi(buildJobEligibilityPrompt(dto.job_description)), full_name: profile.full_name };
     }
     if (dto.job_description && dto.kind === 'resume') {
