@@ -103,6 +103,11 @@ export class WorkspacesService {
     const workspace = await this.prisma.workspace.findUnique({ where: { id } });
     if (!workspace) throw new NotFoundException('Workspace not found');
 
+    const profileData = this.profileData(dto);
+    if (dto.profile_name !== undefined || Object.keys(profileData).length) {
+      this.assertCanEditProfile(user);
+    }
+
     if (dto.name && dto.name.trim() !== workspace.name) {
       const clash = await this.prisma.workspace.findUnique({ where: { name: dto.name.trim() } });
       if (clash) throw new ConflictException('A workspace with that name already exists');
@@ -116,7 +121,6 @@ export class WorkspacesService {
     }
 
     const profile = await this.ensureProfile(workspace);
-    const profileData = this.profileData(dto);
     if (dto.profile_name !== undefined) profileData.name = dto.profile_name.trim();
     if (Object.keys(profileData).length) {
       await this.prisma.resumeProfile.update({ where: { id: profile.id }, data: profileData });
@@ -151,6 +155,7 @@ export class WorkspacesService {
   }
 
   async updateProfile(profileId: string, dto: UpdateWorkspaceDto, user: AuthUser) {
+    this.assertCanEditProfile(user);
     const profile = await this.prisma.resumeProfile.findFirst({
       where: {
         id: profileId,
@@ -167,6 +172,12 @@ export class WorkspacesService {
     }
     const updated = await this.prisma.resumeProfile.findUnique({ where: { id: profileId } });
     return this.toProfile(updated);
+  }
+
+  private assertCanEditProfile(user: AuthUser): void {
+    if (user.role === 'bidder' || user.role === 'bidder_manager') {
+      throw new ForbiddenException('Bidders and bidder managers cannot edit profile information');
+    }
   }
 
   async profileForWorkspace(user: AuthUser, workspaceId: string) {

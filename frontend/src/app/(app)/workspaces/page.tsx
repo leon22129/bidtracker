@@ -12,6 +12,7 @@ export default function WorkspacesPage() {
   const { user } = useAuth();
   const toast = useToast();
   const admin = canManageWorkspaces(user);
+  const canEditProfiles = user?.role === 'admin' || user?.role === 'super_admin';
 
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [users, setUsers] = useState<User[]>([]);
@@ -195,13 +196,15 @@ export default function WorkspacesPage() {
                 </Link>
                 {w.my_access === 'edit' && (
                   <>
-                    <button
-                      type="button"
-                      className="btn-secondary btn-xs"
-                      onClick={() => setEditingProfile(w)}
-                    >
-                      Edit profile
-                    </button>
+                    {canEditProfiles && (
+                      <button
+                        type="button"
+                        className="btn-secondary btn-xs"
+                        onClick={() => setEditingProfile(w)}
+                      >
+                        Edit profile
+                      </button>
+                    )}
                     <Link href={`/workspaces/${w.id}/add-urls`} className="btn-secondary btn-xs">
                       Add URLs
                     </Link>
