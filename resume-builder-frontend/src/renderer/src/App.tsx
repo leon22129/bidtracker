@@ -183,9 +183,15 @@ export default function Home() {
       return window.webAuth.status().then((status) => {
         setWebAuthStatus(status);
         if (status.authenticated) void loadData(prefix);
+      }).catch((err) => {
+        setWebAuthStatus({ authenticated: false });
+        setWebAuthMessage(getFriendlyErrorMessage(err, "Unable to reach the backend. Check the API URL and connection."));
       });
     })
-      .catch((err) => setWebAuthMessage(getFriendlyErrorMessage(err, "Unable to check your login.")));
+      .catch((err) => {
+        setWebAuthStatus({ authenticated: false });
+        setWebAuthMessage(getFriendlyErrorMessage(err, "Unable to check your login."));
+      });
   }, []);
 
   useEffect(() => {
