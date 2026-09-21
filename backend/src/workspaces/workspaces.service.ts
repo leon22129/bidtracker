@@ -105,7 +105,7 @@ export class WorkspacesService {
 
     const profileData = this.profileData(dto);
     if (dto.profile_name !== undefined || Object.keys(profileData).length) {
-      this.assertCanEditProfile(user);
+      this.assertCanEditProfile(user, dto);
     }
 
     if (dto.name && dto.name.trim() !== workspace.name) {
@@ -156,7 +156,7 @@ export class WorkspacesService {
   }
 
   async updateProfile(profileId: string, dto: UpdateWorkspaceDto, user: AuthUser) {
-    this.assertCanEditProfile(user);
+    this.assertCanEditProfile(user, dto);
     const profile = await this.prisma.resumeProfile.findFirst({
       where: {
         id: profileId,
@@ -175,9 +175,24 @@ export class WorkspacesService {
     return this.toProfile(updated);
   }
 
-  private assertCanEditProfile(user: AuthUser): void {
-    if (user.role === 'bidder' || user.role === 'bidder_manager') {
-      throw new ForbiddenException('Bidders and bidder managers cannot edit profile information');
+  private assertCanEditProfile(user: AuthUser, dto: UpdateWorkspaceDto = {}): void {
+    if (user.role !== 'bidder' && user.role !== 'bidder_manager') return;
+
+    const data = this.profileData(dto);
+    if (dto.profile_name !== undefined) data.name = dto.profile_name;
+
+    const forbidden = Object.keys(data).filter((key) => ![
+      'template',
+      'save_in_folder',
+      'auto_download',
+      'download_jd_with_pdf',
+      'use_company_name',
+      'generate_cover_letter',
+      'cover_letter_template',
+    ].includes(key));
+
+    if (forbidden.length) {
+      throw new ForbiddenException('Bidders and bidder managers can only edit resume export and template settings.');
     }
   }
 
