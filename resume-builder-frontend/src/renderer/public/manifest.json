@@ -1,10 +1,10 @@
 {
   "manifest_version": 3,
-  "name": "Resume AI",
-  "version": "0.1.0",
+  "name": "Resume Builder",
+  "version": "0.1.1",
   "description": "Generate tailored resumes while browsing job postings.",
   "action": {
-    "default_title": "Open Resume AI",
+    "default_title": "Open Resume Builder",
     "default_icon": {
       "16": "icon-16.png",
       "32": "icon-32.png"
