@@ -198,6 +198,12 @@ export function ProfileWorkspace({
         if (isActive) toast({ title: "Duplicate job", description: reason });
         return;
       }
+      if (data.banned) {
+        const reason = "This job URL is on the banned list and was not sent to OpenAI.";
+        setError(reason);
+        if (isActive) toast({ title: "Banned job", description: reason });
+        return;
+      }
       if (data.eligible === false) {
         const reason = data.reason || "This position did not pass the eligibility check.";
         setError(reason);

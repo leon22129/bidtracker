@@ -139,10 +139,11 @@ const webAiProfiles: AiProfilesApi = {
         resume: input.resume,
       }),
     })
-    const data = await response.json().catch(() => null) as { tailored_resume?: string; full_name?: string; error?: string; eligible?: boolean; reason?: string; resume?: unknown; duplicate?: boolean; duplicate_type?: string | null; existing_application?: GenerateResumeResult["existingApplication"] } | null
+    const data = await response.json().catch(() => null) as { tailored_resume?: string; full_name?: string; error?: string; eligible?: boolean; reason?: string; banned?: boolean; resume?: unknown; duplicate?: boolean; duplicate_type?: string | null; existing_application?: GenerateResumeResult["existingApplication"] } | null
     if (!response.ok) throw new Error(data?.error || `Generation failed (${response.status}).`)
     if (applicationGeneration) {
       if (data?.duplicate) return { duplicate: true, duplicateType: data.duplicate_type, existingApplication: data.existing_application }
+      if (data?.banned) return { banned: true, tailored_resume: "" }
       if (data?.eligible === false) return { eligible: false, reason: data.reason, tailored_resume: "" }
       if (!data?.resume) throw new Error("The AI provider returned an empty response.")
       return { eligible: true, tailored_resume: JSON.stringify(data.resume), full_name: data.full_name }

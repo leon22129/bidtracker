@@ -3,7 +3,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { AuthUser } from '../common/decorators/current-user.decorator';
 import { WorkspaceAccessService } from '../workspaces/workspace-access.service';
 import { DuplicateService } from '../applications/duplicate.service';
-import { normalizeUrl } from '../common/utils/url.util';
+import { BANNED_URL_NOTE, isBannedUrl, normalizeUrl } from '../common/utils/url.util';
 import { GenerateApplicationDto, GenerateProfilePromptDto } from './dto/generate.dto';
 import { BASE_PROMPT_TEXT, buildApplicationAnswersPrompt, buildJobEligibilityPrompt } from './original-prompts';
 
@@ -42,6 +42,22 @@ export class ResumeService {
         duplicate_type: duplicate.duplicate_type,
         existing_application: duplicate.existing,
       };
+    }
+
+    if (isBannedUrl(dto.url)) {
+      const application = await this.prisma.jobApplication.create({
+        data: {
+          workspace_id: workspace.id,
+          date: new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), new Date().getUTCDate())),
+          number: await this.nextNumber(workspace.id),
+          url: dto.url.trim(),
+          normalized_url: normalizeUrl(dto.url),
+          application_status: 'Rejected',
+          note: BANNED_URL_NOTE,
+          created_by_user_id: user.id,
+        },
+      });
+      return { success: false, banned: true, url: dto.url, application };
     }
 
     const jobDescription = dto.job_description?.trim() || await this.fetchJobDescription(dto.url);

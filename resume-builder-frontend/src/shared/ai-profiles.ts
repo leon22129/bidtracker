@@ -62,6 +62,7 @@ export type GenerateResumeResult = {
   full_name?: string
   eligible?: boolean
   reason?: string
+  banned?: boolean
   duplicate?: boolean
   duplicateType?: string | null
   existingApplication?: {
