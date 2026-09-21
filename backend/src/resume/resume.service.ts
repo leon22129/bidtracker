@@ -98,10 +98,6 @@ export class ResumeService {
     const profile = await this.findAccessibleProfile(user, dto.profile_id);
     if (!profile) throw new BadRequestException('Profile is not assigned to your account');
     if (dto.job_description && dto.kind === 'jobEligibility') {
-      console.log('job eligibility prompt: ', buildJobEligibilityPrompt(dto.job_description));
-      console.log('job generation prompt: ', this.resumePrompt(profile, dto.job_description));
-    }
-    if (dto.job_description && dto.kind === 'jobEligibility') {
       return { tailored_resume: await this.openAi(buildJobEligibilityPrompt(dto.job_description)), full_name: profile.full_name };
     }
     if (dto.job_description && dto.kind === 'resume') {
@@ -161,7 +157,25 @@ export class ResumeService {
   private async openAi(prompt: string) {
     const apiKey = process.env.OPENAI_API_KEY?.trim();
     if (!apiKey) throw new BadGatewayException('The server is missing OPENAI_API_KEY');
-    const response = await fetch(OPENAI_URL, { method: 'POST', headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ model: MODEL, input: prompt }) });
+    let response: Response;
+    try {
+      response = await fetch(OPENAI_URL, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+        signal: AbortSignal.timeout(120000),
+        body: JSON.stringify({
+          model: MODEL,
+          input: prompt,
+          reasoning: { effort: 'medium' },
+          max_output_tokens: 16000,
+        }),
+      });
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'TimeoutError') {
+        throw new BadGatewayException('The AI provider took too long to generate a response. Please try again.');
+      }
+      throw new BadGatewayException('Unable to reach the AI provider. Please try again.');
+    }
     const data = await response.json().catch(() => null) as OpenAiResponse | null;
     if (!response.ok) throw new BadGatewayException(data?.error?.message || 'OpenAI request failed');
     const text = data?.output_text || data?.output?.flatMap((item) => item.content || []).filter((item) => item.type === 'output_text').map((item) => item.text || '').join('');
