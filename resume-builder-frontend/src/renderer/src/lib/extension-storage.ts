@@ -1,4 +1,4 @@
-const DEFAULT_API_URL = "http://127.0.0.1:3001/api";
+const DEFAULT_API_URL = "http://api.yourdomain.com/api";
 const API_URL_KEY = "resume_ai_api_url";
 const TOKEN_KEY = "resume_ai_access_token";
 const PROFILE_DOWNLOAD_PATHS_KEY = "resume_ai_profile_download_paths";

@@ -30,7 +30,7 @@ async function apiFetch(path: string, init: RequestInit = {}): Promise<Response>
   const headers = new Headers(init.headers)
   if (token) headers.set("Authorization", `Bearer ${token}`)
   const response = await fetch(`${await getApiBaseUrl()}${path}`, { ...init, headers })
-  if (response.status === 401) {
+  if (response.status === 401 && path !== "/auth/login") {
     await authStorage.clearToken()
     window.dispatchEvent(new CustomEvent("resume-ai-auth-invalid"))
     throw new UnauthorizedError()
