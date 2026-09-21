@@ -89,7 +89,6 @@ const webAiProfiles: AiProfilesApi = {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        full_name: input.personalInfo?.fullName || "",
         template: input.template,
         save_in_folder: input.saveInFolder,
         auto_download: input.autoDownload,
