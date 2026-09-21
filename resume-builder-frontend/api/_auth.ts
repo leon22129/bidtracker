@@ -1,4 +1,5 @@
 import { createHmac, timingSafeEqual } from "node:crypto"
+import { Buffer } from "node:buffer"
 
 const COOKIE_NAME = "resume_session"
 const SESSION_MAX_AGE = 60 * 60 * 24 * 7
