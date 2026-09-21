@@ -50,11 +50,10 @@ import {
 import { DEFAULT_TEMPLATE, type TemplateId } from "@/lib/pdf-templates";
 import {
   getFriendlyErrorMessage,
-  parseJobEligibility,
   parseGeneratedResume,
   getResumeDetailsForProfile,
 } from "@/lib/profile-utils";
-import { chooseProfileDirectory, getProfileDownloadPaths } from "@/lib/extension-storage";
+import { chooseProfileDirectory, getCurrentBrowserTabUrl, getProfileDownloadPaths } from "@/lib/extension-storage";
 
 interface ProfileWorkspaceProps {
   profile: AiProfile;
@@ -181,35 +180,30 @@ export function ProfileWorkspace({
     const shouldSaveInFolder = profile.saveInFolder ?? saveInFolder;
 
     try {
-      const eligibilityResponse = await window.aiProfiles.generate({
-        profileId: profile.id,
-        jobDescription,
-        kind: "jobEligibility",
-      });
-      const eligibility = parseJobEligibility(eligibilityResponse.tailored_resume);
-      const rejectionReasons: string[] = [];
-
-      if (eligibility.requires_clearance) rejectionReasons.push("requires security clearance");
-      if (eligibility.requires_public_trust) {
-        rejectionReasons.push("requires public trust");
-      }
-      if (!eligibility.is_us_job) rejectionReasons.push("is not clearly a US job");
-      if (!eligibility.work_arrangement_is_remote_only) rejectionReasons.push("is not explicitly fully remote");
-      if (eligibility.requires_in_person_interview) rejectionReasons.push("requires an in-person interview");
-      if (eligibility.requires_onsite_onboarding) rejectionReasons.push("requires onsite onboarding");
-
-      if (rejectionReasons.length > 0) {
-        const reason = `This position was skipped because it ${rejectionReasons.join(", ")}.`;
-        setError(reason);
-        if (isActive) toast({ title: "Position skipped", description: eligibility.reason || reason });
-        return;
-      }
-
+      const tabUrl = await getCurrentBrowserTabUrl();
       const data = await window.aiProfiles.generate({
         profileId: profile.id,
+        workspaceId: profile.workspaceId,
+        url: tabUrl,
         jobDescription,
         kind: "resume",
       });
+      if (data.duplicate) {
+        const existing = data.existingApplication;
+        const location = existing
+          ? ` It already exists in ${existing.workspace_name} as application #${existing.number}.`
+          : "";
+        const reason = `This job URL has already been added.${location}`;
+        setError(reason);
+        if (isActive) toast({ title: "Duplicate job", description: reason });
+        return;
+      }
+      if (data.eligible === false) {
+        const reason = data.reason || "This position did not pass the eligibility check.";
+        setError(reason);
+        if (isActive) toast({ title: "Position skipped", description: reason });
+        return;
+      }
       const generatedContent = data.tailored_resume || "";
 
       console.log(generatedContent);
@@ -315,7 +309,7 @@ export function ProfileWorkspace({
         questions,
         resume: resumeData,
       });
-      const responseText = data.tailored_resume
+      const responseText = (data.tailored_resume || "")
         .trim()
         .replace(/^```(?:json)?\s*/i, "")
         .replace(/\s*```$/, "");

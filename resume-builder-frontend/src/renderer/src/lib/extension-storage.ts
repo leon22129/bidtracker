@@ -83,6 +83,16 @@ export async function getCurrentBrowserTabKey(): Promise<string> {
   return `tab_${tabs?.[0]?.id ?? "standalone"}`;
 }
 
+export async function getCurrentBrowserTabUrl(): Promise<string> {
+  const chromeApi = (globalThis as { chrome?: { tabs?: { query: (queryInfo: { active: boolean; currentWindow: boolean }) => Promise<Array<{ url?: string }>> } } }).chrome;
+  const tabs = await chromeApi?.tabs?.query({ active: true, currentWindow: true });
+  const url = tabs?.[0]?.url?.trim();
+  if (!url || !/^https?:\/\//i.test(url)) {
+    throw new Error("Open a job posting in the active browser tab before generating.");
+  }
+  return url;
+}
+
 function openDirectoryHandleDb(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(PROFILE_DIRECTORY_HANDLES_DB, 1);

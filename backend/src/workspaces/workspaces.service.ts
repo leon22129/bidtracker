@@ -150,6 +150,7 @@ export class WorkspacesService {
           { workspaces: { some: { is_archived: false } } },
         ],
       },
+      include: { workspaces: { where: { is_archived: false }, select: { id: true } } },
       orderBy: { name: 'asc' },
     }).then((profiles) => profiles.map((profile) => this.toProfile(profile)));
   }
@@ -226,6 +227,7 @@ export class WorkspacesService {
     };
     return {
       id: profile.id,
+      workspace_id: profile.workspaces?.[0]?.id,
       name: profile.name,
       career_path: profile.career_path,
       personal_info: {

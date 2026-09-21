@@ -60,6 +60,7 @@ const webAiProfiles: AiProfilesApi = {
     const profiles = await response.json() as Array<any>
     return profiles.map((profile) => ({
       id: profile.id,
+      workspaceId: profile.workspace_id,
       name: profile.name,
       careerPath: profile.career_path || "",
       personalInfo: normalizeResumePersonalInfo(profile.personal_info),
@@ -123,12 +124,14 @@ const webAiProfiles: AiProfilesApi = {
     throw new Error("Profiles are deleted in BidTracker.")
   },
   async generate(input: GenerateResumeInput): Promise<GenerateResumeResult> {
-    const response = await apiFetch("/resume/profile-generate", {
+    const applicationGeneration = Boolean(input.url && input.workspaceId)
+    const response = await apiFetch(applicationGeneration ? "/resume/generate" : "/resume/profile-generate", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
+        ...(applicationGeneration ? { workspace_id: input.workspaceId, url: input.url } : {}),
         profile_id: input.profileId,
         job_description: input.jobDescription,
         kind: input.kind,
@@ -136,8 +139,14 @@ const webAiProfiles: AiProfilesApi = {
         resume: input.resume,
       }),
     })
-    const data = await response.json().catch(() => null) as { tailored_resume?: string; full_name?: string; error?: string } | null
+    const data = await response.json().catch(() => null) as { tailored_resume?: string; full_name?: string; error?: string; eligible?: boolean; reason?: string; resume?: unknown; duplicate?: boolean; duplicate_type?: string | null; existing_application?: GenerateResumeResult["existingApplication"] } | null
     if (!response.ok) throw new Error(data?.error || `Generation failed (${response.status}).`)
+    if (applicationGeneration) {
+      if (data?.duplicate) return { duplicate: true, duplicateType: data.duplicate_type, existingApplication: data.existing_application }
+      if (data?.eligible === false) return { eligible: false, reason: data.reason, tailored_resume: "" }
+      if (!data?.resume) throw new Error("The AI provider returned an empty response.")
+      return { eligible: true, tailored_resume: JSON.stringify(data.resume), full_name: data.full_name }
+    }
     if (!data?.tailored_resume) throw new Error("The AI provider returned an empty response.")
     return { tailored_resume: data.tailored_resume, full_name: data.full_name }
   },

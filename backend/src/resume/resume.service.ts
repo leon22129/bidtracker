@@ -2,6 +2,8 @@ import { BadGatewayException, BadRequestException, Injectable } from '@nestjs/co
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthUser } from '../common/decorators/current-user.decorator';
 import { WorkspaceAccessService } from '../workspaces/workspace-access.service';
+import { DuplicateService } from '../applications/duplicate.service';
+import { normalizeUrl } from '../common/utils/url.util';
 import { GenerateApplicationDto, GenerateProfilePromptDto } from './dto/generate.dto';
 import { BASE_PROMPT_TEXT, buildApplicationAnswersPrompt, buildJobEligibilityPrompt } from './original-prompts';
 
@@ -12,7 +14,11 @@ type OpenAiResponse = { output_text?: string; output?: Array<{ type?: string; ro
 
 @Injectable()
 export class ResumeService {
-  constructor(private readonly prisma: PrismaService, private readonly access: WorkspaceAccessService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly access: WorkspaceAccessService,
+    private readonly duplicates: DuplicateService,
+  ) {}
 
   async generate(user: AuthUser, dto: GenerateApplicationDto) {
     await this.access.assertCanEdit(user, dto.workspace_id);
@@ -25,6 +31,17 @@ export class ResumeService {
     if (!profile) throw new BadRequestException('Select a profile assigned to your account');
     if (workspace.resume_profile_id && profile.id !== workspace.resume_profile_id) {
       throw new BadRequestException('The selected profile is not assigned to this workspace');
+    }
+
+    const duplicate = (await this.duplicates.classifyBatch(workspace.id, [dto.url]))[0];
+    if (duplicate.is_duplicate) {
+      return {
+        success: false,
+        duplicate: true,
+        url: dto.url,
+        duplicate_type: duplicate.duplicate_type,
+        existing_application: duplicate.existing,
+      };
     }
 
     const jobDescription = dto.job_description?.trim() || await this.fetchJobDescription(dto.url);
@@ -51,9 +68,10 @@ export class ResumeService {
         date: new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), new Date().getUTCDate())),
         number: await this.nextNumber(workspace.id),
         url: dto.url.trim(),
-        normalized_url: dto.url.trim().toLowerCase().replace(/\/$/, ''),
-        job_title: typeof resume.main_title === 'string' ? resume.main_title : null,
+        normalized_url: normalizeUrl(dto.url),
+        job_title: typeof resume.target_job_title === 'string' ? resume.target_job_title : null,
         company_name: typeof resume.target_company === 'string' ? resume.target_company : null,
+        application_status: 'Applied',
         created_by_user_id: user.id,
       },
     });

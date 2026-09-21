@@ -168,6 +168,7 @@ Formatting and consistency.
  
 {
   "target_company": "...",
+  "target_job_title": "...",
   "main_title": "...",
   "annual_salary": "...",
   "hourly_rate": "...",
@@ -190,6 +191,7 @@ Formatting and consistency.
   ],
   "coverletter": "..."
 }
+
  
 ---
  
@@ -197,6 +199,11 @@ Formatting and consistency.
  
 **target_company**
 - Extract the company name from the job description exactly as written. If no company name is present, use "".
+
+**target_job_title**
+- Extract the primary job title from the job description. Use the title as written in the JD when it is a standard role title, including its stated seniority when present.
+- Remove only internal requisition, grade, or posting identifiers that are not part of the role title.
+- Do not use the candidate's resume main title or any previous-role title for this field.
  
 **annual_salary, hourly_rate, rate_in_jd**
 - Follow the Expected Rate rules above. All three fields must always be present.

@@ -2,6 +2,7 @@ import type { ResumeCertification, ResumeEducation, ResumePersonalInfo } from ".
 
 export type AiProfile = {
   id: string
+  workspaceId?: string
   name: string
   careerPath: string
   personalInfo: ResumePersonalInfo
@@ -47,6 +48,8 @@ export type UpdateAiProfileInput = CreateAiProfileInput & {
 
 export type GenerateResumeInput = {
   profileId: string
+  workspaceId?: string
+  url?: string
   prompt?: string
   jobDescription?: string
   questions?: string[]
@@ -55,8 +58,21 @@ export type GenerateResumeInput = {
 }
 
 export type GenerateResumeResult = {
-  tailored_resume: string
+  tailored_resume?: string
   full_name?: string
+  eligible?: boolean
+  reason?: string
+  duplicate?: boolean
+  duplicateType?: string | null
+  existingApplication?: {
+    id: string
+    url: string
+    job_title: string | null
+    company_name: string | null
+    workspace_name: string
+    date: string
+    number: number
+  }
 }
 
 export type AiProfilesApi = {
