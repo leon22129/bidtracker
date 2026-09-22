@@ -211,6 +211,7 @@ Requesting a workspace you can't see returns **404, not 403** — a 403 would co
 | POST   | `/applications/bulk-paid`    | 🛡      | `{ ids, paid }`                                               |
 | POST   | `/applications/bulk-delete`  | 🛡      | `{ ids }`                                                     |
 | POST   | `/applications/urls`         | 🔑 edit | `{ workspace_id, date, urls, enrich? }` — the paste endpoint |
+| POST   | `/applications/generated`    | 🔑 edit | Save a generated `{ workspace_id, url, job_title, company_name }` candidate |
 | POST   | `/applications/urls/preview` | 🔑      | Duplicate/validity dry run; writes nothing                      |
 
 **`GET /applications` query parameters**
@@ -698,9 +699,10 @@ Full annotated list in [.env.example](.env.example). The ones worth knowing:
 
 `GET /api/workspaces/profiles/assigned` returns only profiles assigned to the authenticated user.
 `POST /api/resume/generate` accepts `{ workspace_id, url, profile_id?, questions? }`, fetches and checks
-the job description, generates the resume and optional application answers through OpenAI, and creates
-the application row only after the eligibility check and resume generation succeed. Workspace profile
-details are edited through `PATCH /api/workspaces/:id`.
+the job description, and generates the resume and optional application answers through OpenAI. It returns
+an application candidate without writing it, so a lost extension response cannot leave an inaccessible
+duplicate behind. The extension explicitly saves that candidate with `POST /api/applications/generated`
+after receiving the resume. Workspace profile details are edited through `PATCH /api/workspaces/:id`.
 
 ### Common tasks
 

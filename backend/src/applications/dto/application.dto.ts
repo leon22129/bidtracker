@@ -1,7 +1,7 @@
 import { Transform, Type } from 'class-transformer';
 import {
   ArrayMaxSize, ArrayMinSize, IsArray, IsBoolean, IsDateString, IsIn, IsInt, IsOptional,
-  IsString, Max, MaxLength, Min, ValidateNested,
+  IsString, IsUrl, Max, MaxLength, Min, ValidateNested,
 } from 'class-validator';
 import {
   APPLICATION_STATUSES, ApplicationStatus, DEFAULT_PAGE_SIZE, JOB_SOURCES, JobSource,
@@ -166,6 +166,25 @@ export class CreateFromUrlsDto {
   @Transform(toBool)
   @IsBoolean()
   enrich?: boolean = true;
+}
+
+/** A reviewed application returned by resume generation and explicitly saved by the extension. */
+export class CreateGeneratedApplicationDto {
+  @IsString()
+  workspace_id: string;
+
+  @IsUrl({ require_protocol: true })
+  url: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(300)
+  job_title?: string | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  company_name?: string | null;
 }
 
 export class UpdatePipelineDto {

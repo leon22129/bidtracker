@@ -33,6 +33,7 @@ import {
   Briefcase,
   Check,
   Pencil,
+  Plus,
 } from "lucide-react";
 import {
   type ResumeData,
@@ -41,7 +42,7 @@ import {
   type Certification,
   normalizeSkills,
 } from "@/lib/parse-resume";
-import type { AiProfile } from "../../../shared/ai-profiles";
+import type { AiProfile, GeneratedApplication } from "../../../shared/ai-profiles";
 import {
   generateCoverLetterPDF,
   DEFAULT_COVER_LETTER_TEMPLATE,
@@ -114,8 +115,10 @@ export function ProfileWorkspace({
   const [isGenerating, setIsGenerating] = useState(false);
   const [isGeneratingAnswers, setIsGeneratingAnswers] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
+  const [isAddingApplication, setIsAddingApplication] = useState(false);
   const [error, setError] = useState("");
   const [applicationError, setApplicationError] = useState("");
+  const [generatedApplication, setGeneratedApplication] = useState<GeneratedApplication | null>(null);
 
   // UI state
   const [previewOpen, setPreviewOpen] = useState(false);
@@ -170,6 +173,7 @@ export function ProfileWorkspace({
       return;
     }
     setError("");
+    setGeneratedApplication(null);
     setIsGenerating(true);
 
     const shouldGenerateCoverLetter = profile.generateCoverLetter ?? generateCoverLetter;
@@ -262,6 +266,7 @@ export function ProfileWorkspace({
       };
 
       setResumeData(nextResumeData);
+      setGeneratedApplication(data.application ?? null);
       setApplicationAnswers([]);
 
       if (shouldAutoDownload) {
@@ -287,6 +292,37 @@ export function ProfileWorkspace({
       if (isActive) toast({ title: "Generation Failed", description: msg });
     } finally {
       setIsGenerating(false);
+    }
+  };
+
+  const handleAddApplication = async () => {
+    if (!generatedApplication || !profile.workspaceId || isAddingApplication) return;
+    setError("");
+    setIsAddingApplication(true);
+    try {
+      const result = await window.aiProfiles.addGeneratedApplication(
+        profile.workspaceId,
+        generatedApplication,
+      );
+      if (result.duplicate) {
+        const existing = result.existingApplication;
+        const location = existing
+          ? ` It already exists in ${existing.workspace_name} as application #${existing.number}.`
+          : "";
+        throw new Error(`This application has already been added.${location}`);
+      }
+      if (!result.success) throw new Error("The application could not be added.");
+      setGeneratedApplication(null);
+      if (isActive) toast({
+        title: "Application added",
+        description: `${generatedApplication.job_title || "Job"}${generatedApplication.company_name ? ` at ${generatedApplication.company_name}` : ""}`,
+      });
+    } catch (err) {
+      const msg = getFriendlyErrorMessage(err, "Failed to add the application.");
+      setError(msg);
+      if (isActive) toast({ title: "Application Not Added", description: msg });
+    } finally {
+      setIsAddingApplication(false);
     }
   };
 
@@ -577,6 +613,20 @@ export function ProfileWorkspace({
           >
           Preview Resume
           </Button>
+          {generatedApplication && (
+            <Button
+              variant="outline"
+              onClick={() => void handleAddApplication()}
+              disabled={isAddingApplication || isGenerating}
+            >
+              {isAddingApplication ? (
+                <Spinner className="h-4 w-4 mr-2" />
+              ) : (
+                <Plus className="h-4 w-4 mr-2" />
+              )}
+              {isAddingApplication ? "Adding..." : "Add Application"}
+            </Button>
+          )}
         </div>
         </CardContent>
       </Card>

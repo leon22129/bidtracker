@@ -1,6 +1,7 @@
 import type {
   AiProfile,
   AiProfilesApi,
+  AddGeneratedApplicationResult,
   CreateAiProfileInput,
   GenerateResumeInput,
   GenerateResumeResult,
@@ -138,17 +139,40 @@ const webAiProfiles: AiProfilesApi = {
         resume: input.resume,
       }),
     })
-    const data = await response.json().catch(() => null) as { tailored_resume?: string; full_name?: string; error?: string; eligible?: boolean; reason?: string; banned?: boolean; resume?: unknown; duplicate?: boolean; duplicate_type?: string | null; existing_application?: GenerateResumeResult["existingApplication"] } | null
+    const data = await response.json().catch(() => null) as { tailored_resume?: string; full_name?: string; error?: string; eligible?: boolean; reason?: string; banned?: boolean; resume?: unknown; application?: GenerateResumeResult["application"]; duplicate?: boolean; duplicate_type?: string | null; existing_application?: GenerateResumeResult["existingApplication"] } | null
     if (!response.ok) throw new Error(data?.error || `Generation failed (${response.status}).`)
     if (applicationGeneration) {
       if (data?.duplicate) return { duplicate: true, duplicateType: data.duplicate_type, existingApplication: data.existing_application }
       if (data?.banned) return { banned: true, tailored_resume: "" }
       if (data?.eligible === false) return { eligible: false, reason: data.reason, tailored_resume: "" }
       if (!data?.resume) throw new Error("The AI provider returned an empty response.")
-      return { eligible: true, tailored_resume: JSON.stringify(data.resume), full_name: data.full_name }
+      return { eligible: true, tailored_resume: JSON.stringify(data.resume), full_name: data.full_name, application: data.application }
     }
     if (!data?.tailored_resume) throw new Error("The AI provider returned an empty response.")
     return { tailored_resume: data.tailored_resume, full_name: data.full_name }
+  },
+  async addGeneratedApplication(workspaceId, application) {
+    const response = await apiFetch("/applications/generated", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ workspace_id: workspaceId, ...application }),
+    })
+    const data = await response.json().catch(() => null) as {
+      success?: boolean
+      duplicate?: boolean
+      duplicate_type?: string | null
+      application?: AddGeneratedApplicationResult["application"]
+      existing_application?: GenerateResumeResult["existingApplication"]
+      message?: string
+    } | null
+    if (!response.ok) throw new Error(data?.message || `Unable to add application (${response.status}).`)
+    return {
+      success: data?.success === true,
+      duplicate: data?.duplicate,
+      duplicateType: data?.duplicate_type,
+      application: data?.application,
+      existingApplication: data?.existing_application,
+    }
   },
 }
 

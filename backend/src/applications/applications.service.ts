@@ -25,7 +25,8 @@ import {
   normalizeCompanyName,
 } from '../common/utils/url.util';
 import {
-  BulkIdsDto, BulkUpdateApplicationsDto, CreateFromUrlsDto, QueryApplicationsDto,
+  BulkIdsDto, BulkUpdateApplicationsDto, CreateFromUrlsDto, CreateGeneratedApplicationDto,
+  QueryApplicationsDto,
   UpdateApplicationDto, UpdatePipelineDto,
 } from './dto/application.dto';
 
@@ -340,6 +341,54 @@ export class ApplicationsService {
   // -------------------------------------------------------------------------
   // Ingestion — manual URL paste
   // -------------------------------------------------------------------------
+
+  /** Saves the application candidate returned by resume generation after the user confirms it. */
+  async createGenerated(user: AuthUser, dto: CreateGeneratedApplicationDto) {
+    await this.access.assertCanEdit(user, dto.workspace_id);
+
+    const url = dto.url.trim();
+    const companyName = emptyToNull(dto.company_name);
+    const jobTitle = emptyToNull(dto.job_title);
+    const [verdict] = await this.duplicates.classifyBatch(
+      dto.workspace_id,
+      [url],
+      [companyName],
+    );
+
+    if (verdict.is_duplicate) {
+      return {
+        success: false,
+        duplicate: true,
+        duplicate_type: verdict.duplicate_type,
+        existing_application: verdict.existing,
+      };
+    }
+
+    const date = toDayStart(new Date());
+    const application = await this.numbering.withNextNumber(
+      dto.workspace_id,
+      date,
+      (number) => this.prisma.jobApplication.create({
+        data: {
+          workspace_id: dto.workspace_id,
+          date,
+          number,
+          url,
+          normalized_url: verdict.normalized_url,
+          job_source: detectJobSource(url),
+          application_status: 'Applied',
+          pipeline_status: 'Not Started',
+          company_name: companyName,
+          normalized_company_name: normalizeCompanyName(companyName ?? '') || null,
+          job_title: jobTitle,
+          created_by_user_id: user.id,
+        },
+        select: ROW_SELECT,
+      }),
+    );
+
+    return { success: true, application };
+  }
 
   /**
    * One textarea line = one application.

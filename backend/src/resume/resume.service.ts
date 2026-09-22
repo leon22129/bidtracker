@@ -78,20 +78,21 @@ export class ResumeService {
       answers = this.parseJson(await this.openAi(buildApplicationAnswersPrompt(jobDescription, resume, dto.questions)));
     }
 
-    const application = await this.prisma.jobApplication.create({
-      data: {
-        workspace_id: workspace.id,
-        date: new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), new Date().getUTCDate())),
-        number: await this.nextNumber(workspace.id),
-        url: dto.url.trim(),
-        normalized_url: normalizeUrl(dto.url),
-        job_title: typeof resume.target_job_title === 'string' ? resume.target_job_title : null,
-        company_name: typeof resume.target_company === 'string' ? resume.target_company : null,
-        application_status: 'Applied',
-        created_by_user_id: user.id,
-      },
-    });
-    return { success: true, eligible: true, application, resume, answers };
+    // Generation is intentionally read-only. The extension saves this candidate through
+    // POST /applications/generated only after it has safely received and rendered the resume.
+    const application = {
+      url: dto.url.trim(),
+      job_title: typeof resume.target_job_title === 'string' ? resume.target_job_title : null,
+      company_name: typeof resume.target_company === 'string' ? resume.target_company : null,
+    };
+    return {
+      success: true,
+      eligible: true,
+      application,
+      resume,
+      answers,
+      full_name: profile.full_name,
+    };
   }
 
   async generateProfilePrompt(user: AuthUser, dto: GenerateProfilePromptDto) {

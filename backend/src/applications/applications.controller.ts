@@ -3,7 +3,8 @@ import {
 } from '@nestjs/common';
 import { ApplicationsService } from './applications.service';
 import {
-  BulkIdsDto, BulkUpdateApplicationsDto, CreateFromUrlsDto, QueryApplicationsDto,
+  BulkIdsDto, BulkUpdateApplicationsDto, CreateFromUrlsDto, CreateGeneratedApplicationDto,
+  QueryApplicationsDto,
   UpdateApplicationDto, UpdatePipelineDto,
 } from './dto/application.dto';
 import { RolesGuard } from '../common/guards/roles.guard';
@@ -40,6 +41,14 @@ export class ApplicationsController {
   }
 
   // Static routes must precede ':id' so they are not captured as an id.
+  @Post('generated')
+  createGenerated(
+    @CurrentUser() user: AuthUser,
+    @Body() dto: CreateGeneratedApplicationDto,
+  ) {
+    return this.applications.createGenerated(user, dto);
+  }
+
   @Post('urls')
   createFromUrls(@CurrentUser() user: AuthUser, @Body() dto: CreateFromUrlsDto) {
     return this.applications.createFromUrls(user, dto);

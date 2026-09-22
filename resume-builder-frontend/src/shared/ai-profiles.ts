@@ -65,6 +65,7 @@ export type GenerateResumeResult = {
   banned?: boolean
   duplicate?: boolean
   duplicateType?: string | null
+  application?: GeneratedApplication
   existingApplication?: {
     id: string
     url: string
@@ -76,10 +77,28 @@ export type GenerateResumeResult = {
   }
 }
 
+export type GeneratedApplication = {
+  url: string
+  job_title: string | null
+  company_name: string | null
+}
+
+export type AddGeneratedApplicationResult = {
+  success: boolean
+  duplicate?: boolean
+  duplicateType?: string | null
+  application?: GeneratedApplication & { id: string; number: number }
+  existingApplication?: GenerateResumeResult["existingApplication"]
+}
+
 export type AiProfilesApi = {
   list: () => Promise<AiProfile[]>
   create: (input: CreateAiProfileInput) => Promise<AiProfile>
   update: (input: UpdateAiProfileInput) => Promise<AiProfile>
   delete: (profileId: string) => Promise<void>
   generate: (input: GenerateResumeInput) => Promise<GenerateResumeResult>
+  addGeneratedApplication: (
+    workspaceId: string,
+    application: GeneratedApplication,
+  ) => Promise<AddGeneratedApplicationResult>
 }
