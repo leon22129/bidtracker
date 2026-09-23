@@ -160,14 +160,19 @@ const webAiProfiles: AiProfilesApi = {
     return { tailored_resume: data.tailored_resume, full_name: data.full_name }
   },
   async addGeneratedApplication(workspaceId, application) {
+    const jobTitle = typeof application.job_title === "string" ? application.job_title.trim() : ""
+    const companyName = typeof application.company_name === "string" ? application.company_name.trim() : ""
+    if (!jobTitle || !companyName) {
+      throw new Error("Company name and job title are required before adding an application.")
+    }
     const response = await apiFetch("/applications/generated", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         workspace_id: workspaceId,
         url: application.url,
-        job_title: application.job_title,
-        company_name: application.company_name,
+        job_title: jobTitle,
+        company_name: companyName,
         allow_similar_job: application.allowSimilarJob,
       }),
     })

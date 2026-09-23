@@ -60,16 +60,19 @@ describe('ApplicationGenerationService application metadata eligibility', () => 
     ...overrides,
   });
 
-  it('stops after eligibility when the JD has no company name', async () => {
+  it.each([
+    ['company_name', 'company name'],
+    ['job_title', 'job title'],
+  ])('stops after eligibility when the JD has no %s', async (field, label) => {
     const { service, duplicates } = setup();
     const openAi = jest.spyOn(service as any, 'openAi').mockResolvedValue(
-      eligible({ company_name: '' }),
+      eligible({ [field]: '' }),
     );
 
     await expect(service.generate(user, dto)).resolves.toMatchObject({
       success: false,
       eligible: false,
-      reason: 'Need company name in the JD.',
+      reason: `Need ${label} in the JD.`,
     });
     expect(openAi).toHaveBeenCalledTimes(1);
     expect(duplicates.findRecentJobMatch).not.toHaveBeenCalled();

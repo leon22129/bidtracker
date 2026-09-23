@@ -111,7 +111,6 @@ export interface JobApplication {
   pipeline_status: PipelineStatus;
   note: string | null;
   paid: boolean;
-  resume_link: string | null;
   created_by_user_id: string | null;
   created_at: string;
   updated_at: string;
@@ -199,29 +198,12 @@ export interface AnalyticsOverview {
   daily_volume: Array<{ date: string; applied: number }>;
 }
 
-export interface UrlPreviewResult {
-  total_lines: number;
-  valid: number;
-  invalid: string[];
-  duplicates: number;
-  duplicate_scope: 'global' | 'workspace';
-  rows: Array<{
-    url: string;
-    normalized_url: string;
-    job_source: JobSource;
-    existing_url: string | null;
-    existing_job_title: string | null;
-    existing_date: string | null;
-    is_duplicate: boolean;
-    existing_in: string | null;
-  }>;
-}
-
 export interface ImportResult {
   total_rows: number;
   created: number;
   duplicates: number;
   skipped: Array<{ row: number; reason: string }>;
+  missing_fields: MissingImportField[];
   detected_columns: Record<string, number | null>;
 }
 
@@ -230,4 +212,10 @@ export interface ImportPreview {
   detected_columns: Record<string, number | null>;
   total_rows: number;
   sample: unknown[][];
+  missing_fields: MissingImportField[];
+}
+
+export interface MissingImportField {
+  row: number;
+  fields: Array<'job_title' | 'company_name'>;
 }

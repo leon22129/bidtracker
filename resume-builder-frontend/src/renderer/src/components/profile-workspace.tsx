@@ -63,6 +63,7 @@ interface ProfileWorkspaceProps {
   onProfileUpdated: (updated: AiProfile) => void;
   onGeneratingChange: (profileId: string, generating: boolean) => void;
   onGenerationComplete: (profileId: string, companyName?: string) => void;
+  onApplicationAdded: (profileId: string) => void;
   triggerPreview: boolean;
   onPreviewTriggered: () => void;
   settingsOpen: boolean;
@@ -76,6 +77,7 @@ export function ProfileWorkspace({
   onProfileUpdated,
   onGeneratingChange,
   onGenerationComplete,
+  onApplicationAdded,
   triggerPreview,
   onPreviewTriggered,
   settingsOpen,
@@ -175,6 +177,7 @@ export function ProfileWorkspace({
     }
     setError("");
     setGeneratedApplication(null);
+    setCompanyName("");
     setIsGenerating(true);
 
     const shouldGenerateCoverLetter = profile.generateCoverLetter ?? generateCoverLetter;
@@ -243,6 +246,27 @@ export function ProfileWorkspace({
       if (!generatedContent)
         throw new Error("No response received from the selected profile");
 
+      const generatedJobTitle = data.application?.job_title?.trim() ?? "";
+      const generatedCompanyName = data.application?.company_name?.trim() ?? "";
+      if (!generatedJobTitle || !generatedCompanyName) {
+        const missing = [
+          !generatedCompanyName ? "company name" : null,
+          !generatedJobTitle ? "job title" : null,
+        ].filter(Boolean).join(" and ");
+        const msg = `Resume generation did not return a ${missing}. The application cannot be added.`;
+        setGeneratedApplication(null);
+        setCompanyName("");
+        setError(msg);
+        toast({ title: "Application Details Missing", description: msg });
+        return;
+      }
+
+      const application: GeneratedApplication = {
+        ...data.application!,
+        job_title: generatedJobTitle,
+        company_name: generatedCompanyName,
+      };
+
       const parsed = parseGeneratedResume(generatedContent);
 
       if (parsed.error) {
@@ -252,10 +276,8 @@ export function ProfileWorkspace({
         return;
       }
 
-      const effectiveCompanyName = (parsed.target_company ?? companyName ?? "").trim();
-      if (effectiveCompanyName) {
-        setCompanyName(effectiveCompanyName);
-      }
+      const effectiveCompanyName = generatedCompanyName;
+      setCompanyName(effectiveCompanyName);
 
       const generatedPersonalInfo = {
         ...personalInfo,
@@ -288,7 +310,7 @@ export function ProfileWorkspace({
       };
 
       setResumeData(nextResumeData);
-      setGeneratedApplication(data.application ?? null);
+      setGeneratedApplication(application);
       setApplicationAnswers([]);
 
       if (shouldAutoDownload) {
@@ -311,7 +333,7 @@ export function ProfileWorkspace({
         "Failed to generate resume with the selected profile.",
       );
       setError(msg);
-      if (isActive) toast({ title: "Generation Failed", description: msg });
+      toast({ title: "Generation Failed", description: msg });
     } finally {
       setIsGenerating(false);
     }
@@ -319,13 +341,26 @@ export function ProfileWorkspace({
 
   const handleAddApplication = async () => {
     if (!generatedApplication || !profile.workspaceId || addingApplicationRef.current) return;
+    const jobTitle = generatedApplication.job_title.trim();
+    const generatedCompanyName = generatedApplication.company_name.trim();
+    if (!jobTitle || !generatedCompanyName) {
+      const msg = "Company name and job title are required before adding the application.";
+      setError(msg);
+      if (isActive) toast({ title: "Application Not Added", description: msg });
+      return;
+    }
+    const application = {
+      ...generatedApplication,
+      job_title: jobTitle,
+      company_name: generatedCompanyName,
+    };
     addingApplicationRef.current = true;
     setError("");
     setIsAddingApplication(true);
     try {
       let result = await window.aiProfiles.addGeneratedApplication(
         profile.workspaceId,
-        generatedApplication,
+        application,
       );
       if (
         result.duplicate &&
@@ -343,7 +378,7 @@ export function ProfileWorkspace({
         if (proceed) {
           result = await window.aiProfiles.addGeneratedApplication(
             profile.workspaceId,
-            { ...generatedApplication, allowSimilarJob: true },
+            { ...application, allowSimilarJob: true },
           );
         }
       }
@@ -356,9 +391,11 @@ export function ProfileWorkspace({
       }
       if (!result.success) throw new Error("The application could not be added.");
       setGeneratedApplication(null);
+      setCompanyName("");
+      onApplicationAdded(profile.id);
       if (isActive) toast({
         title: result.alreadyAdded ? "Application already added" : "Application added",
-        description: `${generatedApplication.job_title || "Job"}${generatedApplication.company_name ? ` at ${generatedApplication.company_name}` : ""}`,
+        description: `${jobTitle} at ${generatedCompanyName}`,
       });
     } catch (err) {
       const msg = getFriendlyErrorMessage(err, "Failed to add the application.");
@@ -814,7 +851,13 @@ export function ProfileWorkspace({
           <Input
             id={`company-${profile.id}`}
             value={companyName}
-            onChange={(e) => setCompanyName(e.target.value)}
+            onChange={(e) => {
+              const value = e.target.value;
+              setCompanyName(value);
+              setGeneratedApplication((current) => current
+                ? { ...current, company_name: value }
+                : current);
+            }}
             placeholder="Company name"
             className="min-w-0"
           />

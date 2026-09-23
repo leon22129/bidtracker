@@ -177,7 +177,6 @@ async function main() {
           application_status: applicationStatus,
           pipeline_status: pipelineStatus,
           note: rand() < 0.25 ? 'Tailored resume, referred by network.' : null,
-          resume_link: rand() < 0.4 ? `https://drive.example.com/resume-${globalIndex}.pdf` : null,
           // Older rows are already settled; recent ones are still open.
           paid: dayOffset > 21 && applicationStatus === 'Applied' && rand() < 0.85,
           created_by_user_id: pick(bidders).id,

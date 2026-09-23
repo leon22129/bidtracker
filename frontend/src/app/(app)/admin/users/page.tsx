@@ -11,7 +11,7 @@ import { useToast } from '@/components/ui/toast';
  * User administration — admin only.
  *
  * The backend refuses to demote or deactivate the last remaining admin and refuses to delete a user who
- * still owns workspaces (payment attribution would be destroyed). This page surfaces those constraints
+ * owns workspaces or has created applications (payment attribution would be destroyed). This page surfaces those constraints
  * up front rather than letting the user discover them via a 400.
  */
 export default function UsersPage() {

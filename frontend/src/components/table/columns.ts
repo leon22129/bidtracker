@@ -27,7 +27,7 @@ export interface ColumnDef {
 }
 
 /**
- * The 11 columns from the spec, in order, plus the admin-managed recruiting fields.
+ * Application columns in display order, including the admin-managed recruiting fields.
  *
  * `date` and `number` are sticky so that when a user scrolls right to edit a note, they can still see
  * which row they are on — the single most important affordance for a wide spreadsheet.
@@ -61,7 +61,6 @@ export const COLUMNS: ColumnDef[] = [
     key: 'paid', label: 'Paid', width: 62, minWidth: 56, editor: 'checkbox', sortable: true,
     align: 'center',
   },
-  { key: 'resume_link', label: 'Resume Link', width: 200, minWidth: 120, editor: 'url', sortable: false },
 ];
 
 export const SELECT_COL_WIDTH = 36;

@@ -62,7 +62,7 @@ export default function PaymentsPage() {
     <main className="mx-auto max-w-6xl px-4 py-6">
       <div className="mb-5">
         <h1 className="text-lg font-semibold">Bid Count Report</h1>
-        <p className="mt-0.5 text-xs text-gray-500">Applied, unpaid applications across each bidder&apos;s workspaces.</p>
+        <p className="mt-0.5 text-xs text-gray-500">Applied, unpaid applications credited to the bidder who created them.</p>
       </div>
 
       <section className="card mb-6 p-4">

@@ -2,37 +2,73 @@ import { BadRequestException, ForbiddenException, Injectable } from '@nestjs/com
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthUser } from '../common/decorators/current-user.decorator';
 import { endOfDay, previousWeekRange, toDayStart } from '../common/utils/date.util';
+import { WorkspaceAccessService } from '../workspaces/workspace-access.service';
 
 type Period = { start_date: string; end_date: string; bidder_id?: string };
+const PAYABLE_ROLES = ['bidder', 'bidder_manager'] as const;
 
 @Injectable()
 export class PaymentsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly access: WorkspaceAccessService,
+  ) {}
 
   async report(user: AuthUser, period: Partial<Period> = {}) {
     const range = this.resolvePeriod(period);
-    const bidderIds = await this.visibleBidderIds(user);
-    const rows = await this.prisma.jobApplication.findMany({
+    const workspaceIds = await this.access.visibleWorkspaceIds(user);
+    if (workspaceIds?.length === 0) {
+      return { start_date: range.start, end_date: range.end, bidders: [], total_applied: 0 };
+    }
+
+    const counts = await this.prisma.jobApplication.groupBy({
+      by: ['created_by_user_id', 'workspace_id'],
       where: {
         application_status: 'Applied',
         paid: false,
         date: { gte: range.start, lte: endOfDay(range.end) },
-        ...(bidderIds ? { workspace: { owner_user_id: { in: bidderIds } } } : {}),
+        ...(workspaceIds ? { workspace_id: { in: workspaceIds } } : {}),
+        ...(period.bidder_id ? { created_by_user_id: period.bidder_id } : {}),
+        createdByUser: { is: { role: { in: [...PAYABLE_ROLES] } } },
       },
-      select: { workspace: { select: { id: true, name: true, owner_user_id: true, owner: { select: { username: true } } } } },
+      _count: { _all: true },
     });
+    const creatorIds = [...new Set(counts
+      .map((row) => row.created_by_user_id)
+      .filter((id): id is string => Boolean(id)))];
+    const [workspaces, creators] = counts.length
+      ? await Promise.all([
+        this.prisma.workspace.findMany({
+          where: { id: { in: counts.map((row) => row.workspace_id) } },
+          select: { id: true, name: true },
+        }),
+        this.prisma.user.findMany({
+          where: { id: { in: creatorIds } },
+          select: { id: true, username: true },
+        }),
+      ])
+      : [[], []];
+    const workspaceById = new Map(workspaces.map((workspace) => [workspace.id, workspace]));
+    const creatorById = new Map(creators.map((creator) => [creator.id, creator]));
 
     const bidders = new Map<string, { bidder_id: string; bidder_username: string; applied_count: number; workspaces: Array<{ workspace_id: string; workspace_name: string; applied_count: number }> }>();
-    for (const row of rows) {
-      const workspace = row.workspace;
-      const bidder = bidders.get(workspace.owner_user_id) ?? { bidder_id: workspace.owner_user_id, bidder_username: workspace.owner.username, applied_count: 0, workspaces: [] };
-      bidder.applied_count += 1;
-      const workspaceRow = bidder.workspaces.find((item) => item.workspace_id === workspace.id);
-      if (workspaceRow) workspaceRow.applied_count += 1;
-      else bidder.workspaces.push({ workspace_id: workspace.id, workspace_name: workspace.name, applied_count: 1 });
-      bidders.set(workspace.owner_user_id, bidder);
+    for (const row of counts) {
+      const workspace = workspaceById.get(row.workspace_id);
+      const creatorId = row.created_by_user_id;
+      const creator = creatorId ? creatorById.get(creatorId) : null;
+      if (!workspace || !creatorId || !creator) continue;
+      const bidder = bidders.get(creatorId) ?? { bidder_id: creatorId, bidder_username: creator.username, applied_count: 0, workspaces: [] };
+      bidder.applied_count += row._count._all;
+      bidder.workspaces.push({ workspace_id: workspace.id, workspace_name: workspace.name, applied_count: row._count._all });
+      bidders.set(creatorId, bidder);
     }
-    return { start_date: range.start, end_date: range.end, bidders: [...bidders.values()].sort((a, b) => b.applied_count - a.applied_count), total_applied: rows.length };
+    const bidderRows = [...bidders.values()].sort((a, b) => b.applied_count - a.applied_count);
+    return {
+      start_date: range.start,
+      end_date: range.end,
+      bidders: bidderRows,
+      total_applied: bidderRows.reduce((total, bidder) => total + bidder.applied_count, 0),
+    };
   }
 
   async process(user: AuthUser, period: Period) {
@@ -40,18 +76,26 @@ export class PaymentsService {
     if (!period.bidder_id) throw new BadRequestException('bidder_id is required');
     const range = this.resolvePeriod(period);
     const result = await this.prisma.$transaction(async (tx) => {
-      const applications = await tx.jobApplication.findMany({
-        where: {
-          application_status: 'Applied', paid: false,
-          date: { gte: range.start, lte: endOfDay(range.end) },
-          workspace: {
-            owner_user_id: period.bidder_id,
-            ...(user.role === 'admin' ? { created_by_user_id: user.id } : {}),
-          },
-        },
+      const bidder = await tx.user.findFirst({
+        where: { id: period.bidder_id, role: { in: [...PAYABLE_ROLES] } },
         select: { id: true },
       });
-      if (applications.length === 0) {
+      if (!bidder) throw new BadRequestException('Bidder does not exist');
+
+      const eligibleWhere = {
+        application_status: 'Applied',
+        paid: false,
+        date: { gte: range.start, lte: endOfDay(range.end) },
+        created_by_user_id: period.bidder_id,
+        workspace: {
+          ...(user.role === 'admin' ? { created_by_user_id: user.id } : {}),
+        },
+      } as const;
+      const updated = await tx.jobApplication.updateMany({
+        where: eligibleWhere,
+        data: { paid: true },
+      });
+      if (updated.count === 0) {
         const existing = await tx.paymentReport.findFirst({
           where: {
             bidder_id: period.bidder_id,
@@ -64,18 +108,24 @@ export class PaymentsService {
         if (existing) return { ...existing, already_processed: true };
       }
       const report = await tx.paymentReport.create({
-        data: { bidder_id: period.bidder_id!, start_date: range.start, end_date: range.end, applied_count: applications.length, processed_by: user.id },
+        data: {
+          bidder_id: period.bidder_id!,
+          start_date: range.start,
+          end_date: range.end,
+          applied_count: updated.count,
+          processed_by: user.id,
+        },
       });
-      if (applications.length) await tx.jobApplication.updateMany({ where: { id: { in: applications.map((application) => application.id) } }, data: { paid: true } });
       return { ...report, already_processed: false };
     });
     return { id: result.id, bidder_id: result.bidder_id, start_date: result.start_date, end_date: result.end_date, applied_count: result.applied_count, processed_at: result.processed_at, already_processed: result.already_processed };
   }
 
   async history(user: AuthUser) {
-    const bidderIds = await this.visibleBidderIds(user);
     const reports = await this.prisma.paymentReport.findMany({
-      where: bidderIds ? { bidder_id: { in: bidderIds } } : undefined,
+      // Super admins audit every report. A regular admin sees only settlements they processed;
+      // those settlements were already constrained to that admin's own workspaces in process().
+      where: user.role === 'super_admin' ? undefined : { processed_by: user.id },
       include: { bidder: { select: { username: true } }, processor: { select: { username: true } } },
       orderBy: { processed_at: 'desc' },
     });
@@ -92,16 +142,5 @@ export class PaymentsService {
     const end = toDayStart(period.end_date);
     if (start > end) throw new BadRequestException('start_date must be before or equal to end_date');
     return { start, end };
-  }
-
-  private async visibleBidderIds(user: AuthUser): Promise<string[] | null> {
-    if (user.role === 'super_admin') return null;
-    const workspaces = await this.prisma.workspace.findMany({
-      where: user.role === 'admin'
-        ? { created_by_user_id: user.id }
-        : { OR: [{ owner_user_id: user.id }, { permissions: { some: { user_id: user.id } } }] },
-      select: { owner_user_id: true },
-    });
-    return [...new Set(workspaces.map((workspace) => workspace.owner_user_id))];
   }
 }

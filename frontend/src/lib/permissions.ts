@@ -20,7 +20,6 @@ const DUPLICATED_EDITABLE_FIELDS = new Set<keyof JobApplication>([
   'job_title',
   'job_source',
   'note',
-  'resume_link',
 ]);
 
 export function isAdmin(user: Pick<User, 'role'> | null | undefined): boolean {
@@ -98,7 +97,7 @@ export function whyLocked(
   if (row.paid) return 'This row is paid and locked — only an admin can edit it';
   if (row.application_status === 'Rejected') return 'Rejected applications are locked — only an admin can edit them';
   if (row.application_status === 'Duplicated') {
-    return 'Duplicated applications only allow company, title, source, note, and resume edits';
+    return 'Duplicated applications only allow company, title, source, and note edits';
   }
   if (ADMIN_ONLY_FIELDS.has(field)) return 'Only an admin can change this field';
   return 'You do not have permission to edit this';

@@ -143,8 +143,8 @@ export function TableToolbar(props: Props) {
 
         {access === 'edit' && (
           <>
-            <Link href={`/workspaces/${workspaceId}/add-urls`} className="btn-primary btn-xs">
-              Add URLs
+            <Link href={`/workspaces/${workspaceId}/add`} className="btn-primary btn-xs">
+              Add application
             </Link>
             <Link href={`/workspaces/${workspaceId}/import`} className="btn-secondary btn-xs">
               Import Excel/CSV

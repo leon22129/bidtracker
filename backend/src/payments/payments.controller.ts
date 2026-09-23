@@ -11,11 +11,13 @@ export class PaymentsController {
   constructor(private readonly payments: PaymentsService) {}
 
   @Get('report')
+  @Roles('admin', 'super_admin')
   report(@CurrentUser() user: AuthUser, @Query() period: PaymentPeriodDto) {
     return this.payments.report(user, period);
   }
 
   @Get('history')
+  @Roles('admin', 'super_admin')
   history(@CurrentUser() user: AuthUser) {
     return this.payments.history(user);
   }

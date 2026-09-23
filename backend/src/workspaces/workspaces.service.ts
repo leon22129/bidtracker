@@ -130,9 +130,8 @@ export class WorkspacesService {
       if (!['bidder', 'bidder_manager'].includes(owner.role)) {
         throw new BadRequestException('A workspace owner must be a bidder or bidder manager');
       }
-      // Reassigning ownership changes which bidder owns future application reports. Historical
-      // PaymentReport rows retain their original bidder.
-      // snapshots and intentionally stay as they were.
+      // Reassignment only changes current workspace/profile ownership. Each application's immutable
+      // creator continues to receive credit for both settled and still-unpaid historical work.
     }
 
     const targetOwnerId = dto.owner_user_id ?? workspace.owner_user_id;

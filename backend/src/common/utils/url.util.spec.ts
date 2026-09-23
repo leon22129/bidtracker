@@ -1,7 +1,5 @@
 import {
   detectJobSource,
-  extractCompanyFromUrl,
-  extractTitleFromUrl,
   normalizeUrl,
 } from './url.util';
 
@@ -22,7 +20,6 @@ describe('normalizeUrl', () => {
     expect(normalizeUrl('https://c.com/jobs/123')).not.toBe(normalizeUrl('https://c.com/jobs/124'));
   });
 });
-
 describe('detectJobSource', () => {
   const cases: Array<[string, string]> = [
     ['https://boards.greenhouse.io/acme/jobs/4012345', 'Greenhouse'],
@@ -41,47 +38,5 @@ describe('detectJobSource', () => {
   ];
   it.each(cases)('%s -> %s', (url, expected) => {
     expect(detectJobSource(url)).toBe(expected);
-  });
-});
-
-describe('extractCompanyFromUrl', () => {
-  it('reads the tenant out of path-based ATS hosts', () => {
-    expect(extractCompanyFromUrl('https://boards.greenhouse.io/acme-corp/jobs/1')).toBe('Acme Corp');
-    expect(extractCompanyFromUrl('https://jobs.lever.co/nubank/xyz')).toBe('Nubank');
-    expect(extractCompanyFromUrl('https://jobs.jobvite.com/shutterfly-fr/job/oz0EAfwx')).toBe('Shutterfly');
-    expect(extractCompanyFromUrl('https://ats.rippling.com/aalyria-careers/jobs/123')).toBe('Aalyria');
-    expect(extractCompanyFromUrl('https://jobs.dayforcehcm.com/en-US/navex/jobopenings/jobs/4245')).toBe('Navex');
-    expect(extractCompanyFromUrl('https://jobs.ashbyhq.com/commure/a48d6f50-093f-4008-abb3-3fe3626381d1')).toBe('Commure');
-    expect(extractCompanyFromUrl('https://jobs.gem.com/bigpanda/am9icG9zdDpnBhVy7828ukBg7JowC_uG')).toBe('Bigpanda');
-  });
-
-  it('reads the tenant out of subdomain-based ATS hosts', () => {
-    expect(extractCompanyFromUrl('https://acme.wd5.myworkdayjobs.com/en-US/careers')).toBe('Acme');
-    expect(extractCompanyFromUrl('https://veralto.wd1.myworkdayjobs.com/veraltocorporatejobs/job/Vancouver-British-Columbia-Canada/AI-Software-Engineering-Lead_R10268260-2')).toBe('Veralto');
-  });
-
-  it('returns null for aggregators that do not name the company in the URL', () => {
-    expect(extractCompanyFromUrl('https://www.linkedin.com/jobs/view/123')).toBeNull();
-    expect(extractCompanyFromUrl('https://www.indeed.com/viewjob?jk=1')).toBeNull();
-    expect(
-      extractCompanyFromUrl(
-        'https://workforcenow.adp.com/mascsr/default/mdf/recruitment/recruitment.html?cid=abc&jobId=588192',
-      ),
-    ).toBeNull();
-  });
-
-  it('falls back to the company domain', () => {
-    expect(extractCompanyFromUrl('https://careers.stripe.com/jobs/1')).toBe('Stripe');
-  });
-});
-
-describe('extractTitleFromUrl', () => {
-  it('uses a readable slug and drops the trailing id', () => {
-    expect(extractTitleFromUrl('https://c.com/jobs/senior-backend-engineer-91827')).toBe(
-      'Senior Backend Engineer',
-    );
-  });
-  it('returns null when the tail is only an id', () => {
-    expect(extractTitleFromUrl('https://www.linkedin.com/jobs/view/4012345678')).toBeNull();
   });
 });

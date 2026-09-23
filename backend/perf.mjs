@@ -69,12 +69,18 @@ await time('workspace summary', `/applications/summary?workspace_id=${id}`);
 await time('analytics: conversion', '/analytics/conversion');
 await time('analytics: full dashboard', '/analytics/overview');
 await time('analytics: interviews by source', '/analytics/interviews-by-source');
-await time('payments: weekly preview', '/payments/weekly/preview');
+await time('payments: report aggregation', '/payments/report');
 
+const paymentReport = await get('/payments/report');
+const paymentBidder = paymentReport.bidders?.[0];
 const t = Date.now();
-const gen = await fetch(`${B}/payments/weekly/generate`, {
+const gen = paymentBidder ? await fetch(`${B}/payments/process`, {
   method: 'POST',
   headers: { ...H, 'Content-Type': 'application/json' },
-  body: '{}',
-});
-console.log(`${String(Date.now() - t).padStart(5)} ms   ${'payments: weekly settlement (write)'.padEnd(38)} status=${gen.status}`);
+  body: JSON.stringify({
+    bidder_id: paymentBidder.bidder_id,
+    start_date: paymentReport.start_date.slice(0, 10),
+    end_date: paymentReport.end_date.slice(0, 10),
+  }),
+}) : null;
+console.log(`${String(Date.now() - t).padStart(5)} ms   ${'payments: process filtered update (write)'.padEnd(38)} status=${gen?.status ?? 'skipped'}`);

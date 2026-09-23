@@ -13,9 +13,9 @@ export const FileInterceptor = NestFileInterceptor('file', {
   storage: memoryStorage(),
   limits: { fileSize: MAX_UPLOAD_BYTES, files: 1 },
   fileFilter: (_req, file, cb) => {
-    const ok = /\.(xlsx|xls|csv)$/i.test(file.originalname);
+    const ok = /\.(xlsx|csv)$/i.test(file.originalname);
     if (!ok) {
-      cb(new BadRequestException('Only .xlsx, .xls and .csv files are supported'), false);
+      cb(new BadRequestException('Only .xlsx and .csv files are supported'), false);
       return;
     }
     cb(null, true);

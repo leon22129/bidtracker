@@ -2,7 +2,7 @@
 
 import type {
   AnalyticsOverview, ApplicationFilters, BannedUrlPattern, ImportPreview, ImportResult, JobApplication, Paginated,
-  PermissionType, PaymentReport, PaymentReportResult, Role, UrlPreviewResult, User, Workspace,
+  PermissionType, PaymentReport, PaymentReportResult, Role, User, Workspace,
   WorkspaceSummary,
 } from './types';
 
@@ -189,6 +189,16 @@ export const api = {
       method: 'PATCH',
       body: JSON.stringify(patch),
     }),
+  createApplication: (data: {
+    workspace_id: string;
+    job_title: string;
+    company_name: string;
+    url: string;
+    application_status: JobApplication['application_status'];
+  }) => request<JobApplication>('/applications', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  }),
   updatePipeline: (
     id: string,
     patch: { pipeline_status?: string },
@@ -207,23 +217,6 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ ids }),
     }),
-  createFromUrls: (data: {
-    workspace_id: string;
-    date: string;
-    urls: string;
-    enrich?: boolean;
-  }) =>
-    request<{
-      created: number;
-      duplicates: number;
-      invalid_lines: string[];
-      duplicate_details: Array<{ url: string; reason: string; existing_in: string }>;
-    }>('/applications/urls', { method: 'POST', body: JSON.stringify(data) }),
-  previewUrls: (workspaceId: string, urls: string) =>
-    request<UrlPreviewResult>('/applications/urls/preview', {
-      method: 'POST',
-      body: JSON.stringify({ workspace_id: workspaceId, urls }),
-    }),
   listBannedPatterns: () => request<BannedUrlPattern[]>('/applications/banned-patterns'),
   createBannedPattern: (pattern: string) =>
     request<BannedUrlPattern>('/applications/banned-patterns', {
@@ -238,10 +231,9 @@ export const api = {
     form.append('file', file);
     return request<ImportPreview>(`/import/${workspaceId}/preview`, { method: 'POST', body: form });
   },
-  importRun: (workspaceId: string, file: File, opts: { enrich: boolean; default_date?: string }) => {
+  importRun: (workspaceId: string, file: File, opts: { default_date?: string }) => {
     const form = new FormData();
     form.append('file', file);
-    form.append('enrich', String(opts.enrich));
     if (opts.default_date) form.append('default_date', opts.default_date);
     return request<ImportResult>(`/import/${workspaceId}`, { method: 'POST', body: form });
   },

@@ -80,8 +80,8 @@ export type GenerateResumeResult = {
 
 export type GeneratedApplication = {
   url: string
-  job_title: string | null
-  company_name: string | null
+  job_title: string
+  company_name: string
   /** Set only after the user confirms a recent company/title match is a different opening. */
   allowSimilarJob?: boolean
 }

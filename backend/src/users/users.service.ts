@@ -144,24 +144,29 @@ export class UsersService {
   }
 
   /**
-   * Hard delete. Blocked when the user owns a workspace — payment attribution flows through
-   * `Workspace.owner_user_id`, so deleting an owner would destroy the audit trail for money already
-   * paid. Deactivate instead; the FK is `onDelete: Restrict` as a second line of defence.
+   * Hard delete. Blocked when the user owns a workspace or created applications, because both are
+   * part of the payment audit trail. Deactivate instead; restrictive FKs are the second line of defence.
    */
   async remove(id: string, actingUser: AuthUser) {
     if (id === actingUser.id) throw new BadRequestException('You cannot delete your own account');
 
     const user = await this.prisma.user.findUnique({
       where: { id },
-      include: { _count: { select: { ownedWorkspaces: true } } },
+      include: { _count: { select: { ownedWorkspaces: true, createdApplications: true } } },
     });
     if (!user) throw new NotFoundException('User not found');
     await this.assertCanManage(id, actingUser);
 
     if (user._count.ownedWorkspaces > 0) {
       throw new BadRequestException(
-        'This user owns one or more workspaces and cannot be deleted (payment history depends on ' +
-          'workspace ownership). Reassign the workspaces or deactivate the user instead.',
+        'This user owns one or more workspaces and cannot be deleted. Reassign the workspaces or ' +
+          'deactivate the user instead.',
+      );
+    }
+    if (user._count.createdApplications > 0) {
+      throw new BadRequestException(
+        'This user created applications and cannot be deleted because payment attribution depends ' +
+          'on that history. Deactivate the user instead.',
       );
     }
     if (user.role === 'admin') {

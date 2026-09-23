@@ -274,11 +274,7 @@ function Display({
   }
   if (column.editor === 'url') {
     if (!value) return <span className="text-gray-300">—</span>;
-    const isResumeLink = column.key === 'resume_link';
     const compactUrl = String(value).replace(/^https?:\/\/(www\.)?/, '');
-    const displayUrl = isResumeLink && compactUrl.length > 32
-      ? `${compactUrl.slice(0, 29)}...`
-      : compactUrl;
     return (
       <a
         href={String(value)}
@@ -289,7 +285,7 @@ function Display({
         // Opening the link must not also start an edit on the cell behind it.
         onClick={(e) => e.stopPropagation()}
       >
-        {displayUrl}
+        {compactUrl}
       </a>
     );
   }

@@ -1,6 +1,7 @@
 import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthUser } from '../common/decorators/current-user.decorator';
+import { Prisma } from '@prisma/client';
 
 export type AccessLevel = 'none' | 'view' | 'edit';
 
@@ -50,24 +51,29 @@ export class WorkspaceAccessService {
     }
   }
 
+  /** Reusable relation filter for one-query authorization on workspace-owned records. */
+  visibilityWhere(user: AuthUser): Prisma.WorkspaceWhereInput | null {
+    if (user.role === 'super_admin') return null;
+    return user.role === 'admin'
+      ? {
+          OR: [
+            { created_by_user_id: user.id },
+            { permissions: { some: { user_id: user.id } } },
+          ],
+        }
+      : {
+          OR: [
+            { owner_user_id: user.id },
+            { permissions: { some: { user_id: user.id } } },
+          ],
+        };
+  }
+
   /** Workspace ids the user may read. `null` means "no restriction" (super admin). */
   async visibleWorkspaceIds(user: AuthUser): Promise<string[] | null> {
-    if (user.role === 'super_admin') return null;
-    const [owned, granted] = await Promise.all([
-      this.prisma.workspace.findMany({
-        where: user.role === 'admin'
-          ? { created_by_user_id: user.id }
-          : { owner_user_id: user.id },
-        select: { id: true },
-      }),
-      this.prisma.workspacePermission.findMany({
-        where: { user_id: user.id },
-        select: { workspace_id: true },
-      }),
-    ]);
-    return [...new Set([
-      ...owned.map((w) => w.id),
-      ...granted.map((p) => p.workspace_id),
-    ])];
+    const where = this.visibilityWhere(user);
+    if (!where) return null;
+    const workspaces = await this.prisma.workspace.findMany({ where, select: { id: true } });
+    return workspaces.map((workspace) => workspace.id);
   }
 }

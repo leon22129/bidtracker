@@ -47,7 +47,7 @@ model User {
 
 // ---------------------------------------------------------------------------
 // Workspace (a "tab", e.g. "John Applications")
-// The owner is the payment subject. Access is granted separately.
+// The owner controls the current assignment. Payment attribution is immutable on each application.
 // ---------------------------------------------------------------------------
 model Workspace {
   id            String   @id @default(cuid())
@@ -142,7 +142,7 @@ model JobApplication {
   number Int
 
   job_title           String?
-  company_name        String? // for enrichment and display
+  company_name        String? // for duplicate matching and display
   url                 String
   normalized_url      String  // canonical form — URL duplicate key
   job_fingerprint     String? // recent workspace duplicate signal: normalized company + title
@@ -155,16 +155,14 @@ model JobApplication {
 
   paid    Boolean   @default(false)
 
-  resume_link String?
-
-  // Audit only. Deliberately NOT an input to payment — see Workspace.owner_user_id.
-  created_by_user_id String?
+  // Immutable payment subject: the bidder who created/performed this application.
+  created_by_user_id String
 
   created_at DateTime @default(now())
   updated_at DateTime @updatedAt
 
   workspace Workspace @relation(fields: [workspace_id], references: [id], onDelete: Cascade)
-  createdByUser User? @relation("CreatedBy", fields: [created_by_user_id], references: [id], onDelete: SetNull)
+  createdByUser User @relation("CreatedBy", fields: [created_by_user_id], references: [id], onDelete: Restrict)
 
   // Guarantees the "number resets per date" invariant at the storage layer, and doubles as the
   // covering index for the default table sort (date desc, number desc).
@@ -177,6 +175,8 @@ model JobApplication {
   @@index([workspace_id, job_fingerprint, created_at])
   @@index([date])
   @@index([workspace_id, created_at])
+  @@index([application_status, paid, date, created_by_user_id, workspace_id], map: "job_applications_payment_lookup_idx")
+  @@index([workspace_id, date(sort: Desc), number(sort: Asc)], map: "job_applications_workspace_date_desc_number_asc_idx")
   @@map("job_applications")
 }
 
@@ -207,7 +207,7 @@ model BannedUrlPattern {
   pattern            String   @unique
   created_by_user_id String?
   created_at         DateTime @default(now())
-  updated_at         DateTime @updatedAt
+  updated_at         DateTime @default(now()) @updatedAt
 
   createdByUser User? @relation("BannedUrlPatternCreator", fields: [created_by_user_id], references: [id], onDelete: SetNull)
 

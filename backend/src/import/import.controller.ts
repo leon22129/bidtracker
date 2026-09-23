@@ -26,10 +26,9 @@ export class ImportController {
     @CurrentUser() user: AuthUser,
     @Param('workspaceId') workspaceId: string,
     @UploadedFile() file: any,
-    @Body() body: { enrich?: string; default_date?: string },
+    @Body() body: { default_date?: string },
   ) {
     return this.importService.import(user, workspaceId, file, {
-      enrich: body?.enrich !== 'false',
       defaultDate: body?.default_date,
     });
   }

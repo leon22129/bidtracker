@@ -22,8 +22,8 @@ unit-tested module that every write path must pass through.
 | Create / rename / delete workspace | ✅ | ❌ | ❌ |
 | Grant workspace permissions | ✅ | ❌ | ❌ |
 | List all workspaces | ✅ | granted only | granted only |
-| Add URLs / import Excel | ✅ | ✅ (edit scope) | ✅ (edit scope) |
-| Edit job title/company/url/note/resume | ✅ | ✅ (edit scope) | ✅ (edit scope) |
+| Add application manually / import Excel or CSV | ✅ | ✅ (edit scope) | ✅ (edit scope) |
+| Edit job title/company/url/note | ✅ | ✅ (edit scope) | ✅ (edit scope) |
 | Set status `Pending→Applied`, `Applied→Rejected` | ✅ | ✅ | ✅ |
 | Any other status transition | ✅ | ❌ | ❌ |
 | Set/clear `Duplicated` | ✅ | ❌ | ❌ |
@@ -64,7 +64,7 @@ Consequences:
 
 ```ts
 BIDDER_WRITABLE = { job_title, company_name, url, job_source,
-                    application_status, note, resume_link, date }
+                    application_status, note, date }
 
 ADMIN_ONLY      = { pipeline_status, interview_date, interview_note,
                     paid, workspace_id, number }
@@ -137,7 +137,7 @@ record; it renders gray and read-only in the UI, but the UI is only a courtesy �
 | Bulk edit | `PATCH /applications/bulk` | same, evaluated **per row**; partial success reported per id |
 | Bulk delete | `POST /applications/bulk-delete` | admin only |
 | Paid toggle | `POST /applications/bulk-paid` | admin only; stamps `paid_by`, `paid_at` |
-| Manual URL paste | `POST /applications/urls` | scope=edit; status forced to `Pending`/`Duplicated` by system |
+| Manual create | `POST /applications` | scope=edit; required title/company/URL/status; status transition policy enforced |
 | Excel/CSV import | `POST /import/:workspaceId` | scope=edit; imported `Status` clamped — non-admins cannot import `Duplicated`/paid |
 | Pipeline update | `PATCH /applications/:id/pipeline` | admin only |
 

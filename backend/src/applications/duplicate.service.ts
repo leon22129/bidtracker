@@ -16,6 +16,7 @@ export class DuplicateService {
   async classifyJobIdentities(
     workspaceId: string,
     items: Array<{ company_name?: string | null; job_title?: string | null }>,
+    excludeIds: string[] = [],
   ): Promise<JobIdentityVerdict[]> {
     const fingerprints = items.map((item) => createJobFingerprint(item.company_name, item.job_title));
     const unique = [...new Set(fingerprints.filter((value): value is string => Boolean(value)))];
@@ -30,6 +31,7 @@ export class DuplicateService {
           workspace_id: workspaceId,
           job_fingerprint: { in: unique.slice(i, i + 400) },
           created_at: { gte: cutoff },
+          ...(excludeIds.length ? { id: { notIn: excludeIds } } : {}),
         },
         select: { ...select, job_fingerprint: true },
         orderBy: { created_at: 'desc' },
@@ -49,6 +51,7 @@ export class DuplicateService {
           created_at: { gte: cutoff },
           company_name: { not: null },
           job_title: { not: null },
+          ...(excludeIds.length ? { id: { notIn: excludeIds } } : {}),
         },
         select,
         orderBy: { created_at: 'desc' },

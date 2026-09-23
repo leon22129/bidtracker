@@ -205,8 +205,8 @@ export default function WorkspacesPage() {
                         Edit profile
                       </button>
                     )}
-                    <Link href={`/workspaces/${w.id}/add-urls`} className="btn-secondary btn-xs">
-                      Add URLs
+                    <Link href={`/workspaces/${w.id}/add`} className="btn-primary btn-xs">
+                      Add application
                     </Link>
                     <Link href={`/workspaces/${w.id}/import`} className="btn-secondary btn-xs">
                       Import Excel/CSV

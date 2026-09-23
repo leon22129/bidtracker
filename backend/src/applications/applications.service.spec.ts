@@ -1,4 +1,5 @@
 import { ApplicationsService } from './applications.service';
+import { ApplicationIngestionLockService } from './application-ingestion-lock.service';
 
 describe('ApplicationsService generated-application duplicate-click protection', () => {
   const user = {
@@ -47,8 +48,8 @@ describe('ApplicationsService generated-application duplicate-click protection',
       access as any,
       numbering as any,
       duplicates as any,
-      {} as any,
       { matches: jest.fn().mockResolvedValue(false), matchMany: jest.fn() } as any,
+      new ApplicationIngestionLockService(),
     );
     return { service, prisma, numbering, duplicates };
   }
@@ -150,5 +151,38 @@ describe('ApplicationsService generated-application duplicate-click protection',
       allow_similar_job: true,
     })).resolves.toMatchObject({ success: true, already_added: false });
     expect(duplicates.findRecentJobMatch).not.toHaveBeenCalled();
+  });
+
+  it('creates a complete manual application with the selected status', async () => {
+    const { service, prisma, duplicates } = setup();
+    duplicates.classifyBatch.mockResolvedValue([{
+      normalized_url: existing.normalized_url,
+      is_duplicate: false,
+    }]);
+    prisma.jobApplication.create.mockResolvedValue({
+      ...existing,
+      application_status: 'Applied',
+    });
+
+    await expect(service.createManual(user, {
+      ...dto,
+      application_status: 'Applied',
+    })).resolves.toMatchObject({ application_status: 'Applied' });
+    expect(prisma.jobApplication.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        job_title: dto.job_title,
+        company_name: dto.company_name,
+        application_status: 'Applied',
+      }),
+    }));
+  });
+
+  it('applies the status policy to manual creation', async () => {
+    const { service } = setup();
+
+    await expect(service.createManual(user, {
+      ...dto,
+      application_status: 'Rejected',
+    })).rejects.toThrow('Transition Pending');
   });
 });

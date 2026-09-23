@@ -390,6 +390,14 @@ export default function Home() {
     notificationDismissersRef.current.set(key, dismiss);
   };
 
+  const handleApplicationAdded = (tabId: string) => {
+    setTabCompanyNames((prev) => {
+      const next = { ...prev };
+      delete next[tabId];
+      return next;
+    });
+  };
+
   // ─── Browser login ──────────────────────────────────────────────────────────
 
   if (!webAuthStatus) {
@@ -686,6 +694,7 @@ export default function Home() {
                 onGenerationComplete={(profileId, companyName) =>
                   handleGenerationComplete(profileId, tab.tabId, companyName)
                 }
+                onApplicationAdded={() => handleApplicationAdded(tab.tabId)}
                 triggerPreview={triggerPreviewFor === tab.tabId}
                 onPreviewTriggered={() => setTriggerPreviewFor(null)}
                 settingsOpen={settingsProfileId === profile.id}

@@ -3,7 +3,7 @@ import {
 } from '@nestjs/common';
 import { ApplicationsService } from './applications.service';
 import {
-  BulkIdsDto, BulkUpdateApplicationsDto, CreateFromUrlsDto, CreateGeneratedApplicationDto,
+  BulkIdsDto, BulkUpdateApplicationsDto, CreateGeneratedApplicationDto, CreateManualApplicationDto,
   QueryApplicationsDto,
   UpdateApplicationDto, UpdatePipelineDto,
 } from './dto/application.dto';
@@ -41,6 +41,14 @@ export class ApplicationsController {
   @Get()
   findAll(@CurrentUser() user: AuthUser, @Query() query: QueryApplicationsDto) {
     return this.applications.findAll(user, query);
+  }
+
+  @Post()
+  createManual(
+    @CurrentUser() user: AuthUser,
+    @Body() dto: CreateManualApplicationDto,
+  ) {
+    return this.applications.createManual(user, dto);
   }
 
   @Get('summary')
@@ -82,20 +90,6 @@ export class ApplicationsController {
   @Roles('admin', 'super_admin')
   removeBannedPattern(@Param('patternId') patternId: string) {
     return this.bannedUrls.remove(patternId);
-  }
-
-  @Post('urls')
-  createFromUrls(@CurrentUser() user: AuthUser, @Body() dto: CreateFromUrlsDto) {
-    return this.applications.createFromUrls(user, dto);
-  }
-
-  @Post('urls/preview')
-  @HttpCode(200)
-  previewUrls(
-    @CurrentUser() user: AuthUser,
-    @Body() body: { workspace_id: string; urls: string },
-  ) {
-    return this.applications.previewUrls(user, body.workspace_id, body.urls ?? '');
   }
 
   @Patch('bulk')

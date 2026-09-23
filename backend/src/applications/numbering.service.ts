@@ -36,7 +36,7 @@ export class NumberingService {
 
   /**
    * Reserves `count` consecutive numbers for a day and returns the first one.
-   * Used by bulk paths (URL paste, Excel import) so a 20k-row import does one MAX query per date
+   * Used by bulk paths such as Excel import so a 20k-row import does one MAX query per date
    * instead of one per row.
    */
   async reserveBlock(

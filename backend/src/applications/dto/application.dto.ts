@@ -5,7 +5,7 @@ import {
 } from 'class-validator';
 import {
   APPLICATION_STATUSES, ApplicationStatus, DEFAULT_PAGE_SIZE, JOB_SOURCES, JobSource,
-  MAX_PAGE_SIZE, MAX_ROWS_PER_INGEST, PIPELINE_STATUSES, PipelineStatus,
+  MAX_PAGE_SIZE, PIPELINE_STATUSES, PipelineStatus,
 } from '../../common/constants';
 
 const toBool = ({ value }: { value: any }) =>
@@ -117,11 +117,6 @@ export class UpdateApplicationDto {
   @IsOptional()
   @IsBoolean()
   paid?: boolean;
-
-  @IsOptional()
-  @IsString()
-  @MaxLength(2000)
-  resume_link?: string | null;
 }
 
 export class BulkUpdatePatchDto {
@@ -153,11 +148,6 @@ export class BulkUpdatePatchDto {
   company_name?: string | null;
 
   @IsOptional()
-  @IsString()
-  @MaxLength(2000)
-  resume_link?: string | null;
-
-  @IsOptional()
   @IsBoolean()
   paid?: boolean;
 }
@@ -185,23 +175,28 @@ export class BulkIdsDto {
   ids: string[];
 }
 
-/** Manual URL paste: one textarea, one date, N lines -> N applications. */
-export class CreateFromUrlsDto {
+/** A complete application entered directly from the workspace UI. */
+export class CreateManualApplicationDto {
   @IsString()
   workspace_id: string;
 
-  @IsDateString()
-  date: string;
+  @IsUrl({ require_protocol: true })
+  url: string;
 
+  @Transform(({ value }) => typeof value === 'string' ? value.trim() : value)
   @IsString()
-  @MaxLength(MAX_ROWS_PER_INGEST * 500)
-  urls: string;
+  @MinLength(1)
+  @MaxLength(300)
+  job_title: string;
 
-  /** Set false to skip network enrichment (faster, leaves title/company blank). */
-  @IsOptional()
-  @Transform(toBool)
-  @IsBoolean()
-  enrich?: boolean = true;
+  @Transform(({ value }) => typeof value === 'string' ? value.trim() : value)
+  @IsString()
+  @MinLength(1)
+  @MaxLength(200)
+  company_name: string;
+
+  @IsIn(APPLICATION_STATUSES)
+  application_status: ApplicationStatus;
 }
 
 /** A reviewed application returned by resume generation and explicitly saved by the extension. */

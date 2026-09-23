@@ -10,8 +10,8 @@ Stripped of the feature list, this is **an internal operations tool for a bid fa
 - The core artifact is a **very wide, very long spreadsheet** (50k+ rows/workspace) that several people edit
   concurrently. The hard engineering problem is not "CRUD", it is **table UX at 50k rows** plus
   **field-level authorization** (who may change *which column* to *which value*).
-- The money is derived data: `Applied` rows per week per **workspace owner**. That means correctness of
-  `application_status` and of `Workspace.owner_user_id` is financially load-bearing, which is exactly why
+- The money is derived data: unpaid `Applied` rows per period per **application creator**. That means correctness of
+  `application_status` and immutable `JobApplication.created_by_user_id` is financially load-bearing, which is exactly why
   `Duplicated` and `paid` are admin-only. The permission model isn't bureaucracy — it's fraud control.
 
 ### Requirement → design consequence table
@@ -24,7 +24,7 @@ Stripped of the feature list, this is **an internal operations tool for a bid fa
 | Number resets per date | Uniqueness is `(workspace_id, date, number)` enforced by a DB unique index, assigned inside a transaction. |
 | Duplicate detection across job boards | Exact URLs use indexed `normalized_url`; recent cross-site copies use a workspace-scoped company/title `job_fingerprint`. |
 | Bidders must not set `Duplicated` / edit paid rows | Enforced in a **backend field-level policy layer**, not in the UI. UI only mirrors it. |
-| Weekly payment by workspace owner | Aggregation joins `JobApplication → Workspace.owner_user_id`. `created_by` deliberately does not exist as a payment input. |
+| Payment survives profile reassignment | Aggregation uses immutable `JobApplication.created_by_user_id`; workspace ownership controls current assignment, not historical credit. |
 | Large Excel imports | Streamed parse (ExcelJS/CSV) → validate → chunked `createMany` in a transaction. Enrichment is bounded-concurrency and optional. |
 | Free VPS / Cloudflare Tunnel / no managed DB | SQLite file on a Docker named volume, WAL mode. One box, two containers. |
 
@@ -94,9 +94,8 @@ PATCH /api/applications/:id  { application_status: "Applied" }
 | **JWT bearer in `localStorage`** | "Keep authentication simple." No CSRF surface, works identically for the Next.js client and any future script/CLI. | XSS could exfiltrate the token. Mitigated by: React's default escaping, no `dangerouslySetInnerHTML` anywhere, 7-day expiry, and a strict CSP header. If you later want defence-in-depth, switch to an httpOnly cookie + `SameSite=Lax` — one file changes (`lib/api.ts`) plus a cookie extractor in the JWT strategy. |
 | **Offset pagination, not cursor** | The table needs *random access* — a virtual scrollbar can jump to row 43,000. Cursors can't do that. | `OFFSET 43000` degrades on huge tables. Mitigated by covering indexes and a hard cap of 500 rows/page; measured well under 30 ms at 50k rows. Sorted-by-`(date, number)` scans use the index directly. |
 | **Windowed page cache + virtualizer (not "load all")** | 50k rows × ~15 fields ≈ 30 MB JSON — would freeze the tab. | Slightly more complex client state (`Map<pageIndex, Row[]>`). Encapsulated entirely in `useApplications()`. |
-| **Server-side enrichment (title/company scraping) is opt-in and best-effort** | Career sites are slow, rate-limit, and often bot-block. Blocking an insert on a 10 s fetch would make bulk paste unusable. | Enrichment runs with a 6 s timeout, concurrency 5, and **never fails the insert** — fields are simply left blank for manual editing, exactly as specified. `ENABLE_URL_ENRICHMENT=false` disables it entirely. |
 | **Duplicate scope is configurable (`global` default)** | Two bidders pasting the same job is the exact abuse the flag exists to catch, so cross-workspace detection is the safer default for payment integrity. | Legitimate re-application after months looks like a duplicate. Admin can flip any row back (`Duplicated → Applied`), which is why only admin holds that key. Set `DUPLICATE_SCOPE=workspace` for per-bidder scope. |
-| **Weekly report is materialised (`WeeklyBidReport`) plus recomputable** | Payment history must be stable — a later status edit shouldn't silently rewrite a settled payroll week. | Drift between the snapshot and live data. Mitigated by an idempotent `POST /payments/weekly/generate` (upsert) so you can deliberately recompute a week, and by showing both stored and live counts in the UI. |
+| **Payment processing is atomic and materialised (`PaymentReport`)** | Payment history must be stable — a later status edit must not silently rewrite a settled period. | `POST /payments/process` updates only eligible unpaid rows and records the returned count in the same transaction; `/payments/report` remains a live, workspace-scoped preview. |
 | **Monorepo, two containers, no gateway** | Fewer moving parts on a free VPS; the tunnel/reverse proxy already terminates TLS and routes `/api`. | No independent scaling. Fine — the bottleneck is one SQLite file anyway. |
 | **REST over GraphQL/tRPC** | The client is one table plus a few dashboards; REST + typed hand-written client is less machinery, and lets you curl/import from scripts. | No end-to-end type inference. Mitigated by a shared `types.ts` mirroring the Prisma model. |
 

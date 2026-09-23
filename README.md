@@ -178,7 +178,7 @@ Legend: 🔓 public · 👤 any authenticated user · 🛡 **admin only** (enfor
 | POST   | `/users`                    | `{ username, email, password, role }`                                                     |
 | PATCH  | `/users/:id`                | `{ username?, email?, role?, is_active? }` — refuses to demote/deactivate the last admin |
 | POST   | `/users/:id/reset-password` | `{ new_password }` (there is no reset-by-email flow, by design)                           |
-| DELETE | `/users/:id`                | Refused while the user still owns workspaces                                                |
+| DELETE | `/users/:id`                | Refused while the user owns workspaces or has application/payment history                   |
 
 `password_hash` is never present in any response — every user object is built by an explicit
 whitelist projection, not by deleting fields from a Prisma row.
@@ -189,7 +189,7 @@ whitelist projection, not by deleting fields from a Prisma row.
 | ------ | --------------------------------------- | ------ | ---------------------------------------------------------------------------------- |
 | GET    | `/workspaces`                         | 👤     | Only workspaces you own or were granted (admins see all).`?includeArchived=true` |
 | GET    | `/workspaces/:id`                     | 🔑     | One workspace incl.`my_access`                                                   |
-| POST   | `/workspaces`                         | 🛡     | `{ name, owner_user_id }` — the owner is who gets paid                          |
+| POST   | `/workspaces`                         | 🛡     | `{ name, owner_user_id }` — owner controls the current profile assignment       |
 | PATCH  | `/workspaces/:id`                     | 🛡     | `{ name?, owner_user_id?, is_archived? }`                                        |
 | DELETE | `/workspaces/:id`                     | 🛡     | Cascades to its applications; returns the deleted count                            |
 | POST   | `/workspaces/:id/permissions`         | 🛡     | `{ user_id, permission_type: 'view' \| 'edit' }`                                  |
@@ -203,16 +203,15 @@ Requesting a workspace you can't see returns **404, not 403** — a 403 would co
 | ------ | ------------------------------ | ------- | --------------------------------------------------------------- |
 | GET    | `/applications/meta`         | 👤      | Enum values + which fields your role may write                  |
 | GET    | `/applications`              | 🔑      | Paginated list — see query parameters below                    |
+| POST   | `/applications`              | 🔑 edit | Manually create a complete `{ workspace_id, job_title, company_name, url, application_status }` row |
 | GET    | `/applications/summary`      | 🔑      | Counts by status / pipeline / source, and paid count            |
 | GET    | `/applications/:id`          | 🔑      | One row                                                         |
 | PATCH  | `/applications/:id`          | 🔑 edit | Inline cell edit; field-level policy applies                    |
 | PATCH  | `/applications/:id/pipeline` | 🛡      | `pipeline_status`, `interview_date`, `interview_note`     |
 | PATCH  | `/applications/bulk`         | 🔑 edit | `{ ids, patch }` — per-row policy, per-id failure reasons    |
 | POST   | `/applications/bulk-delete`  | 🛡      | `{ ids }`                                                     |
-| POST   | `/applications/urls`         | 🔑 edit | `{ workspace_id, date, urls, enrich? }` — the paste endpoint |
 | POST   | `/applications/generate`     | 🔑 edit | Generate an eligible resume candidate without writing an application |
 | POST   | `/applications/generated`    | 🔑 edit | Idempotently save `{ workspace_id, url, job_title, company_name }` by normalized URL |
-| POST   | `/applications/urls/preview` | 🔑      | Duplicate/validity dry run; writes nothing                      |
 | GET/POST/DELETE | `/applications/banned-patterns` | 🛡 | Manage database-backed banned URL substrings |
 
 **`GET /applications` query parameters**
@@ -238,20 +237,19 @@ Response: `{ items, total, page, page_size, total_pages }`.
 | Method | Path                             | Access  | Description                                                                                                             |
 | ------ | -------------------------------- | ------- | ----------------------------------------------------------------------------------------------------------------------- |
 | POST   | `/import/:workspaceId/preview` | 🔑 edit | multipart`file` → detected columns + sample rows, no writes                                                          |
-| POST   | `/import/:workspaceId`         | 🔑 edit | multipart`file`, `enrich`, `default_date` → `{ total_rows, created, duplicates, skipped[], detected_columns }` |
+| POST   | `/import/:workspaceId`         | 🔑 edit | multipart`file`, `default_date` → `{ total_rows, created, duplicates, skipped[], missing_fields[], detected_columns }` |
 
 Accepts `.xlsx` and `.csv`. Recognised headers (fuzzy-matched): Date, Job Title, Company Name, URL,
-Status, Note, Resume Link. A `Status` column in the file is run through the **same** status-transition
+Status and Note. A `Status` column in the file is run through the **same** status-transition
 policy as a UI edit — otherwise a bidder could set `Duplicated` from a spreadsheet.
 
 ### Payments — `/api/payments` 🛡
 
-| Method | Path                          | Description                                                                                                                     |
-| ------ | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| GET    | `/payments/weekly`          | Stored reports;`?from&to&workspace_id`. Returns `applied_count` (settled) **and** `live_applied_count` (recomputed) |
-| GET    | `/payments/weekly/preview`  | `?week_start=YYYY-MM-DD` (any date in the week; blank = last complete week). Writes nothing                                   |
-| POST   | `/payments/weekly/generate` | `{ week_start? }` — idempotent upsert                                                                                        |
-| GET    | `/payments/by-bidder`       | Totals aggregated by`Workspace.owner_user_id`                                                                                 |
+| Method | Path                | Description                                                                                                      |
+| ------ | ------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| GET    | `/payments/report`  | Unpaid `Applied` totals for `?start_date&end_date`, grouped by visible workspace and bidder                     |
+| GET    | `/payments/history` | Immutable payment-processing history; regular admins see their own settlements and super admins see all reports |
+| POST   | `/payments/process` | `{ start_date, end_date, bidder_id }` — atomically marks eligible rows paid and records the settled count        |
 
 ### Analytics — `/api/analytics` 🛡
 
@@ -307,10 +305,9 @@ backend/
 │   │   ├── workspaces.service.ts
 │   │   └── workspace-access.service.ts  # ★ the single answer to "can X touch workspace Y?"
 │   ├── applications/
-│   │   ├── applications.service.ts   # list/update/bulk/paste — every write goes through the policy
+│   │   ├── applications.service.ts   # list/update/bulk/generated — every write goes through the policy
 │   │   ├── numbering.service.ts      # per-date numbering, unique index + P2002 retry
-│   │   ├── duplicate.service.ts      # exact URL, then normalised URL, chunked for SQLite
-│   │   └── metadata.service.ts       # bounded-concurrency enrichment; never fails an insert
+│   │   └── duplicate.service.ts      # exact URL, then normalised URL, chunked for SQLite
 │   ├── import/                       # ExcelJS + a hand-written RFC-4180 CSV parser
 │   ├── payments/
 │   │   ├── payments.service.ts       # Mon–Sun weeks, Applied only, credited to the owner
@@ -343,7 +340,7 @@ frontend/
     │       │   ├── page.tsx          # workspace cards + PermissionsModal
     │       │   └── [id]/
     │       │       ├── page.tsx      # ★ the grid page (owns filters + selection)
-    │       │       ├── add-urls/page.tsx
+    │       │       ├── add/page.tsx  # required-field manual application form
     │       │       └── import/page.tsx
     │       └── admin/
     │           ├── users/page.tsx
@@ -451,7 +448,7 @@ Three independent layers. A request must pass all three; see
 - A row with `paid = true` is locked: every non-admin write to it is rejected.
 
 The rules live in **one module of pure functions** that every write path calls — inline edit, bulk
-edit, URL paste, **and Excel import**. Bulk endpoints and the import file's `Status` column are the
+edit, **and Excel import**. Bulk endpoints and the import file's `Status` column are the
 two realistic side doors around a permission system like this, so they were closed deliberately
 rather than incidentally.
 
@@ -460,18 +457,17 @@ convenience only: bypassing it with devtools or curl produces a 403, not an esca
 
 ### Payment integrity
 
-The credit for an applied row goes to `Workspace.owner_user_id` — **never** to `created_by_user_id`.
-When Mike (a manager) works inside *John Applications*, John is paid. `created_by_user_id` exists for
-audit and is documented as not being a payment input. Weekly reports are snapshots, so a later edit
-cannot silently rewrite settled payroll — instead the dashboard shows the settled figure beside the
-recomputed live one so drift is visible.
+The credit for an applied row goes to its immutable `JobApplication.created_by_user_id`: the bidder
+who actually created/performed the application. Reassigning a workspace or resume profile therefore
+does not move earlier unpaid work to the new owner. Archived workspaces remain eligible until their
+`Applied` rows are processed. Creators with application history are deactivated rather than deleted.
 
 ---
 
 ## Database & migrations
 
-SQLite at `/data/app.db` on a Docker volume. Five tables: `users`, `workspaces`,
-`workspace_permissions`, `job_applications`, `weekly_bid_reports`.
+SQLite at `/data/app.db` on a Docker volume. Core tables include `users`, `workspaces`,
+`resume_profiles`, `workspace_permissions`, `job_applications`, and `payment_reports`.
 Full column-by-column reference in [docs/02-DATABASE.md](docs/02-DATABASE.md).
 
 ### Migrations
@@ -688,8 +684,6 @@ Full annotated list in [.env.example](.env.example). The ones worth knowing:
 | `JWT_EXPIRES_IN`                                   | `7d`                  | Session length.                                                                        |
 | `DUPLICATE_SCOPE`                                  | `global`              | `global` = a URL seen in any workspace is a duplicate; `workspace` = per-tab only. |
 | `JOB_FINGERPRINT_WINDOW_DAYS`                     | `90`                  | Window for workspace-local company/title cross-site duplicate warnings.                |
-| `ENABLE_URL_ENRICHMENT`                            | `true`                | Fetch pages for company/title. Off makes pasting instant.                              |
-| `URL_FETCH_CONCURRENCY` / `URL_FETCH_TIMEOUT_MS` | `5` / `6000`        | Enrichment throttle.                                                                   |
 | `MAX_UPLOAD_MB`                                    | `25`                  | Import file ceiling.                                                                   |
 | `DISABLE_CRON`                                     | `false`               | Set`true` on a staging copy so it can't produce authoritative-looking reports.       |
 | `ALLOW_BIDDER_PENDING_TO_REJECTED`                 | `false`               | Adds one extra transition beyond the spec's two.                                       |
@@ -703,7 +697,8 @@ Full annotated list in [.env.example](.env.example). The ones worth knowing:
 checks the supplied job description, and generates the resume and optional application answers through OpenAI. It returns
 an application candidate without writing it, so a lost extension response cannot leave an inaccessible
 duplicate behind. The extension explicitly saves that candidate with `POST /api/applications/generated`
-after receiving the resume. `/api/resume/generate` remains available as a compatibility alias for older
+after receiving the resume. Both `job_title` and `company_name` are required by the extension client,
+the request DTO, and the save service. `/api/resume/generate` remains available as a compatibility alias for older
 extension builds. Admins manage database-backed URL deny patterns from **Banned URLs** in the dashboard.
 Workspace profile details are edited through `PATCH /api/workspaces/:id`.
 
@@ -714,10 +709,10 @@ docker compose logs -f backend            # tail logs
 docker compose restart backend            # restart just the API
 docker compose exec backend npx prisma studio --port 5555   # inspect data (admin-only, port-forward it)
 
-# Generate a specific week's payment report by hand
-curl -X POST localhost:3000/api/payments/weekly/generate \
+# Process a bidder's payment period by hand
+curl -X POST localhost:3000/api/payments/process \
   -H 'Content-Type: application/json' -H "Authorization: Bearer $TOKEN" \
-  -d '{"week_start":"2026-08-24"}'
+  -d '{"start_date":"2026-08-24","end_date":"2026-08-30","bidder_id":"USER_ID"}'
 ```
 
 ### Troubleshooting
@@ -728,7 +723,7 @@ curl -X POST localhost:3000/api/payments/weekly/generate \
 | Login fails right after a fresh deploy     | Look for "Default admin created" in`docker compose logs backend`. If the database already had an admin, the env vars were ignored — use the real password or reset it from another admin account. |
 | `SQLITE_BUSY` in the logs                | Concurrent writers exceeding`busy_timeout`. Check for a second backend replica; there should be exactly one.                                                                                       |
 | Import reports many skipped rows           | Open the skip list on the results panel — it gives a reason per row. Usually a missing/unparseable URL column.                                                                                      |
-| Company/title columns arrive blank         | Career sites block bots or time out. This is the specified fallback; fill them in on the table, or retry with enrichment on.                                                                         |
+| Company/title columns arrive blank         | The import result lists every affected spreadsheet row. Fill those values in on the table after import.                                                                                              |
 | Weekly report shows an amber "Live" figure | Rows changed after settlement. Expected when an admin edits history; regenerate the week if the new figure is the correct one.                                                                       |
 | Table scrolls but rows stay blank          | Backend unreachable — check`docker compose ps` and `/api/health`.     
 
@@ -744,11 +739,10 @@ can be blank or absent entirely.
 | --- | --- | --- | --- |
 | `URL` | **yes** | any `http(s)` URL. Hyperlink cells, `HYPERLINK()` formulas and rich text all work — the link target is read, not the display text | row is skipped |
 | `Date` | no | `YYYY-MM-DD`, `M/D/YYYY`, an ISO datetime, or a real Excel date cell | the date picked on the upload page (defaults to today) |
-| `Job Title` | no | free text | read from the job posting, if enrichment is on |
-| `Company Name` | no | free text | read from the job posting, if enrichment is on |
+| `Job Title` | no | free text | imported blank and reported for review |
+| `Company Name` | no | free text | imported blank and reported for review |
 | `Status` | no | `Pending`, `Applied`, `Rejected` | `Pending` |
 | `Note` | no | free text | empty |
-| `Resume Link` | no | any URL | empty |
 
 **Headers are fuzzy-matched.** Comparison is case-, space- and punctuation-insensitive, over a list of
 synonyms — so `JOB URL`, `Job_Url` and `link` all resolve to `URL`. Column **order is irrelevant** and
@@ -762,7 +756,6 @@ unrecognised columns are ignored:
 | `company_name` | company name, company, employer, organization, org |
 | `application_status` | status, application status, app status |
 | `note` | note, notes, comment, comments, remark, remarks |
-| `resume_link` | resume link, resume, cv, cv link, resume url |
 
 The canonical list lives in `COLUMN_ALIASES` at
 [backend/src/import/import.service.ts:19](backend/src/import/import.service.ts#L19).
@@ -796,17 +789,6 @@ The upload page runs `POST /import/:workspaceId/preview` before anything is writ
 columns it matched (green) and what's missing (red), plus the first five rows as parsed. If `URL` comes
 back unmatched the import is refused outright with the headers it did find. Use it — it costs nothing
 and catches a mis-named column before it becomes 500 skipped rows.
-
-### Two different features
-
-| | Add URLs | Import |
-| --- | --- | --- |
-| Input | one URL per line, pasted into a textarea | `.xlsx` / `.xls` / `.csv` file |
-| Date | one date for the whole batch | per row, from the `Date` column |
-| Other fields | none — title/company come from enrichment only | Job Title, Company Name, Status, Note, Resume Link |
-| Use it when | you just applied to a handful of jobs | you're migrating an existing spreadsheet |
-
-Both paths run the identical duplicate check, numbering, job-source detection and permission policy.
 
 ---                                                                                                                          |
 
