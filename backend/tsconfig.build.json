@@ -5,7 +5,8 @@
   // through ts-node and is never shipped, so the build excludes it.
   "extends": "./tsconfig.json",
   "compilerOptions": {
-    "rootDir": "./src"
+    "rootDir": "./src",
+    "tsBuildInfoFile": "./dist/tsconfig.build.tsbuildinfo"
   },
   "include": ["src/**/*"],
   "exclude": ["node_modules", "dist", "prisma", "**/*.spec.ts"]

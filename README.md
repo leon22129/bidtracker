@@ -51,11 +51,24 @@ default. To run without Cloudflare, use:
 .\start.ps1 --no-cloudflare
 ```
 
+For development, run both the backend and frontend directly from source with automatic reloads and
+no build step:
+
+```powershell
+.\start.ps1 --dev
+```
+
+Development mode is always local-only and does not start a Cloudflare tunnel.
+Stopping the script with Ctrl+C or closing its terminal also stops both development servers.
+
 Use [http://127.0.0.1:3000](http://127.0.0.1:3000) for BidTracker and
 [http://127.0.0.1:3002](http://127.0.0.1:3002) for Resume Builder. `--local` is an alias for
 `--no-cloudflare`.
 
-### Local development (two terminals)
+### Local development
+
+On Windows, the `--dev` command above starts both source watchers. To run them separately (or on
+another operating system), use two terminals:
 
 ```bash
 # --- terminal 1: backend on :3001

@@ -3,13 +3,129 @@
 #
 # Usage:
 #   .\start.ps1
+#   .\start.ps1 --dev
 #   .\start.ps1 --rebuild
 #   .\start.ps1 --no-cloudflare
 #
-# Ctrl+C stops the backend, frontend, and optional Cloudflare tunnel.
+# Ctrl+C or closing this terminal stops the backend, frontend, and optional tunnel.
 # ============================================================================
 
 $ErrorActionPreference = "Stop"
+
+# Keep every process started by this script in a Windows job object. Windows closes
+# the job handle if this PowerShell process exits for any reason (including its
+# terminal being closed), and KILL_ON_JOB_CLOSE then stops the complete process tree.
+if (-not ("BidTrackerProcessJob" -as [type])) {
+    Add-Type -TypeDefinition @"
+using System;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+
+public static class BidTrackerProcessJob
+{
+    private const int JobObjectExtendedLimitInformation = 9;
+    private const uint JobObjectLimitKillOnJobClose = 0x00002000;
+    private static IntPtr handle = IntPtr.Zero;
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct IoCounters
+    {
+        public ulong ReadOperationCount;
+        public ulong WriteOperationCount;
+        public ulong OtherOperationCount;
+        public ulong ReadTransferCount;
+        public ulong WriteTransferCount;
+        public ulong OtherTransferCount;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct BasicLimitInformation
+    {
+        public long PerProcessUserTimeLimit;
+        public long PerJobUserTimeLimit;
+        public uint LimitFlags;
+        public UIntPtr MinimumWorkingSetSize;
+        public UIntPtr MaximumWorkingSetSize;
+        public uint ActiveProcessLimit;
+        public UIntPtr Affinity;
+        public uint PriorityClass;
+        public uint SchedulingClass;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct ExtendedLimitInformation
+    {
+        public BasicLimitInformation BasicLimitInformation;
+        public IoCounters IoInfo;
+        public UIntPtr ProcessMemoryLimit;
+        public UIntPtr JobMemoryLimit;
+        public UIntPtr PeakProcessMemoryUsed;
+        public UIntPtr PeakJobMemoryUsed;
+    }
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
+    private static extern IntPtr CreateJobObject(IntPtr jobAttributes, string name);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool SetInformationJobObject(
+        IntPtr job,
+        int infoClass,
+        IntPtr info,
+        uint infoLength);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool AssignProcessToJobObject(IntPtr job, IntPtr process);
+
+    [DllImport("kernel32.dll")]
+    private static extern bool CloseHandle(IntPtr objectHandle);
+
+    public static void Create()
+    {
+        Close();
+        handle = CreateJobObject(IntPtr.Zero, null);
+        if (handle == IntPtr.Zero)
+            throw new Win32Exception(Marshal.GetLastWin32Error(), "Could not create process job");
+
+        var limits = new ExtendedLimitInformation();
+        limits.BasicLimitInformation.LimitFlags = JobObjectLimitKillOnJobClose;
+        int length = Marshal.SizeOf(typeof(ExtendedLimitInformation));
+        IntPtr info = Marshal.AllocHGlobal(length);
+
+        try
+        {
+            Marshal.StructureToPtr(limits, info, false);
+            if (!SetInformationJobObject(handle, JobObjectExtendedLimitInformation, info, (uint)length))
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "Could not configure process job");
+        }
+        catch
+        {
+            Close();
+            throw;
+        }
+        finally
+        {
+            Marshal.FreeHGlobal(info);
+        }
+    }
+
+    public static void AddProcess(IntPtr processHandle)
+    {
+        if (handle == IntPtr.Zero)
+            throw new InvalidOperationException("Process job has not been created");
+        if (!AssignProcessToJobObject(handle, processHandle))
+            throw new Win32Exception(Marshal.GetLastWin32Error(), "Could not add process to job");
+    }
+
+    public static void Close()
+    {
+        if (handle == IntPtr.Zero)
+            return;
+        CloseHandle(handle);
+        handle = IntPtr.Zero;
+    }
+}
+"@
+}
 
 # ============================================================================
 # Configuration
@@ -26,8 +142,10 @@ $FrontendUrl = "http://127.0.0.1:3000"
 $HealthUrl = "$FrontendUrl/api/health"
 
 $Rebuild = $false
+$Dev = $false
 $NoCloudflare = $false
 $Processes = @()
+$ProcessJobCreated = $false
 
 $LogDirectory = Join-Path $env:TEMP "bidtracker"
 
@@ -50,6 +168,14 @@ foreach ($Arg in $args) {
             $Rebuild = $true
         }
 
+        "--dev" {
+            $Dev = $true
+        }
+
+        "-dev" {
+            $Dev = $true
+        }
+
         "--no-cloudflare" {
             $NoCloudflare = $true
         }
@@ -59,23 +185,37 @@ foreach ($Arg in $args) {
         }
 
         "--help" {
-            Write-Host "Usage: .\start.ps1 [--rebuild] [--no-cloudflare]"
+            Write-Host "Usage: .\start.ps1 [--dev | --rebuild] [--no-cloudflare]"
             exit 0
         }
 
         "-h" {
-            Write-Host "Usage: .\start.ps1 [--rebuild] [--no-cloudflare]"
+            Write-Host "Usage: .\start.ps1 [--dev | --rebuild] [--no-cloudflare]"
             exit 0
         }
 
         default {
             Write-Host ""
             Write-Host "Unknown option: $Arg" -ForegroundColor Red
-            Write-Host "Usage: .\start.ps1 [--rebuild] [--no-cloudflare]"
+            Write-Host "Usage: .\start.ps1 [--dev | --rebuild] [--no-cloudflare]"
             Write-Host ""
             exit 2
         }
     }
+}
+
+if ($Dev -and $Rebuild) {
+    Write-Host ""
+    Write-Host "--dev and --rebuild cannot be used together." -ForegroundColor Red
+    Write-Host "Usage: .\start.ps1 [--dev | --rebuild] [--no-cloudflare]"
+    Write-Host ""
+    exit 2
+}
+
+# Development mode is intentionally local-only. Hot-reload servers should not
+# be exposed through a public quick tunnel.
+if ($Dev) {
+    $NoCloudflare = $true
 }
 
 # ============================================================================
@@ -104,9 +244,79 @@ function Stop-ProcessTree {
     }
 }
 
+function Start-ManagedNpmProcess {
+    param(
+        [string]$NpmScript,
+        [string]$WorkingDirectory,
+        [string]$StandardOutputPath,
+        [string]$StandardErrorPath
+    )
+
+    # The helper waits before starting npm. This gives the launcher time to put
+    # it in the job first, so npm and Node inherit job membership with no race.
+    $GateName = "Local\BidTracker-$PID-$([Guid]::NewGuid().ToString('N'))"
+    $Gate = [Threading.EventWaitHandle]::new(
+        $false,
+        [Threading.EventResetMode]::ManualReset,
+        $GateName
+    )
+    $Process = $null
+
+    $HelperScript = @"
+`$gate = [Threading.EventWaitHandle]::OpenExisting('$GateName')
+try {
+    `$gate.WaitOne() | Out-Null
+}
+finally {
+    `$gate.Dispose()
+}
+& npm.cmd run $NpmScript
+exit `$LASTEXITCODE
+"@
+
+    $EncodedCommand = [Convert]::ToBase64String(
+        [Text.Encoding]::Unicode.GetBytes($HelperScript)
+    )
+
+    try {
+        $Process = Start-Process `
+            -FilePath "powershell.exe" `
+            -ArgumentList @("-NoProfile", "-NonInteractive", "-EncodedCommand", $EncodedCommand) `
+            -WorkingDirectory $WorkingDirectory `
+            -WindowStyle Hidden `
+            -RedirectStandardOutput $StandardOutputPath `
+            -RedirectStandardError $StandardErrorPath `
+            -PassThru
+
+        [BidTrackerProcessJob]::AddProcess($Process.Handle)
+        $Gate.Set() | Out-Null
+        return $Process
+    }
+    catch {
+        if ($null -ne $Process -and !$Process.HasExited) {
+            Stop-ProcessTree $Process.Id
+        }
+        throw
+    }
+    finally {
+        $Gate.Dispose()
+    }
+}
+
 function Cleanup {
     Write-Host ""
     Write-Host "==> stopping" -ForegroundColor Yellow
+
+    if ($ProcessJobCreated) {
+        try {
+            [BidTrackerProcessJob]::Close()
+            $script:ProcessJobCreated = $false
+            Start-Sleep -Milliseconds 250
+        }
+        catch {
+            # Fall through to explicit process-tree cleanup below.
+        }
+    }
 
     foreach ($Process in $Processes) {
         if ($null -eq $Process) {
@@ -194,6 +404,14 @@ if (!$NoCloudflare -and !(Get-Command cloudflared.exe -ErrorAction SilentlyConti
     Die "cloudflared was not found in PATH."
 }
 
+try {
+    [BidTrackerProcessJob]::Create()
+    $ProcessJobCreated = $true
+}
+catch {
+    Die "Could not create the process cleanup job: $($_.Exception.Message)"
+}
+
 Say "checking ports"
 
 Stop-PortProcess -Port 3001
@@ -205,7 +423,7 @@ Start-Sleep -Milliseconds 500
 # Build backend
 # ============================================================================
 
-if ($Rebuild -or !(Test-Path $BackendBuild)) {
+if (!$Dev -and ($Rebuild -or !(Test-Path $BackendBuild))) {
 
     Say "building backend"
 
@@ -227,7 +445,7 @@ if ($Rebuild -or !(Test-Path $BackendBuild)) {
 # Build frontend
 # ============================================================================
 
-if ($Rebuild -or !(Test-Path $FrontendBuild)) {
+if (!$Dev -and ($Rebuild -or !(Test-Path $FrontendBuild))) {
 
     Say "building frontend"
 
@@ -279,17 +497,22 @@ foreach ($Log in @(
 # Start backend
 # ============================================================================
 
-Say "starting backend"
+if ($Dev) {
+    $BackendStartCommand = "run start:dev"
+    $FrontendStartCommand = "run dev"
+    Say "starting backend from source (watch mode)"
+}
+else {
+    $BackendStartCommand = "run start"
+    $FrontendStartCommand = "run start"
+    Say "starting backend"
+}
 
-$BackendProcess = Start-Process `
-    -FilePath "npm.cmd" `
-    -ArgumentList "run start" `
+$BackendProcess = Start-ManagedNpmProcess `
+    -NpmScript ($BackendStartCommand -replace '^run ', '') `
     -WorkingDirectory $Backend `
-    -WindowStyle Hidden `
-    -RedirectStandardOutput $BackendOut `
-    -RedirectStandardError $BackendErr `
-    -PassThru
-
+    -StandardOutputPath $BackendOut `
+    -StandardErrorPath $BackendErr
 $Processes += $BackendProcess
 
 Write-Host "Backend PID: $($BackendProcess.Id)"
@@ -300,15 +523,11 @@ Write-Host "Backend PID: $($BackendProcess.Id)"
 
 Say "starting frontend"
 
-$FrontendProcess = Start-Process `
-    -FilePath "npm.cmd" `
-    -ArgumentList "run start" `
+$FrontendProcess = Start-ManagedNpmProcess `
+    -NpmScript ($FrontendStartCommand -replace '^run ', '') `
     -WorkingDirectory $Frontend `
-    -WindowStyle Hidden `
-    -RedirectStandardOutput $FrontendOut `
-    -RedirectStandardError $FrontendErr `
-    -PassThru
-
+    -StandardOutputPath $FrontendOut `
+    -StandardErrorPath $FrontendErr
 $Processes += $FrontendProcess
 
 Write-Host "Frontend PID: $($FrontendProcess.Id)"
@@ -398,6 +617,7 @@ $CloudflareProcess = Start-Process `
     -RedirectStandardError $CloudflareErr `
     -PassThru
 
+[BidTrackerProcessJob]::AddProcess($CloudflareProcess.Handle)
 $Processes += $CloudflareProcess
 
 Write-Host "Cloudflare PID: $($CloudflareProcess.Id)"
@@ -547,6 +767,9 @@ Write-Host "============================================================" -Foreg
 Write-Host ""
 Write-Host "  Backend:   http://127.0.0.1:3001"
 Write-Host "  Frontend:  http://127.0.0.1:3000"
+if ($Dev) {
+    Write-Host "  Mode:      development (source watch; no build)"
+}
 Write-Host ""
 if ($NoCloudflare) {
     Write-Host "  Cloudflare disabled; use the local URL above."
@@ -556,7 +779,7 @@ else {
     Write-Host "  The URL changes when you run the script again."
 }
 Write-Host ""
-Write-Host "  Press Ctrl+C to stop everything."
+Write-Host "  Press Ctrl+C or close this terminal to stop everything."
 Write-Host ""
 Write-Host "============================================================" -ForegroundColor Green
 Write-Host ""

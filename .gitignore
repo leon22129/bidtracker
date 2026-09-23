@@ -32,3 +32,4 @@ resume-builder-frontend/config.json
 resume-builder-frontend/dist-web/
 backend/tsconfig.build.tsbuildinfo
 resume-builder-frontend/dist-web/index.html
+resume-builder-frontend/dist-web/index.html
