@@ -11,7 +11,7 @@ export class PaymentsController {
   constructor(private readonly payments: PaymentsService) {}
 
   @Get('report')
-  @Roles('admin', 'super_admin')
+  @Roles('bidder', 'bidder_manager', 'admin', 'super_admin')
   report(@CurrentUser() user: AuthUser, @Query() period: PaymentPeriodDto) {
     return this.payments.report(user, period);
   }

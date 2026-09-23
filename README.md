@@ -243,11 +243,11 @@ Accepts `.xlsx` and `.csv`. Recognised headers (fuzzy-matched): Date, Job Title,
 Status and Note. A `Status` column in the file is run through the **same** status-transition
 policy as a UI edit — otherwise a bidder could set `Duplicated` from a spreadsheet.
 
-### Payments — `/api/payments` 🛡
+### Payments — `/api/payments`
 
 | Method | Path                | Description                                                                                                      |
 | ------ | ------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| GET    | `/payments/report`  | Unpaid `Applied` totals for `?start_date&end_date`, grouped by visible workspace and bidder                     |
+| GET    | `/payments/report`  | Unpaid `Applied` totals for `?start_date&end_date`; bidders see only work they created, including reassigned profiles |
 | GET    | `/payments/history` | Immutable payment-processing history; regular admins see their own settlements and super admins see all reports |
 | POST   | `/payments/process` | `{ start_date, end_date, bidder_id }` — atomically marks eligible rows paid and records the settled count        |
 

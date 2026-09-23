@@ -16,10 +16,14 @@ export class PaymentsService {
 
   async report(user: AuthUser, period: Partial<Period> = {}) {
     const range = this.resolvePeriod(period);
-    const workspaceIds = await this.access.visibleWorkspaceIds(user);
+    const admin = user.role === 'admin' || user.role === 'super_admin';
+    // Admins are constrained to workspaces they may inspect. Bidders are constrained by the
+    // immutable application creator instead, so reassignment does not hide their historical work.
+    const workspaceIds = admin ? await this.access.visibleWorkspaceIds(user) : null;
     if (workspaceIds?.length === 0) {
       return { start_date: range.start, end_date: range.end, bidders: [], total_applied: 0 };
     }
+    const bidderId = admin ? period.bidder_id : user.id;
 
     const counts = await this.prisma.jobApplication.groupBy({
       by: ['created_by_user_id', 'workspace_id'],
@@ -28,7 +32,7 @@ export class PaymentsService {
         paid: false,
         date: { gte: range.start, lte: endOfDay(range.end) },
         ...(workspaceIds ? { workspace_id: { in: workspaceIds } } : {}),
-        ...(period.bidder_id ? { created_by_user_id: period.bidder_id } : {}),
+        ...(bidderId ? { created_by_user_id: bidderId } : {}),
         createdByUser: { is: { role: { in: [...PAYABLE_ROLES] } } },
       },
       _count: { _all: true },
