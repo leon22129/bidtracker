@@ -32,9 +32,14 @@ export default function PaymentsPage() {
   async function load() {
     setLoading(true);
     try {
-      const [report, reports] = await Promise.all([api.paymentReport(startDate, endDate), api.paymentHistory()]);
-      setData(report);
-      setHistory(reports);
+      if (isAdmin(user)) {
+        const [report, reports] = await Promise.all([api.paymentReport(startDate, endDate), api.paymentHistory()]);
+        setData(report);
+        setHistory(reports);
+      } else {
+        setData(await api.paymentReport(startDate, endDate));
+        setHistory([]);
+      }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Could not load bid count report');
     } finally {
@@ -61,7 +66,7 @@ export default function PaymentsPage() {
   return (
     <main className="mx-auto max-w-6xl px-4 py-6">
       <div className="mb-5">
-        <h1 className="text-lg font-semibold">Bid Count Report</h1>
+        <h1 className="text-lg font-semibold">{isAdmin(user) ? 'Bid Count Report' : 'My Bid Count Report'}</h1>
         <p className="mt-0.5 text-xs text-gray-500">Applied, unpaid applications credited to the bidder who created them.</p>
       </div>
 
@@ -86,10 +91,10 @@ export default function PaymentsPage() {
         </section>
       )}
 
-      <section className="mt-8">
+      {isAdmin(user) && <section className="mt-8">
         <h2 className="mb-2 text-sm font-semibold">Payment Report History</h2>
         <div className="card overflow-hidden"><table className="w-full text-xs"><thead className="bg-gray-50 text-left text-2xs uppercase tracking-wide text-gray-500"><tr><th className="px-3 py-2">Bidder</th><th className="px-3 py-2">Period</th><th className="px-3 py-2 text-right">Applied Count</th><th className="px-3 py-2 text-right">Processed Date</th></tr></thead><tbody>{history.map((report) => <tr key={report.id} className="border-t border-gray-100"><td className="px-3 py-2 font-medium">{report.bidder_username}</td><td className="px-3 py-2">{report.start_date.slice(0, 10)} - {report.end_date.slice(0, 10)}</td><td className="px-3 py-2 text-right tabular-nums">{report.applied_count.toLocaleString()}</td><td className="px-3 py-2 text-right">{report.processed_at.slice(0, 10)}</td></tr>)}</tbody></table>{history.length === 0 && <p className="p-6 text-center text-xs text-gray-500">No payment reports processed yet.</p>}</div>
-      </section>
+      </section>}
     </main>
   );
 }

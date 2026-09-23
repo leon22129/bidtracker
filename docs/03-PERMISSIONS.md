@@ -32,7 +32,8 @@ unit-tested module that every write path must pass through.
 | Toggle `paid` | ✅ | ❌ | ❌ |
 | Edit **any** field on a paid row | ✅ | ❌ | ❌ |
 | Delete applications | ✅ | ❌ | ❌ |
-| Generate / view payment reports | ✅ | ❌ | ❌ |
+| View own live bid-count report | ✅ | ✅ | ✅ |
+| View payment history / process payment | ✅ | ❌ | ❌ |
 | View analytics dashboard | ✅ | ❌ | ❌ |
 
 `bidder_manager` vs `bidder` is intentionally **not** a capability difference — it is a *breadth* difference.

@@ -97,6 +97,7 @@ async function provision(adminToken) {
       await req(`/users/${user.id}`, { method: 'PATCH', token: adminToken, body: { is_active: true, role: b.role } });
     }
     b.userId = user.id;
+    b.token = await login(b.email, PASSWORD);
   }
 
   const existingWorkspaces = (await req('/workspaces', { token: adminToken })).body;
@@ -123,10 +124,10 @@ async function provision(adminToken) {
     body: { user_id: BIDDERS[1].userId, permission_type: 'edit' },
   });
 
-  async function createExtensionFixture(workspaceId, url, index) {
+  async function createExtensionFixture(token, workspaceId, url, index) {
     const created = await req('/applications/generated', {
       method: 'POST',
-      token: adminToken,
+      token,
       body: {
         workspace_id: workspaceId,
         url,
@@ -145,6 +146,7 @@ async function provision(adminToken) {
   for (const b of BIDDERS) {
     for (let i = 0; i < 6; i++) {
       const application = await createExtensionFixture(
+        b.token,
         b.workspaceId,
         `https://boards.greenhouse.io/${b.username}-wk/jobs/${stamp}-${i}`,
         `${b.username}-${i}`,
@@ -165,6 +167,7 @@ async function provision(adminToken) {
   const today = [];
   for (let i = 0; i < 8; i++) {
     const application = await createExtensionFixture(
+      BIDDERS[0].token,
       johnWs,
       `https://jobs.lever.co/john-today/${stamp}-${i}`,
       `john-today-${i}`,
@@ -473,13 +476,33 @@ check(
 check('import is refused on a workspace the caller cannot edit', (await upload(`/import/${JW}`, sarah, csv)).status === 404);
 
 section('payments');
-check('bidder blocked from payment report', (await req('/payments/report', { token: john })).status === 403);
-check('manager blocked from payment report', (await req('/payments/report', { token: mike })).status === 403);
+const johnSelf = await req(
+  `/payments/report?start_date=${PREV_MONDAY}&end_date=${PREV_SUNDAY}&bidder_id=not-john`,
+  { token: john },
+);
+check(
+  'bidder can read only their own bid count',
+  johnSelf.status === 200
+    && johnSelf.body.total_applied >= 3
+    && johnSelf.body.bidders.length === 1
+    && johnSelf.body.bidders[0].bidder_username === 'john',
+  cut(johnSelf.body, 300),
+);
+const mikeSelf = await req(`/payments/report?start_date=${PREV_MONDAY}&end_date=${PREV_SUNDAY}`, { token: mike });
+check(
+  'manager can read only their own bid count',
+  mikeSelf.status === 200
+    && mikeSelf.body.total_applied >= 3
+    && mikeSelf.body.bidders.length === 1
+    && mikeSelf.body.bidders[0].bidder_username === 'mike',
+  cut(mikeSelf.body, 300),
+);
+check('bidder remains blocked from payment history', (await req('/payments/history', { token: john })).status === 403);
 const prev = await req(`/payments/report?start_date=${PREV_MONDAY}&end_date=${PREV_SUNDAY}`, { token: admin });
 check('payment report', prev.status === 200, cut(prev.body, 400));
 
 // The spec's hard rules: the week is the previous Monday-Sunday, only Applied counts, and credit
-// follows Workspace.owner_user_id. Cross-check the report against an independent filtered query.
+// follows the immutable application creator. Cross-check the report against independent row reads.
 const week = prev.body;
 const from = week.start_date.slice(0, 10);
 const to = week.end_date.slice(0, 10);
@@ -490,32 +513,54 @@ const workspaceCounts = week.bidders.flatMap((bidder) => bidder.workspaces.map((
   bidder_id: bidder.bidder_id,
   bidder_username: bidder.bidder_username,
 })));
-check('report covers every fixture workspace', workspaceCounts.filter((row) => [JW, MW, SW].includes(row.workspace_id)).length === 3);
+check(
+  'report covers every fixture workspace',
+  [JW, MW, SW].every((workspaceId) => workspaceCounts.some((row) => row.workspace_id === workspaceId)),
+);
+
+async function countCreatorRows(workspaceId, creatorId, filters = {}) {
+  let page = 1;
+  let count = 0;
+  let totalPages = 1;
+  do {
+    const params = new URLSearchParams({
+      workspace_id: workspaceId,
+      date_from: from,
+      date_to: to,
+      page: String(page),
+      page_size: '500',
+      ...filters,
+    });
+    const response = await req(`/applications?${params}`, { token: admin });
+    if (response.status >= 300) return null;
+    count += response.body.items.filter((row) => row.created_by_user_id === creatorId).length;
+    totalPages = response.body.total_pages;
+    page++;
+  } while (page <= totalPages);
+  return count;
+}
 
 // Only the three fixture workspaces are cross-checked: a pre-existing workspace with no rows in this
 // week would make the "all rows > paid-for rows" comparison vacuous rather than wrong.
 for (const r of workspaceCounts.filter((w) => [JW, MW, SW].includes(w.workspace_id))) {
-  const q = await req(
-    `/applications?workspace_id=${r.workspace_id}&application_status=Applied&paid=false&date_from=${from}&date_to=${to}&page_size=1`,
-    { token: admin },
-  );
+  const appliedCount = await countCreatorRows(r.workspace_id, r.bidder_id, {
+    application_status: 'Applied',
+    paid: 'false',
+  });
   check(
-    `applied_count matches an independent query (${r.owner_username})`,
-    q.body.total === r.applied_count,
-    `report=${r.applied_count} query=${q.body.total}`,
+    `applied_count matches an independent query (${r.bidder_username})`,
+    appliedCount === r.applied_count,
+    `report=${r.applied_count} query=${appliedCount}`,
   );
-  const everything = await req(
-    `/applications?workspace_id=${r.workspace_id}&date_from=${from}&date_to=${to}&page_size=1`,
-    { token: admin },
-  );
+  const everythingCount = await countCreatorRows(r.workspace_id, r.bidder_id);
   check(
-    `Pending/Rejected/Duplicated excluded from pay (${r.owner_username})`,
-    everything.body.total > r.applied_count,
-    `all=${everything.body.total} paid-for=${r.applied_count}`,
+    `Pending/Rejected/Duplicated excluded from pay (${r.bidder_username})`,
+    everythingCount !== null && everythingCount > r.applied_count,
+    `all=${everythingCount} paid-for=${r.applied_count}`,
   );
 }
 
-const johnPayment = week.bidders.find((bidder) => bidder.workspaces.some((workspace) => workspace.workspace_id === JW));
+const johnPayment = week.bidders.find((bidder) => bidder.bidder_username === 'john');
 if (johnPayment) {
   const paymentBody = { bidder_id: johnPayment.bidder_id, start_date: from, end_date: to };
   const process1 = await req('/payments/process', { method: 'POST', token: admin, body: paymentBody });
