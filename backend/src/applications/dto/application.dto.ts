@@ -124,18 +124,6 @@ export class UpdateApplicationDto {
   resume_link?: string | null;
 }
 
-export class BulkUpdateApplicationsDto {
-  @IsArray()
-  @ArrayMinSize(1)
-  @ArrayMaxSize(5000)
-  @IsString({ each: true })
-  ids: string[];
-
-  @ValidateNested()
-  @Type(() => BulkUpdatePatchDto)
-  patch: BulkUpdatePatchDto;
-}
-
 export class BulkUpdatePatchDto {
   @IsOptional()
   @IsIn(APPLICATION_STATUSES)
@@ -172,6 +160,21 @@ export class BulkUpdatePatchDto {
   @IsOptional()
   @IsBoolean()
   paid?: boolean;
+}
+
+// Keep this declaration after BulkUpdatePatchDto. Decorator metadata emits a runtime
+// reference to the patch class, so placing it first causes a temporal-dead-zone error
+// when Node loads the compiled CommonJS module.
+export class BulkUpdateApplicationsDto {
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(5000)
+  @IsString({ each: true })
+  ids: string[];
+
+  @ValidateNested()
+  @Type(() => BulkUpdatePatchDto)
+  patch: BulkUpdatePatchDto;
 }
 
 export class BulkIdsDto {
