@@ -1,5 +1,4 @@
 import { MetadataService } from './metadata.service';
-import { isBannedUrl } from '../common/utils/url.util';
 
 describe('MetadataService', () => {
   const originalFetch = global.fetch;
@@ -73,18 +72,4 @@ describe('MetadataService', () => {
     expect(metadata.company_name).toBe('Acme Health');
   });
 
-  it('flags URLs containing any configured banned fragment', () => {
-    const previous = process.env.BANNED_URL_PATTERNS;
-    process.env.BANNED_URL_PATTERNS = 'example.com, recruiter';
-
-    try {
-      expect(isBannedUrl('https://example.com/jobs/senior-engineer')).toBe(true);
-      expect(isBannedUrl('https://jobs.example.com/openings/123')).toBe(true);
-      expect(isBannedUrl('https://acme.com/jobs/senior-engineer')).toBe(false);
-      expect(isBannedUrl('https://careers.company.com/recruiter-role')).toBe(true);
-    } finally {
-      if (previous === undefined) delete process.env.BANNED_URL_PATTERNS;
-      else process.env.BANNED_URL_PATTERNS = previous;
-    }
-  });
 });

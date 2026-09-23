@@ -1,70 +1,151 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { normalizeUrl, normalizeCompanyName } from '../common/utils/url.util';
+import { normalizeUrl } from '../common/utils/url.util';
+import { createJobFingerprint } from '../common/utils/job-fingerprint.util';
 
 export type DuplicateScope = 'global' | 'workspace';
 
-/**
- * URL-based duplicate detection.
- *
- * Rules from the spec, restated precisely:
- *   - Primary key:   exact `url` match.
- *   - Secondary key: `normalized_url` match.
- *   - Company name is NEVER compared. The same company having many postings is normal and must all
- *     be billable, so comparing company names would destroy legitimate rows.
- *
- * Scope is configurable via DUPLICATE_SCOPE:
- *   workspace (default) — each workspace is compared only against its own rows.
- *   global               — a URL already present anywhere in the system flags the new row.
- */
+/** Exact URL detection plus a recent workspace-local company/title signal for cross-site jobs. */
 @Injectable()
 export class DuplicateService {
-  private readonly logger = new Logger(DuplicateService.name);
   readonly scope: DuplicateScope =
-    process.env.DUPLICATE_SCOPE === 'global' ? 'global' : 'workspace';
+    process.env.DUPLICATE_SCOPE === 'workspace' ? 'workspace' : 'global';
 
   constructor(private readonly prisma: PrismaService) {}
 
-/**
- * Looks up which of the given URLs and company names already exist.
- * Returns:
- *   - byUrl: maps exact URLs to existing records
- *   - byNormalized: maps normalized URLs to existing records
- *   - byCompanyName: maps normalized company names to existing records (only non-empty normalizations)
- *
- * For company name lookups, empty and null names are not indexed. A new row with an empty company
- * name does not match existing rows with empty company names.
- */
+  async classifyJobIdentities(
+    workspaceId: string,
+    items: Array<{ company_name?: string | null; job_title?: string | null }>,
+  ): Promise<JobIdentityVerdict[]> {
+    const fingerprints = items.map((item) => createJobFingerprint(item.company_name, item.job_title));
+    const unique = [...new Set(fingerprints.filter((value): value is string => Boolean(value)))];
+    const requested = new Set(unique);
+    const cutoff = this.fingerprintCutoff();
+    const existing = new Map<string, ExistingRef>();
+    const select = existingRefSelect();
+
+    for (let i = 0; i < unique.length; i += 400) {
+      const rows = await this.prisma.jobApplication.findMany({
+        where: {
+          workspace_id: workspaceId,
+          job_fingerprint: { in: unique.slice(i, i + 400) },
+          created_at: { gte: cutoff },
+        },
+        select: { ...select, job_fingerprint: true },
+        orderBy: { created_at: 'desc' },
+      });
+      for (const row of rows) {
+        if (row.job_fingerprint && !existing.has(row.job_fingerprint)) {
+          existing.set(row.job_fingerprint, toExistingRef(row));
+        }
+      }
+    }
+
+    if (unique.length) {
+      const legacy = await this.prisma.jobApplication.findMany({
+        where: {
+          workspace_id: workspaceId,
+          job_fingerprint: null,
+          created_at: { gte: cutoff },
+          company_name: { not: null },
+          job_title: { not: null },
+        },
+        select,
+        orderBy: { created_at: 'desc' },
+      });
+      for (const row of legacy) {
+        const fingerprint = createJobFingerprint(row.company_name, row.job_title);
+        if (fingerprint && requested.has(fingerprint) && !existing.has(fingerprint)) {
+          existing.set(fingerprint, toExistingRef(row));
+        }
+      }
+    }
+
+    const seen = new Set<string>();
+    return fingerprints.map((fingerprint) => {
+      if (!fingerprint) return { fingerprint: null, is_duplicate: false, reason: null };
+      const existingRow = existing.get(fingerprint);
+      if (existingRow) {
+        seen.add(fingerprint);
+        return { fingerprint, is_duplicate: true, reason: 'existing' as const, existing: existingRow };
+      }
+      if (seen.has(fingerprint)) {
+        return { fingerprint, is_duplicate: true, reason: 'within_batch' as const };
+      }
+      seen.add(fingerprint);
+      return { fingerprint, is_duplicate: false, reason: null };
+    });
+  }
+
+  /** Company/title matches are deliberately workspace-local and expire to allow later reposts. */
+  async findRecentJobMatch(
+    workspaceId: string,
+    companyName?: string | null,
+    jobTitle?: string | null,
+    excludeId?: string,
+  ): Promise<ExistingRef | null> {
+    const fingerprint = createJobFingerprint(companyName, jobTitle);
+    if (!fingerprint) return null;
+
+    const cutoff = this.fingerprintCutoff();
+    const select = existingRefSelect();
+
+    const exact = await this.prisma.jobApplication.findFirst({
+      where: {
+        workspace_id: workspaceId,
+        job_fingerprint: fingerprint,
+        created_at: { gte: cutoff },
+        ...(excludeId ? { id: { not: excludeId } } : {}),
+      },
+      select,
+      orderBy: { created_at: 'desc' },
+    });
+    if (exact) return toExistingRef(exact);
+
+    // Rows created before this column was introduced remain useful without a large backfill.
+    const legacy = await this.prisma.jobApplication.findMany({
+      where: {
+        workspace_id: workspaceId,
+        job_fingerprint: null,
+        created_at: { gte: cutoff },
+        company_name: { not: null },
+        job_title: { not: null },
+        ...(excludeId ? { id: { not: excludeId } } : {}),
+      },
+      select,
+      orderBy: { created_at: 'desc' },
+    });
+    const match = legacy.find(
+      (row) => createJobFingerprint(row.company_name, row.job_title) === fingerprint,
+    );
+    return match ? toExistingRef(match) : null;
+  }
+
+  private fingerprintCutoff() {
+    const configuredDays = Number(process.env.JOB_FINGERPRINT_WINDOW_DAYS ?? 90);
+    const windowDays = Number.isFinite(configuredDays)
+      ? Math.min(365, Math.max(1, Math.trunc(configuredDays)))
+      : 90;
+    return new Date(Date.now() - windowDays * 24 * 60 * 60 * 1000);
+  }
+
   async findExisting(
     workspaceId: string,
     urls: string[],
-    companyNames: (string | null | undefined)[] = [],
     excludeId?: string,
-  ): Promise<{
-    byUrl: Map<string, ExistingRef>;
-    byNormalized: Map<string, ExistingRef>;
-    byCompanyName: Map<string, ExistingRef>;
-  }> {
-    const normalized = urls.map((u) => normalizeUrl(u));
-    const normalizedCompanyNames = companyNames.map((c) => normalizeCompanyName(c ?? '')).filter(Boolean);
+  ): Promise<Map<string, ExistingRef>> {
+    const normalized = urls.map(normalizeUrl);
     const scopeFilter = this.scope === 'workspace' ? { workspace_id: workspaceId } : {};
-
-    // Chunked IN() clauses: SQLite caps bound parameters (~32k), and a 20k-row import would blow it.
-    const CHUNK = 400;
-    const byUrl = new Map<string, ExistingRef>();
     const byNormalized = new Map<string, ExistingRef>();
-    const byCompanyName = new Map<string, ExistingRef>();
 
-    // --- URL lookups ---
-    for (let i = 0; i < urls.length; i += CHUNK) {
-      const urlChunk = urls.slice(i, i + CHUNK);
-      const normChunk = normalized.slice(i, i + CHUNK);
-
+    // SQLite limits the number of bound parameters, so imports are queried in bounded chunks.
+    const CHUNK = 400;
+    for (let i = 0; i < normalized.length; i += CHUNK) {
       const rows = await this.prisma.jobApplication.findMany({
         where: {
           ...scopeFilter,
           ...(excludeId ? { id: { not: excludeId } } : {}),
-          OR: [{ url: { in: urlChunk } }, { normalized_url: { in: normChunk } }],
+          normalized_url: { in: normalized.slice(i, i + CHUNK) },
         },
         select: {
           id: true,
@@ -72,7 +153,6 @@ export class DuplicateService {
           job_title: true,
           company_name: true,
           normalized_url: true,
-          normalized_company_name: true,
           workspace_id: true,
           date: true,
           number: true,
@@ -82,219 +162,64 @@ export class DuplicateService {
       });
 
       for (const row of rows) {
-        const ref: ExistingRef = {
+        if (byNormalized.has(row.normalized_url)) continue;
+        byNormalized.set(row.normalized_url, {
           id: row.id,
           url: row.url,
           job_title: row.job_title,
           company_name: row.company_name,
           normalized_url: row.normalized_url,
-          normalized_company_name: row.normalized_company_name,
           workspace_id: row.workspace_id,
           workspace_name: row.workspace.name,
           date: row.date,
           number: row.number,
-        };
-        if (!byUrl.has(row.url)) byUrl.set(row.url, ref);
-        if (!byNormalized.has(row.normalized_url)) byNormalized.set(row.normalized_url, ref);
-      }
-    }
-
-    // --- Company name lookups (only for non-empty normalized names) ---
-    if (normalizedCompanyNames.length > 0) {
-      const uniqueCompanyNames = [...new Set(normalizedCompanyNames)];
-      for (let i = 0; i < uniqueCompanyNames.length; i += CHUNK) {
-        const companyChunk = uniqueCompanyNames.slice(i, i + CHUNK);
-
-        const rows = await this.prisma.jobApplication.findMany({
-          where: {
-            ...scopeFilter,
-            ...(excludeId ? { id: { not: excludeId } } : {}),
-            normalized_company_name: { in: companyChunk },
-          },
-          select: {
-            id: true,
-            url: true,
-            job_title: true,
-            company_name: true,
-            normalized_url: true,
-            normalized_company_name: true,
-            workspace_id: true,
-            date: true,
-            number: true,
-            workspace: { select: { name: true } },
-          },
-          orderBy: { created_at: 'asc' },
         });
-
-        for (const row of rows) {
-          if (!row.normalized_company_name) continue; // Skip empty normalized names
-          if (byCompanyName.has(row.normalized_company_name)) continue; // Already have first occurrence
-          
-          const ref: ExistingRef = {
-            id: row.id,
-            url: row.url,
-            job_title: row.job_title,
-            company_name: row.company_name,
-            normalized_url: row.normalized_url,
-            normalized_company_name: row.normalized_company_name,
-            workspace_id: row.workspace_id,
-            workspace_name: row.workspace.name,
-            date: row.date,
-            number: row.number,
-          };
-          byCompanyName.set(row.normalized_company_name, ref);
-        }
       }
     }
 
-    return { byUrl, byNormalized, byCompanyName };
+    return byNormalized;
   }
-  /**
-   * Classifies a batch of URLs and company names in one pass, including duplicates *within* the batch itself.
-   * For each entry, returns whether it's a duplicate by URL or by company name.
-   *
-   * Duplicate precedence: URL duplicates are reported before company name duplicates.
-   * Within-batch duplicates are reported before existing duplicates.
-   *
-   * For company names, empty or null values do NOT match each other or themselves.
-   */
+
   async classifyBatch(
     workspaceId: string,
     urls: string[],
-    companyNames: (string | null | undefined)[] = [],
     excludeId?: string,
   ): Promise<DuplicateVerdict[]> {
-    // Ensure companyNames has the same length as urls
-    while (companyNames.length < urls.length) {
-      companyNames.push(null);
-    }
-
-    const { byUrl, byNormalized, byCompanyName } = await this.findExisting(
-      workspaceId,
-      urls,
-      companyNames,
-      excludeId,
-    );
-
-    const seenUrl = new Set<string>();
+    const existing = await this.findExisting(workspaceId, urls, excludeId);
     const seenNormalized = new Set<string>();
-    const seenCompanyName = new Set<string>();
-    const verdicts: DuplicateVerdict[] = [];
 
-    for (let i = 0; i < urls.length; i++) {
-      const url = urls[i];
-      const companyName = companyNames[i];
-      const norm = normalizeUrl(url);
-      const normalizedCompany = normalizeCompanyName(companyName ?? '');
-
-      // Check URL duplicates first (existing takes precedence over within-batch)
-      const existingByUrl = byUrl.get(url);
-      if (existingByUrl) {
-        verdicts.push({
+    return urls.map((url) => {
+      const normalizedUrl = normalizeUrl(url);
+      const existingRow = existing.get(normalizedUrl);
+      if (existingRow) {
+        seenNormalized.add(normalizedUrl);
+        return {
           url,
-          normalized_url: norm,
-          company_name: companyName ?? null,
-          normalized_company_name: normalizedCompany || null,
+          normalized_url: normalizedUrl,
           is_duplicate: true,
-          reason: 'existing',
-          duplicate_type: 'url',
-          existing: existingByUrl,
-        });
-        seenUrl.add(url);
-        seenNormalized.add(norm);
-        if (normalizedCompany) seenCompanyName.add(normalizedCompany);
-        continue;
+          reason: 'existing' as const,
+          duplicate_type: 'url' as const,
+          existing: existingRow,
+        };
       }
-
-      const existingByNormUrl = byNormalized.get(norm);
-      if (existingByNormUrl) {
-        verdicts.push({
+      if (seenNormalized.has(normalizedUrl)) {
+        return {
           url,
-          normalized_url: norm,
-          company_name: companyName ?? null,
-          normalized_company_name: normalizedCompany || null,
+          normalized_url: normalizedUrl,
           is_duplicate: true,
-          reason: 'existing',
-          duplicate_type: 'url',
-          existing: existingByNormUrl,
-        });
-        seenUrl.add(url);
-        seenNormalized.add(norm);
-        if (normalizedCompany) seenCompanyName.add(normalizedCompany);
-        continue;
+          reason: 'within_batch' as const,
+          duplicate_type: 'url' as const,
+        };
       }
-
-      // Check within-batch URL duplicates
-      if (seenUrl.has(url) || seenNormalized.has(norm)) {
-        verdicts.push({
-          url,
-          normalized_url: norm,
-          company_name: companyName ?? null,
-          normalized_company_name: normalizedCompany || null,
-          is_duplicate: true,
-          reason: 'within_batch',
-          duplicate_type: 'url',
-        });
-        seenUrl.add(url);
-        seenNormalized.add(norm);
-        if (normalizedCompany) seenCompanyName.add(normalizedCompany);
-        continue;
-      }
-
-      // Check company name duplicates (only if company name normalized to non-empty)
-      if (normalizedCompany) {
-        const existingByCompany = byCompanyName.get(normalizedCompany);
-        if (existingByCompany) {
-          verdicts.push({
-            url,
-            normalized_url: norm,
-            company_name: companyName ?? null,
-            normalized_company_name: normalizedCompany,
-            is_duplicate: true,
-            reason: 'existing',
-            duplicate_type: 'company_name',
-            existing: existingByCompany,
-          });
-          seenUrl.add(url);
-          seenNormalized.add(norm);
-          seenCompanyName.add(normalizedCompany);
-          continue;
-        }
-
-        // Check within-batch company name duplicates
-        if (seenCompanyName.has(normalizedCompany)) {
-          verdicts.push({
-            url,
-            normalized_url: norm,
-            company_name: companyName ?? null,
-            normalized_company_name: normalizedCompany,
-            is_duplicate: true,
-            reason: 'within_batch',
-            duplicate_type: 'company_name',
-          });
-          seenUrl.add(url);
-          seenNormalized.add(norm);
-          seenCompanyName.add(normalizedCompany);
-          continue;
-        }
-      }
-
-      // Not a duplicate
-      seenUrl.add(url);
-      seenNormalized.add(norm);
-      if (normalizedCompany) seenCompanyName.add(normalizedCompany);
-      verdicts.push({
+      seenNormalized.add(normalizedUrl);
+      return {
         url,
-        normalized_url: norm,
-        company_name: companyName ?? null,
-        normalized_company_name: normalizedCompany || null,
+        normalized_url: normalizedUrl,
         is_duplicate: false,
         reason: null,
         duplicate_type: null,
-      });
-    }
-
-    return verdicts;
+      };
+    });
   }
 }
 
@@ -304,7 +229,6 @@ export interface ExistingRef {
   job_title: string | null;
   company_name: string | null;
   normalized_url: string;
-  normalized_company_name: string | null;
   workspace_id: string;
   workspace_name: string;
   date: Date;
@@ -314,10 +238,53 @@ export interface ExistingRef {
 export interface DuplicateVerdict {
   url: string;
   normalized_url: string;
-  company_name: string | null;
-  normalized_company_name: string | null;
   is_duplicate: boolean;
   reason: 'existing' | 'within_batch' | null;
-  duplicate_type: 'url' | 'company_name' | null;
+  duplicate_type: 'url' | 'job_fingerprint' | null;
   existing?: ExistingRef;
+}
+
+export interface JobIdentityVerdict {
+  fingerprint: string | null;
+  is_duplicate: boolean;
+  reason: 'existing' | 'within_batch' | null;
+  existing?: ExistingRef;
+}
+
+function existingRefSelect() {
+  return {
+    id: true,
+    url: true,
+    job_title: true,
+    company_name: true,
+    normalized_url: true,
+    workspace_id: true,
+    date: true,
+    number: true,
+    workspace: { select: { name: true } },
+  } as const;
+}
+
+function toExistingRef(row: {
+  id: string;
+  url: string;
+  job_title: string | null;
+  company_name: string | null;
+  normalized_url: string;
+  workspace_id: string;
+  date: Date;
+  number: number;
+  workspace: { name: string };
+}): ExistingRef {
+  return {
+    id: row.id,
+    url: row.url,
+    job_title: row.job_title,
+    company_name: row.company_name,
+    normalized_url: row.normalized_url,
+    workspace_id: row.workspace_id,
+    workspace_name: row.workspace.name,
+    date: row.date,
+    number: row.number,
+  };
 }

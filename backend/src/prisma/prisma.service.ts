@@ -1,4 +1,4 @@
-import { INestApplication, Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
 
 @Injectable()
@@ -7,10 +7,7 @@ export class PrismaService extends PrismaClient implements OnModuleInit {
 
   constructor() {
     super({
-      log:
-        process.env.NODE_ENV === 'production'
-          ? [{ emit: 'stdout', level: 'warn' }, { emit: 'stdout', level: 'error' }]
-          : [{ emit: 'stdout', level: 'warn' }, { emit: 'stdout', level: 'error' }],
+      log: [{ emit: 'stdout', level: 'warn' }, { emit: 'stdout', level: 'error' }],
     });
   }
 
@@ -43,11 +40,5 @@ export class PrismaService extends PrismaClient implements OnModuleInit {
       }
     }
     this.logger.log('SQLite pragmas applied (WAL, foreign_keys=ON, busy_timeout=5000ms)');
-  }
-
-  async enableShutdownHooks(app: INestApplication) {
-    process.on('beforeExit', async () => {
-      await app.close();
-    });
   }
 }

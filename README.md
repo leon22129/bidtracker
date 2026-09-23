@@ -208,11 +208,12 @@ Requesting a workspace you can't see returns **404, not 403** — a 403 would co
 | PATCH  | `/applications/:id`          | 🔑 edit | Inline cell edit; field-level policy applies                    |
 | PATCH  | `/applications/:id/pipeline` | 🛡      | `pipeline_status`, `interview_date`, `interview_note`     |
 | PATCH  | `/applications/bulk`         | 🔑 edit | `{ ids, patch }` — per-row policy, per-id failure reasons    |
-| POST   | `/applications/bulk-paid`    | 🛡      | `{ ids, paid }`                                               |
 | POST   | `/applications/bulk-delete`  | 🛡      | `{ ids }`                                                     |
 | POST   | `/applications/urls`         | 🔑 edit | `{ workspace_id, date, urls, enrich? }` — the paste endpoint |
-| POST   | `/applications/generated`    | 🔑 edit | Save a generated `{ workspace_id, url, job_title, company_name }` candidate |
+| POST   | `/applications/generate`     | 🔑 edit | Generate an eligible resume candidate without writing an application |
+| POST   | `/applications/generated`    | 🔑 edit | Idempotently save `{ workspace_id, url, job_title, company_name }` by normalized URL |
 | POST   | `/applications/urls/preview` | 🔑      | Duplicate/validity dry run; writes nothing                      |
+| GET/POST/DELETE | `/applications/banned-patterns` | 🛡 | Manage database-backed banned URL substrings |
 
 **`GET /applications` query parameters**
 
@@ -505,9 +506,8 @@ Applied on connect in [prisma.service.ts](backend/src/prisma/prisma.service.ts):
 Every composite index leads with `workspace_id`, because no query in the application ever crosses
 workspaces without also filtering by one. Covered: `(workspace_id, date, number)` UNIQUE (the
 numbering guarantee *and* the default sort), plus `workspace_id` paired with `application_status`,
-`pipeline_status`, `job_source`, `paid`, `normalized_url`, and `created_at`; standalone indexes on
-`normalized_url`, `url`, `date`, and `interview_date` for global duplicate detection and cross-tab
-reporting.
+`pipeline_status`, `job_source`, `paid`, `job_fingerprint`, and `created_at`; standalone indexes on
+`normalized_url` and `date` support global URL duplicate detection and cross-tab reporting.
 
 Two things are deliberately *not* indexed, which is why they are the slowest rows in the
 [performance table](#measured-performance):
@@ -687,22 +687,25 @@ Full annotated list in [.env.example](.env.example). The ones worth knowing:
 | `DEFAULT_ADMIN_*`                                  | — (**required**) | First-boot admin; ignored once any admin exists.                                       |
 | `JWT_EXPIRES_IN`                                   | `7d`                  | Session length.                                                                        |
 | `DUPLICATE_SCOPE`                                  | `global`              | `global` = a URL seen in any workspace is a duplicate; `workspace` = per-tab only. |
+| `JOB_FINGERPRINT_WINDOW_DAYS`                     | `90`                  | Window for workspace-local company/title cross-site duplicate warnings.                |
 | `ENABLE_URL_ENRICHMENT`                            | `true`                | Fetch pages for company/title. Off makes pasting instant.                              |
 | `URL_FETCH_CONCURRENCY` / `URL_FETCH_TIMEOUT_MS` | `5` / `6000`        | Enrichment throttle.                                                                   |
 | `MAX_UPLOAD_MB`                                    | `25`                  | Import file ceiling.                                                                   |
 | `DISABLE_CRON`                                     | `false`               | Set`true` on a staging copy so it can't produce authoritative-looking reports.       |
 | `ALLOW_BIDDER_PENDING_TO_REJECTED`                 | `false`               | Adds one extra transition beyond the spec's two.                                       |
-| `OPENAI_API_KEY`                                    | —                    | Server-only key used by `POST /api/resume/generate`; never send it to the browser.    |
+| `OPENAI_API_KEY`                                    | —                    | Server-only key used by `POST /api/applications/generate`; never send it to the browser. |
 | `OPENAI_MODEL`                                      | `gpt-5.6-sol`        | OpenAI Responses API model used for eligibility, resume, and answer generation.        |
 
 ### Resume generation
 
 `GET /api/workspaces/profiles/assigned` returns only profiles assigned to the authenticated user.
-`POST /api/resume/generate` accepts `{ workspace_id, url, profile_id?, questions? }`, fetches and checks
-the job description, and generates the resume and optional application answers through OpenAI. It returns
+`POST /api/applications/generate` accepts `{ workspace_id, url, job_description, profile_id?, questions? }`,
+checks the supplied job description, and generates the resume and optional application answers through OpenAI. It returns
 an application candidate without writing it, so a lost extension response cannot leave an inaccessible
 duplicate behind. The extension explicitly saves that candidate with `POST /api/applications/generated`
-after receiving the resume. Workspace profile details are edited through `PATCH /api/workspaces/:id`.
+after receiving the resume. `/api/resume/generate` remains available as a compatibility alias for older
+extension builds. Admins manage database-backed URL deny patterns from **Banned URLs** in the dashboard.
+Workspace profile details are edited through `PATCH /api/workspaces/:id`.
 
 ### Common tasks
 
@@ -774,8 +777,9 @@ The canonical list lives in `COLUMN_ALIASES` at
   URLs, and it overrides whatever the file says. A bidder or manager who tries gets the row imported as
   `Pending` plus an explanatory line in the skip list; only an admin can set it, because it determines
   who gets paid.
-- **Duplicate company names are fine.** Duplicate detection compares URLs only, so twenty rows for the
-  same employer are twenty valid applications.
+- **Duplicate company names are fine.** A company becomes a possible cross-site duplicate only when
+  its normalized job title also matches a recent row in the same workspace. The user can confirm that
+  it is a different opening.
 - **`Rejected` is a one-way door.** The transition allow-list is `Pending → Applied` and
   `Applied → Rejected`, and it applies to imports too. Importing `Rejected` directly is fine; getting
   back out of it needs an admin.

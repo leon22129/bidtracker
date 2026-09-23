@@ -38,10 +38,6 @@ export function todayUtc(): Date {
   return toDayStart(new Date());
 }
 
-export function formatDayKey(d: Date): string {
-  return d.toISOString().slice(0, 10);
-}
-
 /** Monday 00:00 UTC of the week containing `d`. ISO weeks: Monday is day 1. */
 export function startOfWeekMonday(d: Date): Date {
   const day = toDayStart(d);

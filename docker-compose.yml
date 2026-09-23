@@ -46,6 +46,7 @@ services:
 
       # Behaviour switches — see .env.example for what each one does.
       DUPLICATE_SCOPE: ${DUPLICATE_SCOPE:-global}
+      JOB_FINGERPRINT_WINDOW_DAYS: ${JOB_FINGERPRINT_WINDOW_DAYS:-90}
       ENABLE_URL_ENRICHMENT: ${ENABLE_URL_ENRICHMENT:-true}
       URL_FETCH_CONCURRENCY: ${URL_FETCH_CONCURRENCY:-5}
       URL_FETCH_TIMEOUT_MS: ${URL_FETCH_TIMEOUT_MS:-6000}

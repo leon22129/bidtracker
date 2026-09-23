@@ -1,5 +1,5 @@
 import {
-  Body, Controller, Get, HttpCode, Param, Patch, Post, Query, UseGuards,
+  Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Query, UseGuards,
 } from '@nestjs/common';
 import { ApplicationsService } from './applications.service';
 import {
@@ -13,11 +13,19 @@ import { AuthUser, CurrentUser } from '../common/decorators/current-user.decorat
 import {
   APPLICATION_STATUSES, APPLICATION_STATUS_COLORS, JOB_SOURCES, PIPELINE_STATUSES,
 } from '../common/constants';
+import { BannedUrlService } from './banned-url.service';
+import { CreateBannedUrlPatternDto } from './dto/banned-url.dto';
+import { ApplicationGenerationService } from '../resume/resume.service';
+import { GenerateApplicationDto } from '../resume/dto/generate.dto';
 
 @Controller('applications')
 @UseGuards(RolesGuard)
 export class ApplicationsController {
-  constructor(private readonly applications: ApplicationsService) {}
+  constructor(
+    private readonly applications: ApplicationsService,
+    private readonly bannedUrls: BannedUrlService,
+    private readonly generation: ApplicationGenerationService,
+  ) {}
 
   /** Enum catalogue so the frontend never hardcodes a list that could drift from the backend. */
   @Get('meta')
@@ -47,6 +55,33 @@ export class ApplicationsController {
     @Body() dto: CreateGeneratedApplicationDto,
   ) {
     return this.applications.createGenerated(user, dto);
+  }
+
+  /** Canonical application workflow endpoint. `/resume/generate` remains a compatibility alias. */
+  @Post('generate')
+  generate(@CurrentUser() user: AuthUser, @Body() dto: GenerateApplicationDto) {
+    return this.generation.generate(user, dto);
+  }
+
+  @Get('banned-patterns')
+  @Roles('admin', 'super_admin')
+  bannedPatterns() {
+    return this.bannedUrls.list();
+  }
+
+  @Post('banned-patterns')
+  @Roles('admin', 'super_admin')
+  createBannedPattern(
+    @CurrentUser() user: AuthUser,
+    @Body() dto: CreateBannedUrlPatternDto,
+  ) {
+    return this.bannedUrls.create(dto.pattern, user.id);
+  }
+
+  @Delete('banned-patterns/:patternId')
+  @Roles('admin', 'super_admin')
+  removeBannedPattern(@Param('patternId') patternId: string) {
+    return this.bannedUrls.remove(patternId);
   }
 
   @Post('urls')

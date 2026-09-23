@@ -17,7 +17,8 @@
     "test": "jest",
     "smoke": "node smoke.mjs",
     "perf": "node perf.mjs",
-    "template": "node make-import-template.cjs"
+    "template": "node make-import-template.cjs",
+    "backfill:fingerprints": "ts-node scripts/backfill-job-fingerprints.ts"
   },
   "dependencies": {
     "@nestjs/common": "^10.4.15",

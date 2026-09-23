@@ -1,0 +1,115 @@
+import { ApplicationGenerationService } from './resume.service';
+
+describe('ApplicationGenerationService application metadata eligibility', () => {
+  const user = {
+    id: 'user-1',
+    email: 'user@example.com',
+    username: 'user',
+    role: 'bidder' as const,
+  };
+  const dto = {
+    workspace_id: 'workspace-1',
+    profile_id: 'profile-1',
+    url: 'https://careers.acme.com/jobs/123',
+    job_description: 'Acme is hiring a Software Engineer for a fully remote US role.',
+  };
+  const profile = {
+    id: 'profile-1',
+    career_path: '',
+    location: 'Chicago, IL',
+    full_name: 'Candidate',
+  };
+
+  function setup() {
+    const prisma = {
+      workspace: { findUnique: jest.fn().mockResolvedValue({
+        id: dto.workspace_id,
+        owner_user_id: user.id,
+        name: 'Workspace',
+        resume_profile_id: profile.id,
+        resumeProfile: profile,
+      }) },
+      resumeProfile: { findFirst: jest.fn().mockResolvedValue(profile) },
+    };
+    const access = { assertCanEdit: jest.fn().mockResolvedValue(undefined) };
+    const duplicates = {
+      classifyBatch: jest.fn().mockResolvedValue([{ is_duplicate: false }]),
+      findRecentJobMatch: jest.fn().mockResolvedValue(null),
+    };
+    const service = new ApplicationGenerationService(
+      prisma as any,
+      access as any,
+      duplicates as any,
+      { matches: jest.fn().mockResolvedValue(false) } as any,
+      {} as any,
+      {} as any,
+    );
+    return { service, duplicates };
+  }
+
+  const eligible = (overrides: Record<string, unknown> = {}) => JSON.stringify({
+    company_name: 'Acme',
+    job_title: 'Software Engineer',
+    requires_clearance: false,
+    requires_public_trust: false,
+    is_us_job: true,
+    work_arrangement_is_remote_only: true,
+    requires_in_person_interview: false,
+    requires_onsite_onboarding: false,
+    reason: '',
+    ...overrides,
+  });
+
+  it('stops after eligibility when the JD has no company name', async () => {
+    const { service, duplicates } = setup();
+    const openAi = jest.spyOn(service as any, 'openAi').mockResolvedValue(
+      eligible({ company_name: '' }),
+    );
+
+    await expect(service.generate(user, dto)).resolves.toMatchObject({
+      success: false,
+      eligible: false,
+      reason: 'Need company name in the JD.',
+    });
+    expect(openAi).toHaveBeenCalledTimes(1);
+    expect(duplicates.findRecentJobMatch).not.toHaveBeenCalled();
+  });
+
+  it('checks the company/title fingerprint before generating the resume', async () => {
+    const { service, duplicates } = setup();
+    const existing = { id: 'application-1', company_name: 'Acme', job_title: 'Software Engineer' };
+    duplicates.findRecentJobMatch.mockResolvedValue(existing);
+    const openAi = jest.spyOn(service as any, 'openAi').mockResolvedValue(eligible());
+
+    await expect(service.generate(user, dto)).resolves.toMatchObject({
+      success: false,
+      duplicate: true,
+      duplicate_type: 'job_fingerprint',
+      existing_application: existing,
+    });
+    expect(duplicates.findRecentJobMatch).toHaveBeenCalledWith(
+      dto.workspace_id,
+      'Acme',
+      'Software Engineer',
+    );
+    expect(openAi).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses eligibility metadata for the saved application candidate', async () => {
+    const { service } = setup();
+    jest.spyOn(service as any, 'openAi')
+      .mockResolvedValueOnce(eligible())
+      .mockResolvedValueOnce(JSON.stringify({
+        target_company: 'Different AI spelling',
+        target_job_title: 'Different AI title',
+      }));
+
+    await expect(service.generate(user, dto)).resolves.toMatchObject({
+      success: true,
+      application: {
+        company_name: 'Acme',
+        job_title: 'Software Engineer',
+      },
+    });
+  });
+});

@@ -13,11 +13,11 @@ import { toDayStart, todayUtc } from '../common/utils/date.util';
 import {
   BANNED_URL_NOTE,
   detectJobSource,
-  isBannedUrl,
   looksLikeUrl,
   normalizeUrl,
-  normalizeCompanyName,
 } from '../common/utils/url.util';
+import { createJobFingerprint } from '../common/utils/job-fingerprint.util';
+import { BannedUrlService } from '../applications/banned-url.service';
 
 /**
  * Column aliases. Real-world spreadsheets from bidders never use exactly the header you asked for, so
@@ -52,6 +52,7 @@ export class ImportService {
     private readonly duplicates: DuplicateService,
     private readonly metadata: MetadataService,
     private readonly numbering: NumberingService,
+    private readonly bannedUrls: BannedUrlService,
   ) {}
 
   async import(
@@ -173,10 +174,9 @@ export class ImportService {
     }
 
     // --- Pass 2: duplicate classification (one batched query set) -----------
-    const verdicts = await this.duplicates.classifyBatch(
+    const urlVerdicts = await this.duplicates.classifyBatch(
       workspaceId,
       parsed.map((p) => p.url),
-      parsed.map((p) => p.company_name),
     );
 
     // --- Pass 3: enrich only the rows actually missing a title/company ------
@@ -187,6 +187,31 @@ export class ImportService {
       needsEnrichment,
       options.enrich !== false,
     );
+    const bannedVerdicts = await this.bannedUrls.matchMany(parsed.map((row) => row.url));
+    const identityVerdicts = await this.duplicates.classifyJobIdentities(
+      workspaceId,
+      parsed.map((row) => {
+        const meta = enrichment.get(row.url);
+        return {
+          company_name: row.company_name ?? meta?.company_name ?? null,
+          job_title: row.job_title ?? meta?.job_title ?? null,
+        };
+      }),
+    );
+    const verdicts = urlVerdicts.map((verdict, index) => {
+      const identity = identityVerdicts[index];
+      return verdict.is_duplicate || !identity.is_duplicate
+        ? verdict
+        : {
+            ...verdict,
+            is_duplicate: true,
+            reason: identity.reason,
+            duplicate_type: 'job_fingerprint' as const,
+            existing: identity.existing,
+          };
+    });
+    const verdictByRow = new Map(parsed.map((row, index) => [row, verdicts[index]]));
+    const bannedByRow = new Map(parsed.map((row, index) => [row, bannedVerdicts[index]]));
 
     // --- Pass 4: allocate numbers per date, then batch insert ---------------
     const byDate = new Map<number, ParsedRow[]>();
@@ -201,11 +226,11 @@ export class ImportService {
       const date = new Date(time);
       const start = await this.numbering.reserveBlock(this.prisma, workspaceId, date, rows.length);
       rows.forEach((row, idx) => {
-        const verdict = verdicts[parsed.indexOf(row)];
+        const verdict = verdictByRow.get(row);
         const meta = enrichment.get(row.url);
         const finalCompanyName = row.company_name ?? meta?.company_name ?? null;
-        const normalizedCompany = normalizeCompanyName(finalCompanyName ?? '');
-        const banned = isBannedUrl(row.url);
+        const finalJobTitle = row.job_title ?? meta?.job_title ?? null;
+        const banned = bannedByRow.get(row) ?? false;
         inserts.push({
           workspace_id: workspaceId,
           date,
@@ -216,9 +241,9 @@ export class ImportService {
           // Banned URLs are auto-rejected, regardless of spreadsheet status or duplicate checks.
           application_status: banned ? 'Rejected' : verdict?.is_duplicate ? 'Duplicated' : row.status,
           pipeline_status: 'Not Started',
-          job_title: row.job_title ?? meta?.job_title ?? null,
+          job_title: finalJobTitle,
           company_name: finalCompanyName,
-          normalized_company_name: normalizedCompany || null,
+          job_fingerprint: createJobFingerprint(finalCompanyName, finalJobTitle),
           note: banned ? BANNED_URL_NOTE : row.note,
           resume_link: row.resume_link,
           created_by_user_id: user.id,
@@ -226,11 +251,7 @@ export class ImportService {
       });
     }
 
-    const created = await this.applications.insertChunked(
-      inserts,
-      workspaceId,
-      inserts[0]?.date ?? fallbackDate,
-    );
+    const created = await this.applications.insertChunked(inserts, workspaceId);
 
     this.logger.log(
       `Import into ${workspaceId} by ${user.username}: ${created} created, ` +

@@ -1,3 +1,4 @@
+import { Transform } from 'class-transformer';
 import { IsArray, IsIn, IsOptional, IsString, IsUrl, MaxLength, MinLength } from 'class-validator';
 
 export class GenerateApplicationDto {
@@ -16,21 +17,16 @@ export class GenerateApplicationDto {
   @IsString({ each: true })
   questions?: string[];
 
-  @IsOptional()
+  @Transform(({ value }) => typeof value === 'string' ? value.trim() : value)
   @IsString()
   @MinLength(8)
   @MaxLength(20000)
-  job_description?: string;
+  job_description: string;
 }
 
 export class GenerateProfilePromptDto {
   @IsString()
   profile_id: string;
-
-  @IsOptional()
-  @IsString()
-  @MaxLength(50000)
-  prompt?: string;
 
   @IsOptional()
   @IsString()

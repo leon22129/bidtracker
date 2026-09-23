@@ -5,6 +5,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { AuthUser } from '../common/decorators/current-user.decorator';
 import { WorkspaceAccessService } from './workspace-access.service';
 import { CreateWorkspaceDto, GrantPermissionDto, UpdateWorkspaceDto } from './dto/workspace.dto';
+import { isAdmin } from '../common/policies/application.policy';
 
 @Injectable()
 export class WorkspacesService {
@@ -78,23 +79,27 @@ export class WorkspacesService {
   async create(dto: CreateWorkspaceDto, user: AuthUser) {
     const owner = await this.prisma.user.findUnique({ where: { id: dto.owner_user_id } });
     if (!owner) throw new BadRequestException('Owner user does not exist');
+    if (!['bidder', 'bidder_manager'].includes(owner.role)) {
+      throw new BadRequestException('A workspace owner must be a bidder or bidder manager');
+    }
 
     const name = dto.name.trim();
     const clash = await this.prisma.workspace.findUnique({ where: { name } });
     if (clash) throw new ConflictException('A workspace with that name already exists');
 
-    const profile = await this.prisma.resumeProfile.create({
-      data: { user_id: dto.owner_user_id, created_by_user_id: user.id, name },
-    });
-
-    return this.prisma.workspace.create({
-      data: {
-        name,
-        owner_user_id: dto.owner_user_id,
-        created_by_user_id: user.id,
-        resume_profile_id: profile.id,
-      },
-      include: { owner: { select: { id: true, username: true, email: true } } },
+    return this.prisma.$transaction(async (tx) => {
+      const profile = await tx.resumeProfile.create({
+        data: { user_id: dto.owner_user_id, created_by_user_id: user.id, name },
+      });
+      return tx.workspace.create({
+        data: {
+          name,
+          owner_user_id: dto.owner_user_id,
+          created_by_user_id: user.id,
+          resume_profile_id: profile.id,
+        },
+        include: { owner: { select: { id: true, username: true, email: true } } },
+      });
     });
   }
 
@@ -102,6 +107,13 @@ export class WorkspacesService {
     await this.access.assertCanEdit(user, id);
     const workspace = await this.prisma.workspace.findUnique({ where: { id } });
     if (!workspace) throw new NotFoundException('Workspace not found');
+
+    if (
+      !isAdmin(user.role) &&
+      (dto.owner_user_id !== undefined || dto.resume_profile_id !== undefined || dto.is_archived !== undefined)
+    ) {
+      throw new ForbiddenException('Only an admin can change workspace ownership, profile assignment, or archive state');
+    }
 
     const profileData = this.profileData(dto);
     if (dto.profile_name !== undefined || Object.keys(profileData).length) {
@@ -115,26 +127,57 @@ export class WorkspacesService {
     if (dto.owner_user_id) {
       const owner = await this.prisma.user.findUnique({ where: { id: dto.owner_user_id } });
       if (!owner) throw new BadRequestException('Owner user does not exist');
+      if (!['bidder', 'bidder_manager'].includes(owner.role)) {
+        throw new BadRequestException('A workspace owner must be a bidder or bidder manager');
+      }
       // Reassigning ownership changes which bidder owns future application reports. Historical
       // PaymentReport rows retain their original bidder.
       // snapshots and intentionally stay as they were.
     }
 
-    const profile = await this.ensureProfile(workspace);
-    if (dto.profile_name !== undefined) profileData.name = dto.profile_name.trim();
-    if (Object.keys(profileData).length) {
-      await this.prisma.resumeProfile.update({ where: { id: profile.id }, data: profileData });
+    const targetOwnerId = dto.owner_user_id ?? workspace.owner_user_id;
+    let targetProfileId = dto.resume_profile_id ?? workspace.resume_profile_id;
+    if (dto.resume_profile_id) {
+      const profile = await this.prisma.resumeProfile.findFirst({
+        where: {
+          id: dto.resume_profile_id,
+          user_id: targetOwnerId,
+          ...(user.role === 'super_admin'
+            ? {}
+            : { OR: [{ created_by_user_id: user.id }, { id: workspace.resume_profile_id ?? '' }] }),
+        },
+      });
+      if (!profile) throw new BadRequestException('The selected resume profile does not belong to the workspace owner');
     }
 
-    return this.prisma.workspace.update({
-      where: { id },
-      data: {
-        ...(dto.name !== undefined ? { name: dto.name.trim() } : {}),
-        ...(dto.owner_user_id !== undefined ? { owner_user_id: dto.owner_user_id } : {}),
-        ...(dto.is_archived !== undefined ? { is_archived: dto.is_archived } : {}),
-        ...(dto.resume_profile_id !== undefined ? { resume_profile_id: dto.resume_profile_id } : {}),
-      },
-      include: { owner: { select: { id: true, username: true, email: true } }, resumeProfile: true },
+    return this.prisma.$transaction(async (tx) => {
+      if (!targetProfileId) {
+        const profile = await tx.resumeProfile.create({
+          data: {
+            user_id: targetOwnerId,
+            created_by_user_id: workspace.created_by_user_id,
+            name: `Profile for ${workspace.id}`,
+          },
+        });
+        targetProfileId = profile.id;
+      }
+      if (dto.profile_name !== undefined) profileData.name = dto.profile_name.trim();
+      if (dto.owner_user_id !== undefined && dto.resume_profile_id === undefined) {
+        profileData.user_id = targetOwnerId;
+      }
+      if (Object.keys(profileData).length) {
+        await tx.resumeProfile.update({ where: { id: targetProfileId }, data: profileData });
+      }
+      return tx.workspace.update({
+        where: { id },
+        data: {
+          ...(dto.name !== undefined ? { name: dto.name.trim() } : {}),
+          ...(dto.owner_user_id !== undefined ? { owner_user_id: dto.owner_user_id } : {}),
+          ...(dto.is_archived !== undefined ? { is_archived: dto.is_archived } : {}),
+          resume_profile_id: targetProfileId,
+        },
+        include: { owner: { select: { id: true, username: true, email: true } }, resumeProfile: true },
+      });
     });
   }
 
@@ -203,7 +246,7 @@ export class WorkspacesService {
     return this.toProfile(await this.ensureProfile(workspace));
   }
 
-  private async ensureProfile(workspace: { id: string; owner_user_id: string; created_by_user_id: string | null; resume_profile_id: string | null }) {
+  async ensureProfile(workspace: { id: string; owner_user_id: string; created_by_user_id?: string | null; resume_profile_id: string | null }) {
     if (workspace.resume_profile_id) {
       const existing = await this.prisma.resumeProfile.findUnique({ where: { id: workspace.resume_profile_id } });
       if (existing) return existing;

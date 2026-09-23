@@ -82,7 +82,8 @@ async function bootstrap() {
   const port = Number(process.env.PORT || 3001);
   await app.listen(port, '0.0.0.0');
   logger.log(`API listening on http://0.0.0.0:${port}/api`);
-  logger.log(`Duplicate detection scope: ${process.env.DUPLICATE_SCOPE || 'workspace'}`);
+  logger.log(`Duplicate detection scope: ${process.env.DUPLICATE_SCOPE || 'global'}`);
+  logger.log(`Job fingerprint window: ${process.env.JOB_FINGERPRINT_WINDOW_DAYS || '90'} days`);
   logger.log(`URL enrichment: ${process.env.ENABLE_URL_ENRICHMENT === 'false' ? 'disabled' : 'enabled'}`);
 }
 

@@ -3,7 +3,7 @@ import { PaymentsService } from './payments.service';
 import { Roles } from '../common/decorators/roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { CurrentUser, AuthUser } from '../common/decorators/current-user.decorator';
-import { PaymentPeriodDto } from './dto/payment.dto';
+import { PaymentPeriodDto, ProcessPaymentDto } from './dto/payment.dto';
 
 @Controller('payments')
 @UseGuards(RolesGuard)
@@ -22,7 +22,7 @@ export class PaymentsController {
 
   @Post('process')
   @Roles('admin', 'super_admin')
-  process(@CurrentUser() user: AuthUser, @Body() period: PaymentPeriodDto) {
+  process(@CurrentUser() user: AuthUser, @Body() period: ProcessPaymentDto) {
     return this.payments.process(user, period);
   }
 }

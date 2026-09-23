@@ -31,8 +31,6 @@ export default function AddUrlsPage() {
   const [preview, setPreview] = useState<UrlPreviewResult | null>(null);
   const [previewing, setPreviewing] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [generating, setGenerating] = useState(false);
-  const [generationMessage, setGenerationMessage] = useState<string | null>(null);
   const [result, setResult] = useState<{
     created: number;
     duplicates: number;
@@ -90,32 +88,6 @@ export default function AddUrlsPage() {
       toast.error(err instanceof Error ? err.message : 'Could not add URLs');
     } finally {
       setSubmitting(false);
-    }
-  }
-
-  async function generateFromUrl() {
-    if (lines.length !== 1) {
-      toast.error('Enter exactly one job URL to generate a resume');
-      return;
-    }
-    setGenerating(true);
-    setGenerationMessage(null);
-    try {
-      const response = await api.generateApplication({
-        workspace_id: workspaceId,
-        url: lines[0],
-        profile_id: workspace?.resume_profile_id ?? undefined,
-      });
-      const message = response.success
-        ? 'Resume generated and the job was added to this workspace.'
-        : response.reason ?? 'The job did not pass the eligibility check.';
-      setGenerationMessage(message);
-      if (response.success) toast.success(message);
-      else toast.info(message);
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Could not generate resume');
-    } finally {
-      setGenerating(false);
     }
   }
 
@@ -201,14 +173,9 @@ export default function AddUrlsPage() {
             <button type="submit" className="btn-primary" disabled={submitting || lines.length === 0}>
               {submitting ? 'Adding…' : `Add ${lines.length || ''} application${lines.length === 1 ? '' : 's'}`}
             </button>
-            <button type="button" className="btn-primary" disabled={generating || lines.length !== 1} onClick={() => void generateFromUrl()}>
-              {generating ? 'Generating…' : 'Generate resume'}
-            </button>
           </div>
         </div>
       </form>
-
-      {generationMessage && <div className="card mt-5 p-4 text-sm text-gray-700">{generationMessage}</div>}
 
       {preview && <PreviewPanel preview={preview} />}
 

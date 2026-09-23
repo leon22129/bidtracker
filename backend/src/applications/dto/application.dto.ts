@@ -1,7 +1,7 @@
 import { Transform, Type } from 'class-transformer';
 import {
   ArrayMaxSize, ArrayMinSize, IsArray, IsBoolean, IsDateString, IsIn, IsInt, IsOptional,
-  IsString, IsUrl, Max, MaxLength, Min, ValidateNested,
+  IsString, IsUrl, Max, MaxLength, Min, MinLength, ValidateNested,
 } from 'class-validator';
 import {
   APPLICATION_STATUSES, ApplicationStatus, DEFAULT_PAGE_SIZE, JOB_SOURCES, JobSource,
@@ -132,8 +132,46 @@ export class BulkUpdateApplicationsDto {
   ids: string[];
 
   @ValidateNested()
-  @Type(() => UpdateApplicationDto)
-  patch: UpdateApplicationDto;
+  @Type(() => BulkUpdatePatchDto)
+  patch: BulkUpdatePatchDto;
+}
+
+export class BulkUpdatePatchDto {
+  @IsOptional()
+  @IsIn(APPLICATION_STATUSES)
+  application_status?: ApplicationStatus;
+
+  @IsOptional()
+  @IsIn(PIPELINE_STATUSES)
+  pipeline_status?: PipelineStatus;
+
+  @IsOptional()
+  @IsIn(JOB_SOURCES)
+  job_source?: JobSource;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(5000)
+  note?: string | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(300)
+  job_title?: string | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  company_name?: string | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  resume_link?: string | null;
+
+  @IsOptional()
+  @IsBoolean()
+  paid?: boolean;
 }
 
 export class BulkIdsDto {
@@ -142,11 +180,6 @@ export class BulkIdsDto {
   @ArrayMaxSize(5000)
   @IsString({ each: true })
   ids: string[];
-}
-
-export class BulkPaidDto extends BulkIdsDto {
-  @IsBoolean()
-  paid: boolean;
 }
 
 /** Manual URL paste: one textarea, one date, N lines -> N applications. */
@@ -176,15 +209,23 @@ export class CreateGeneratedApplicationDto {
   @IsUrl({ require_protocol: true })
   url: string;
 
-  @IsOptional()
+  @Transform(({ value }) => typeof value === 'string' ? value.trim() : value)
   @IsString()
+  @MinLength(1)
   @MaxLength(300)
-  job_title?: string | null;
+  job_title: string;
 
-  @IsOptional()
+  @Transform(({ value }) => typeof value === 'string' ? value.trim() : value)
   @IsString()
+  @MinLength(1)
   @MaxLength(200)
-  company_name?: string | null;
+  company_name: string;
+
+  /** User-confirmed override for a recent company/title match. Exact URL matches are never overridden. */
+  @IsOptional()
+  @Transform(toBool)
+  @IsBoolean()
+  allow_similar_job?: boolean = false;
 }
 
 export class UpdatePipelineDto {

@@ -313,6 +313,8 @@ Fix anything flagged, then output the final resume.
 export function buildJobEligibilityPrompt(jobDescription: string): string {
   return `Analyze the job description below for candidate preferences. Return valid JSON only with exactly these string and boolean fields:
 {
+  "company_name": "",
+  "job_title": "",
   "requires_clearance": false,
   "requires_public_trust": false,
   "is_us_job": true,
@@ -323,6 +325,8 @@ export function buildJobEligibilityPrompt(jobDescription: string): string {
 }
 
 Rules:
+- Set company_name to the employer name explicitly identified in the job description. Do not infer it from the industry, product, recruiter, staffing client, or candidate information. Use an empty string when the employer is not stated.
+- Set job_title to the primary role title explicitly identified in the job description, including stated seniority. Remove only requisition, grade, and posting identifiers. Use an empty string when no role title is stated.
 - Set requires_clearance to true only when the job explicitly requires a security clearance, clearance eligibility, or the ability to obtain a clearance. Do not infer clearance from government, defense, public-sector, or background-check language alone.
 - Set requires_public_trust to true when the job explicitly requires Public Trust, a public-trust suitability determination, or a named public-trust level such as BI, 6C, or T4. Treat this as disqualifying even when the clearance level is None.
 - Set is_us_job to true only when the job explicitly identifies a US/United States location, US-based employment, US work authorization, or US citizenship requirement. Set it to false when the location is outside the US or not clearly identified.
@@ -336,41 +340,6 @@ Job description:
 ---
 ${jobDescription}
 ---`
-}
-
-// Five distinct narrative angles — each produces a structurally different letter.
-export const COVER_LETTER_STYLES = [
-  "Lead with your single strongest value proposition — the one concrete outcome you will deliver for this team. Skip pleasantries; open with impact on the very first sentence.",
-  "Open by naming a real, specific challenge the role most likely faces (infer it from the JD). Position yourself as the person who has solved exactly that kind of problem before and will solve it again here.",
-  "Start by describing what you intend to build, fix, or transform in this role within the first 90 days. Make it specific to the technical goals and context stated in the JD — treat it as a commitment.",
-  "Open with a sharp, specific observation about the technical problem space, product challenge, or domain in the JD. Show that you understand their world deeply before you say a word about yourself.",
-  "Frame the letter around how you raise the bar for everyone around you — team velocity, system quality, cross-functional alignment. Lead with multiplier impact, not individual delivery.",
-]
-
-export function buildCoverLetterPromptSection(style: string): string {
-  return `
-
----
-
-Cover Letter
- 
-In addition to the resume JSON, generate a professional cover letter and include it as a "coverletter" string field in the same JSON output.
- 
-The cover letter must focus on what the candidate will bring and do — not on recapping past experience. Past experience may appear only as brief proof of capability.
- 
-Narrative angle for this letter (follow this approach — it determines your opening and overall structure):
-${style}
- 
-Cover Letter Requirements:
- 
-* Salutation: "Dear Hiring Team,"
-* Write 3 to 4 paragraphs, each 2 sentences maximum
-* Total word count: 100 to 150 words — no shorter, no longer
-* Tone: Confident, direct, and human — forward-looking, never a resume recap
-* No company name anywhere — use "your team", "this role", "your organization", or "the team" instead
-* No "Sincerely,", no signature, no name lines — end with the closing paragraph
-* No placeholders — write actual specific content grounded in the Career Milestone and JD
-* Format the coverletter value as plain text with paragraphs separated by a blank line`
 }
 
 export function buildApplicationAnswersPrompt(

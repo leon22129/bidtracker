@@ -3,9 +3,11 @@ import { PrismaService } from '../prisma/prisma.service';
 import { AuthUser } from '../common/decorators/current-user.decorator';
 import { WorkspaceAccessService } from '../workspaces/workspace-access.service';
 import { DuplicateService } from '../applications/duplicate.service';
-import { BANNED_URL_NOTE, isBannedUrl, normalizeUrl } from '../common/utils/url.util';
 import { GenerateApplicationDto, GenerateProfilePromptDto } from './dto/generate.dto';
 import { BASE_PROMPT_TEXT, buildApplicationAnswersPrompt, buildJobEligibilityPrompt } from './original-prompts';
+import { BannedUrlService } from '../applications/banned-url.service';
+import { ApplicationsService } from '../applications/applications.service';
+import { WorkspacesService } from '../workspaces/workspaces.service';
 
 const OPENAI_URL = 'https://api.openai.com/v1/responses';
 const MODEL = process.env.OPENAI_MODEL || 'gpt-5.6-sol';
@@ -13,11 +15,14 @@ const MODEL = process.env.OPENAI_MODEL || 'gpt-5.6-sol';
 type OpenAiResponse = { output_text?: string; output?: Array<{ type?: string; role?: string; content?: Array<{ type?: string; text?: string }> }>; error?: { message?: string } };
 
 @Injectable()
-export class ResumeService {
+export class ApplicationGenerationService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly access: WorkspaceAccessService,
     private readonly duplicates: DuplicateService,
+    private readonly bannedUrls: BannedUrlService,
+    private readonly applications: ApplicationsService,
+    private readonly workspaces: WorkspacesService,
   ) {}
 
   async generate(user: AuthUser, dto: GenerateApplicationDto) {
@@ -27,7 +32,7 @@ export class ResumeService {
 
     const profile = dto.profile_id
       ? await this.findAccessibleProfile(user, dto.profile_id)
-      : workspace.resumeProfile || await this.createWorkspaceProfile(workspace);
+      : workspace.resumeProfile || await this.workspaces.ensureProfile(workspace);
     if (!profile) throw new BadRequestException('Select a profile assigned to your account');
     if (workspace.resume_profile_id && profile.id !== workspace.resume_profile_id) {
       throw new BadRequestException('The selected profile is not assigned to this workspace');
@@ -44,25 +49,48 @@ export class ResumeService {
       };
     }
 
-    if (isBannedUrl(dto.url)) {
-      const application = await this.prisma.jobApplication.create({
-        data: {
-          workspace_id: workspace.id,
-          date: new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), new Date().getUTCDate())),
-          number: await this.nextNumber(workspace.id),
-          url: dto.url.trim(),
-          normalized_url: normalizeUrl(dto.url),
-          application_status: 'Rejected',
-          note: BANNED_URL_NOTE,
-          created_by_user_id: user.id,
-        },
-      });
+    if (await this.bannedUrls.matches(dto.url)) {
+      const application = await this.applications.createBannedApplication(user, workspace.id, dto.url);
       return { success: false, banned: true, url: dto.url, application };
     }
 
-    const jobDescription = dto.job_description?.trim() || await this.fetchJobDescription(dto.url);
+    const jobDescription = dto.job_description.trim();
     const eligibility = await this.openAi(buildJobEligibilityPrompt(jobDescription));
-    const eligibilityJson = this.parseJson(eligibility);
+    const eligibilityJson = this.parseEligibility(eligibility);
+    const companyName = typeof eligibilityJson.company_name === 'string'
+      ? eligibilityJson.company_name.trim()
+      : '';
+    const jobTitle = typeof eligibilityJson.job_title === 'string'
+      ? eligibilityJson.job_title.trim()
+      : '';
+    if (!companyName || !jobTitle) {
+      const missing = [
+        !companyName ? 'company name' : null,
+        !jobTitle ? 'job title' : null,
+      ].filter(Boolean).join(' and ');
+      return {
+        success: false,
+        eligible: false,
+        url: dto.url,
+        reason: `Need ${missing} in the JD.`,
+        eligibility: eligibilityJson,
+      };
+    }
+
+    const similar = await this.duplicates.findRecentJobMatch(
+      workspace.id,
+      companyName,
+      jobTitle,
+    );
+    if (similar) {
+      return {
+        success: false,
+        duplicate: true,
+        duplicate_type: 'job_fingerprint',
+        existing_application: similar,
+      };
+    }
+
     const rejectionReasons: string[] = [];
     if (eligibilityJson.requires_clearance) rejectionReasons.push('requires security clearance');
     if (eligibilityJson.requires_public_trust) rejectionReasons.push('requires public trust');
@@ -82,8 +110,8 @@ export class ResumeService {
     // POST /applications/generated only after it has safely received and rendered the resume.
     const application = {
       url: dto.url.trim(),
-      job_title: typeof resume.target_job_title === 'string' ? resume.target_job_title : null,
-      company_name: typeof resume.target_company === 'string' ? resume.target_company : null,
+      job_title: jobTitle,
+      company_name: companyName,
     };
     return {
       success: true,
@@ -126,35 +154,6 @@ export class ResumeService {
     });
   }
 
-  private async nextNumber(workspaceId: string) {
-    const date = new Date();
-    const start = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
-    const end = new Date(start.getTime() + 86400000);
-    const latest = await this.prisma.jobApplication.findFirst({ where: { workspace_id: workspaceId, date: { gte: start, lt: end } }, orderBy: { number: 'desc' }, select: { number: true } });
-    return (latest?.number ?? 0) + 1;
-  }
-
-  private async createWorkspaceProfile(workspace: { id: string; owner_user_id: string; name: string }) {
-    const profile = await this.prisma.resumeProfile.create({
-      data: { user_id: workspace.owner_user_id, name: `${workspace.name} Profile` },
-    });
-    await this.prisma.workspace.update({ where: { id: workspace.id }, data: { resume_profile_id: profile.id } });
-    return profile;
-  }
-
-  private async fetchJobDescription(url: string) {
-    try {
-      const response = await fetch(url, { signal: AbortSignal.timeout(15000), headers: { 'User-Agent': 'BidTracker/1.0' } });
-      if (!response.ok) throw new Error(`Job page returned ${response.status}`);
-      const html = await response.text();
-      const text = html.replace(/<script[\s\S]*?<\/script>/gi, ' ').replace(/<style[\s\S]*?<\/style>/gi, ' ').replace(/<[^>]+>/g, ' ').replace(/&nbsp;/gi, ' ').replace(/\s+/g, ' ').trim();
-      if (text.length < 80) throw new Error('The job page did not contain readable text');
-      return text.slice(0, 50000);
-    } catch (error) {
-      throw new BadGatewayException(error instanceof Error ? `Could not read job description: ${error.message}` : 'Could not read job description');
-    }
-  }
-
   private async openAi(prompt: string) {
     const apiKey = process.env.OPENAI_API_KEY?.trim();
     if (!apiKey) throw new BadGatewayException('The server is missing OPENAI_API_KEY');
@@ -184,11 +183,37 @@ export class ResumeService {
     return text.trim();
   }
 
-  private parseJson(value: string): any {
+  private parseJson(value: string): Record<string, unknown> {
     const start = value.indexOf('{');
     const end = value.lastIndexOf('}');
     if (start < 0 || end <= start) throw new BadGatewayException('OpenAI returned invalid JSON');
-    try { return JSON.parse(value.slice(start, end + 1)); } catch { throw new BadGatewayException('OpenAI returned invalid JSON'); }
+    try {
+      const parsed: unknown = JSON.parse(value.slice(start, end + 1));
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('not an object');
+      return parsed as Record<string, unknown>;
+    } catch {
+      throw new BadGatewayException('OpenAI returned invalid JSON');
+    }
+  }
+
+  private parseEligibility(value: string): EligibilityResult {
+    const parsed = this.parseJson(value);
+    const booleanFields = [
+      'requires_clearance',
+      'requires_public_trust',
+      'is_us_job',
+      'work_arrangement_is_remote_only',
+      'requires_in_person_interview',
+      'requires_onsite_onboarding',
+    ] as const;
+    if (
+      typeof parsed.company_name !== 'string' ||
+      typeof parsed.job_title !== 'string' ||
+      booleanFields.some((field) => typeof parsed[field] !== 'boolean')
+    ) {
+      throw new BadGatewayException('OpenAI returned an invalid eligibility response');
+    }
+    return parsed as unknown as EligibilityResult;
   }
 
   private resumePrompt(profile: any, jd: string) {
@@ -200,4 +225,16 @@ export class ResumeService {
         `Candidate Current Location (city and/or state):\n${profile.location}`,
       );
   }
+}
+
+interface EligibilityResult extends Record<string, unknown> {
+  company_name: string;
+  job_title: string;
+  requires_clearance: boolean;
+  requires_public_trust: boolean;
+  is_us_job: boolean;
+  work_arrangement_is_remote_only: boolean;
+  requires_in_person_interview: boolean;
+  requires_onsite_onboarding: boolean;
+  reason?: string;
 }

@@ -58,65 +58,6 @@ export function ensureScheme(raw: string): string {
 
 export const BANNED_URL_NOTE = 'this job is in banned list';
 
-const DEFAULT_BANNED_URL_PATTERNS = [
-  'sundayy',
-  'remotehunter',
-  'alignerr',
-  'jackandjill',
-  'fetchjobs',
-  'afterquery',
-  'hire feed',
-  'bestjobtool',
-  'haystack',
-  'gdit',
-  'saic',
-  'accenture',
-  'amazon',
-  'turing',
-  'fullstacklabs',
-  'infosys',
-  'tcs',
-  'collabera',
-  'hcl',
-  'agileengine',
-  'pearson',
-  'osc global',
-  'teamworxsecurity',
-  'jackhenry',
-  'github',
-  'cvshealth',
-  'capitalone',
-  'brightvisiontechnologies',
-  'yohrconsultancy.hiresome.ai',
-  'jobs.micro1.ai',
-  'yoailabs',
-  'mercor',
-  'theladders',
-  'teksystems',
-  'caci',
-  'affirm',
-  'maximus',
-  'mindrift',
-  'peraton',
-] as const;
-
-export function getBannedUrlPatterns(): string[] {
-  const raw = process.env.BANNED_URL_PATTERNS?.trim();
-  const envPatterns = raw
-    ? raw.split(/[\n,;]+/).map((value) => value.trim().toLowerCase()).filter(Boolean)
-    : [];
-
-  const merged = [...DEFAULT_BANNED_URL_PATTERNS.map((p) => p.toLowerCase()), ...envPatterns];
-  return [...new Set(merged.filter(Boolean))];
-}
-
-export function isBannedUrl(raw: string): boolean {
-  const value = raw?.trim();
-  if (!value) return false;
-  const haystack = value.toLowerCase();
-  return getBannedUrlPatterns().some((pattern) => haystack.includes(pattern));
-}
-
 export function normalizeUrl(raw: string): string {
   const input = ensureScheme(raw);
   let u: URL;
@@ -340,35 +281,4 @@ export function extractTitleFromUrl(raw: string): string | null {
     return title;
   }
   return null;
-}
-
-// ---------------------------------------------------------------------------
-// Company name normalization for duplicate detection
-// ---------------------------------------------------------------------------
-
-/**
- * Normalizes company names for duplicate detection.
- *
- * Rules:
- *   - Keep only: a-z, A-Z, 0-9
- *   - Remove every other character (spaces, punctuation, hyphens, underscores, apostrophes, etc.)
- *   - Do not replace removed characters with spaces
- *   - Convert result to lowercase
- *   - Return empty string if the normalized result is empty
- *
- * Examples:
- *   "ABC Inc."       → "abcinc"
- *   "ABC, Inc"       → "abcinc"
- *   "ABC-INC"        → "abcinc"
- *   "abc inc"        → "abcinc"
- *   "ABC & Inc."     → "abcinc"
- *   "ABC_Inc"        → "abcinc"
- *   ""               → ""
- *   "   "            → ""
- */
-export function normalizeCompanyName(raw: string): string {
-  if (!raw) return '';
-  return raw
-    .replace(/[^a-zA-Z0-9]/g, '')
-    .toLowerCase();
 }

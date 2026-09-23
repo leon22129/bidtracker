@@ -51,13 +51,25 @@ export class PaymentsService {
         },
         select: { id: true },
       });
+      if (applications.length === 0) {
+        const existing = await tx.paymentReport.findFirst({
+          where: {
+            bidder_id: period.bidder_id,
+            start_date: range.start,
+            end_date: range.end,
+            ...(user.role === 'admin' ? { processed_by: user.id } : {}),
+          },
+          orderBy: { processed_at: 'desc' },
+        });
+        if (existing) return { ...existing, already_processed: true };
+      }
       const report = await tx.paymentReport.create({
         data: { bidder_id: period.bidder_id!, start_date: range.start, end_date: range.end, applied_count: applications.length, processed_by: user.id },
       });
       if (applications.length) await tx.jobApplication.updateMany({ where: { id: { in: applications.map((application) => application.id) } }, data: { paid: true } });
-      return report;
+      return { ...report, already_processed: false };
     });
-    return { id: result.id, bidder_id: result.bidder_id, start_date: result.start_date, end_date: result.end_date, applied_count: result.applied_count, processed_at: result.processed_at };
+    return { id: result.id, bidder_id: result.bidder_id, start_date: result.start_date, end_date: result.end_date, applied_count: result.applied_count, processed_at: result.processed_at, already_processed: result.already_processed };
   }
 
   async history(user: AuthUser) {

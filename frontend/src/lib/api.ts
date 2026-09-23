@@ -1,7 +1,7 @@
 'use client';
 
 import type {
-  AnalyticsOverview, ApplicationFilters, ImportPreview, ImportResult, JobApplication, Paginated,
+  AnalyticsOverview, ApplicationFilters, BannedUrlPattern, ImportPreview, ImportResult, JobApplication, Paginated,
   PermissionType, PaymentReport, PaymentReportResult, Role, UrlPreviewResult, User, Workspace,
   WorkspaceSummary,
 } from './types';
@@ -224,11 +224,14 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ workspace_id: workspaceId, urls }),
     }),
-  generateApplication: (data: { workspace_id: string; url: string; profile_id?: string; questions?: string[] }) =>
-    request<{ success: boolean; eligible: boolean; reason?: string; application?: JobApplication; resume?: unknown; answers?: unknown }>(
-      '/resume/generate', { method: 'POST', body: JSON.stringify(data) },
-    ),
-
+  listBannedPatterns: () => request<BannedUrlPattern[]>('/applications/banned-patterns'),
+  createBannedPattern: (pattern: string) =>
+    request<BannedUrlPattern>('/applications/banned-patterns', {
+      method: 'POST',
+      body: JSON.stringify({ pattern }),
+    }),
+  deleteBannedPattern: (id: string) =>
+    request<{ success: boolean }>(`/applications/banned-patterns/${id}`, { method: 'DELETE' }),
   // ---- import ----
   importPreview: (workspaceId: string, file: File) => {
     const form = new FormData();

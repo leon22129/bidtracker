@@ -125,7 +125,7 @@ const webAiProfiles: AiProfilesApi = {
   },
   async generate(input: GenerateResumeInput): Promise<GenerateResumeResult> {
     const applicationGeneration = Boolean(input.url && input.workspaceId)
-    const response = await apiFetch(applicationGeneration ? "/resume/generate" : "/resume/profile-generate", {
+    const response = await apiFetch(applicationGeneration ? "/applications/generate" : "/resume/profile-generate", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -139,10 +139,18 @@ const webAiProfiles: AiProfilesApi = {
         resume: input.resume,
       }),
     })
-    const data = await response.json().catch(() => null) as { tailored_resume?: string; full_name?: string; error?: string; eligible?: boolean; reason?: string; banned?: boolean; resume?: unknown; application?: GenerateResumeResult["application"]; duplicate?: boolean; duplicate_type?: string | null; existing_application?: GenerateResumeResult["existingApplication"] } | null
+    const data = await response.json().catch(() => null) as { tailored_resume?: string; full_name?: string; error?: string; eligible?: boolean; reason?: string; banned?: boolean; resume?: unknown; application?: GenerateResumeResult["application"]; duplicate?: boolean; duplicate_type?: string | null; can_override?: boolean; existing_application?: GenerateResumeResult["existingApplication"] } | null
     if (!response.ok) throw new Error(data?.error || `Generation failed (${response.status}).`)
     if (applicationGeneration) {
-      if (data?.duplicate) return { duplicate: true, duplicateType: data.duplicate_type, existingApplication: data.existing_application }
+      if (data?.duplicate) return {
+        duplicate: true,
+        duplicateType: data.duplicate_type,
+        canOverride: data.can_override,
+        existingApplication: data.existing_application,
+        application: data.application,
+        tailored_resume: data.resume ? JSON.stringify(data.resume) : undefined,
+        full_name: data.full_name,
+      }
       if (data?.banned) return { banned: true, tailored_resume: "" }
       if (data?.eligible === false) return { eligible: false, reason: data.reason, tailored_resume: "" }
       if (!data?.resume) throw new Error("The AI provider returned an empty response.")
@@ -155,12 +163,20 @@ const webAiProfiles: AiProfilesApi = {
     const response = await apiFetch("/applications/generated", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ workspace_id: workspaceId, ...application }),
+      body: JSON.stringify({
+        workspace_id: workspaceId,
+        url: application.url,
+        job_title: application.job_title,
+        company_name: application.company_name,
+        allow_similar_job: application.allowSimilarJob,
+      }),
     })
     const data = await response.json().catch(() => null) as {
       success?: boolean
+      already_added?: boolean
       duplicate?: boolean
       duplicate_type?: string | null
+      can_override?: boolean
       application?: AddGeneratedApplicationResult["application"]
       existing_application?: GenerateResumeResult["existingApplication"]
       message?: string
@@ -168,8 +184,10 @@ const webAiProfiles: AiProfilesApi = {
     if (!response.ok) throw new Error(data?.message || `Unable to add application (${response.status}).`)
     return {
       success: data?.success === true,
+      alreadyAdded: data?.already_added,
       duplicate: data?.duplicate,
       duplicateType: data?.duplicate_type,
+      canOverride: data?.can_override,
       application: data?.application,
       existingApplication: data?.existing_application,
     }

@@ -66,10 +66,11 @@
 | `workspace_id` | TEXT FK→Workspace CASCADE | |
 | `date` | DATETIME | **normalised to UTC midnight** — the day bucket |
 | `number` | INT | per-`(workspace, date)` sequence starting at 1 |
-| `job_title` | TEXT NULL | blank when extraction fails |
-| `company_name` | TEXT NULL | blank when extraction fails; *never* a duplicate key |
+| `job_title` | TEXT NULL | required for generated candidates; nullable for banned/manual rows |
+| `company_name` | TEXT NULL | required for generated candidates; nullable for banned/manual rows |
 | `url` | TEXT | as pasted |
 | `normalized_url` | TEXT | canonical form — the duplicate key |
+| `job_fingerprint` | TEXT NULL | 128-bit company/title hash for recent cross-site duplicate warnings |
 | `job_source` | TEXT | detected platform, default `Other` |
 | `application_status` | TEXT | `Pending`\|`Applied`\|`Rejected`\|`Duplicated` |
 | `pipeline_status` | TEXT | `Not Started` … `Rejected` — admin only |
@@ -81,6 +82,14 @@
 | `paid_at` | DATETIME NULL | |
 | `resume_link` | TEXT NULL | |
 | `created_by_user_id` | TEXT NULL FK→User | **audit only — explicitly not a payment input** |
+| `created_at` / `updated_at` | DATETIME | |
+
+### BannedUrlPattern
+| Column | Type | Notes |
+|---|---|---|
+| `id` | TEXT PK | |
+| `pattern` | TEXT UNIQUE | lowercase substring matched against the URL |
+| `created_by_user_id` | TEXT NULL FK→User | audit field; retained as NULL if the admin is removed |
 | `created_at` / `updated_at` | DATETIME | |
 
 ### WeeklyBidReport
@@ -104,8 +113,7 @@ Every index below exists to serve a *named* query, not speculatively.
 | `JobApplication(workspace_id, job_source)` | source filter |
 | `JobApplication(workspace_id, paid)` | payment sweep / locked-row shading |
 | `JobApplication(normalized_url)` | **global duplicate probe** — the hottest write-path lookup |
-| `JobApplication(workspace_id, normalized_url)` | workspace-scoped duplicate probe (`DUPLICATE_SCOPE=workspace`) |
-| `JobApplication(url)` | primary exact-URL duplicate probe |
+| `JobApplication(workspace_id, job_fingerprint, created_at)` | recent cross-site company/title duplicate probe |
 | `JobApplication(date)` | cross-workspace weekly aggregation |
 | `JobApplication(interview_date)` | upcoming-interview list |
 | `WorkspacePermission(user_id)` | "which tabs can I see?" on every request |

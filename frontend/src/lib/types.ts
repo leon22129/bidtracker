@@ -40,6 +40,14 @@ export interface User {
   granted_workspace_count?: number;
 }
 
+export interface BannedUrlPattern {
+  id: string;
+  pattern: string;
+  created_at: string;
+  created_by_user_id?: string | null;
+  createdByUser?: { username: string } | null;
+}
+
 export interface WorkspacePermissionRow {
   id: string;
   user_id: string;

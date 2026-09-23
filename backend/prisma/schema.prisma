@@ -37,6 +37,7 @@ model User {
   createdApplications JobApplication[]  @relation("CreatedBy")
   processedPaymentReports PaymentReport[] @relation("ProcessedBy")
   bidderPaymentReports PaymentReport[] @relation("BidderPaymentReports")
+  createdBannedUrlPatterns BannedUrlPattern[] @relation("BannedUrlPatternCreator")
   creator         User?                @relation("UserCreator", fields: [created_by_user_id], references: [id], onDelete: SetNull)
 
   @@index([role])
@@ -142,9 +143,9 @@ model JobApplication {
 
   job_title           String?
   company_name        String? // for enrichment and display
-  normalized_company_name String? // canonical form for company-name duplicate detection
   url                 String
   normalized_url      String  // canonical form — URL duplicate key
+  job_fingerprint     String? // recent workspace duplicate signal: normalized company + title
   job_source          String  @default("Other")
 
   application_status String @default("Pending")     // Pending | Applied | Rejected | Duplicated
@@ -172,11 +173,8 @@ model JobApplication {
   @@index([workspace_id, pipeline_status])
   @@index([workspace_id, job_source])
   @@index([workspace_id, paid])
-  @@index([workspace_id, normalized_url])
-  @@index([workspace_id, normalized_company_name])
   @@index([normalized_url])
-  @@index([normalized_company_name])
-  @@index([url])
+  @@index([workspace_id, job_fingerprint, created_at])
   @@index([date])
   @@index([workspace_id, created_at])
   @@map("job_applications")
@@ -202,4 +200,17 @@ model PaymentReport {
   @@index([bidder_id, start_date, end_date])
   @@index([processed_at])
   @@map("payment_reports")
+}
+
+model BannedUrlPattern {
+  id                 String   @id @default(cuid())
+  pattern            String   @unique
+  created_by_user_id String?
+  created_at         DateTime @default(now())
+  updated_at         DateTime @updatedAt
+
+  createdByUser User? @relation("BannedUrlPatternCreator", fields: [created_by_user_id], references: [id], onDelete: SetNull)
+
+  @@index([created_by_user_id])
+  @@map("banned_url_patterns")
 }

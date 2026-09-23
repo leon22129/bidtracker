@@ -117,6 +117,7 @@ async function main() {
   const DAYS = 120;
   const perWorkspace = Math.floor(TOTAL_APPLICATIONS / workspaces.length);
   const seenNormalized = new Set<string>();
+  const seenUrls: string[] = [];
   let globalIndex = 0;
   let created = 0;
 
@@ -138,13 +139,14 @@ async function main() {
         globalIndex++;
         const company = pick(COMPANIES);
         const slug = company.toLowerCase().replace(/\s+/g, '-');
-        const url = pick(URL_TEMPLATES)(slug, globalIndex);
+        let url = pick(URL_TEMPLATES)(slug, globalIndex);
+        if (seenUrls.length > 0 && rand() < 0.04) url = pick(seenUrls);
         const normalized = normalizeUrl(url);
 
         // ~4% intentional duplicates so duplicate handling and payment exclusion are exercised.
-        const isDuplicate = seenNormalized.has(normalized) || rand() < 0.04;
-        const dupUrl = isDuplicate && seenNormalized.size > 0 ? url : url;
+        const isDuplicate = seenNormalized.has(normalized);
         seenNormalized.add(normalized);
+        seenUrls.push(url);
 
         const r = rand();
         const applicationStatus = isDuplicate
@@ -167,7 +169,7 @@ async function main() {
           workspace_id: workspace.id,
           date,
           number: startNumber + i,
-          url: dupUrl,
+          url,
           normalized_url: normalized,
           job_source: detectJobSource(url),
           job_title: rand() < 0.92 ? pick(TITLES) : null,

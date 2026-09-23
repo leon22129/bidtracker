@@ -65,6 +65,7 @@ export type GenerateResumeResult = {
   banned?: boolean
   duplicate?: boolean
   duplicateType?: string | null
+  canOverride?: boolean
   application?: GeneratedApplication
   existingApplication?: {
     id: string
@@ -81,12 +82,16 @@ export type GeneratedApplication = {
   url: string
   job_title: string | null
   company_name: string | null
+  /** Set only after the user confirms a recent company/title match is a different opening. */
+  allowSimilarJob?: boolean
 }
 
 export type AddGeneratedApplicationResult = {
   success: boolean
+  alreadyAdded?: boolean
   duplicate?: boolean
   duplicateType?: string | null
+  canOverride?: boolean
   application?: GeneratedApplication & { id: string; number: number }
   existingApplication?: GenerateResumeResult["existingApplication"]
 }

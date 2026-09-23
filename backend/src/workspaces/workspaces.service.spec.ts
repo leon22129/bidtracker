@@ -69,4 +69,22 @@ describe('WorkspacesService', () => {
 
     expect(prisma.resumeProfile.update).not.toHaveBeenCalled();
   });
+
+  it('blocks non-admin users from changing sensitive workspace ownership fields', async () => {
+    const service = new WorkspacesService(prisma as never, access as never);
+    prisma.workspace.findUnique.mockResolvedValue({
+      id: 'w-1',
+      name: 'Workspace',
+      owner_user_id: 'u-1',
+      resume_profile_id: 'p-1',
+    });
+
+    await expect(service.update('w-1', { owner_user_id: 'u-2' }, {
+      id: 'u-1', username: 'bidder', email: 'bidder@example.com', role: 'bidder',
+    })).rejects.toEqual(
+      new ForbiddenException('Only an admin can change workspace ownership, profile assignment, or archive state'),
+    );
+
+    expect(prisma.workspace.update).not.toHaveBeenCalled();
+  });
 });

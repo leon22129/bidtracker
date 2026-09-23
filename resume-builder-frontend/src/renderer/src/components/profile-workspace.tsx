@@ -119,6 +119,7 @@ export function ProfileWorkspace({
   const [error, setError] = useState("");
   const [applicationError, setApplicationError] = useState("");
   const [generatedApplication, setGeneratedApplication] = useState<GeneratedApplication | null>(null);
+  const addingApplicationRef = useRef(false);
 
   // UI state
   const [previewOpen, setPreviewOpen] = useState(false);
@@ -197,10 +198,31 @@ export function ProfileWorkspace({
         const location = existing
           ? ` It already exists in ${existing.workspace_name} as application #${existing.number}.`
           : "";
-        const reason = `This job URL has already been added.${location}`;
-        setError(reason);
-        if (isActive) toast({ title: "Duplicate job", description: reason });
-        return;
+        if (
+          data.duplicateType === "job_fingerprint" &&
+          data.canOverride &&
+          data.application &&
+          data.tailored_resume
+        ) {
+          const proceed = window.confirm(
+            `A recent application has the same company and job title.${location}\n\n` +
+            "Choose OK only if this is a different position.",
+          );
+          if (!proceed) {
+            const reason = `This appears to be the same job advertised on another site.${location}`;
+            setError(reason);
+            if (isActive) toast({ title: "Possible duplicate job", description: reason });
+            return;
+          }
+          data.application.allowSimilarJob = true;
+        } else {
+          const reason = data.duplicateType === "job_fingerprint"
+            ? `A recent application has the same company and job title.${location}`
+            : `This job URL has already been added.${location}`;
+          setError(reason);
+          if (isActive) toast({ title: "Duplicate job", description: reason });
+          return;
+        }
       }
       if (data.banned) {
         const reason = "This job URL is on the banned list and was not sent to OpenAI.";
@@ -296,14 +318,35 @@ export function ProfileWorkspace({
   };
 
   const handleAddApplication = async () => {
-    if (!generatedApplication || !profile.workspaceId || isAddingApplication) return;
+    if (!generatedApplication || !profile.workspaceId || addingApplicationRef.current) return;
+    addingApplicationRef.current = true;
     setError("");
     setIsAddingApplication(true);
     try {
-      const result = await window.aiProfiles.addGeneratedApplication(
+      let result = await window.aiProfiles.addGeneratedApplication(
         profile.workspaceId,
         generatedApplication,
       );
+      if (
+        result.duplicate &&
+        result.duplicateType === "job_fingerprint" &&
+        result.canOverride
+      ) {
+        const existing = result.existingApplication;
+        const location = existing
+          ? ` It already exists in ${existing.workspace_name} as application #${existing.number}.`
+          : "";
+        const proceed = window.confirm(
+          `A recent application has the same company and job title.${location}\n\n` +
+          "Choose OK only if this is a different position.",
+        );
+        if (proceed) {
+          result = await window.aiProfiles.addGeneratedApplication(
+            profile.workspaceId,
+            { ...generatedApplication, allowSimilarJob: true },
+          );
+        }
+      }
       if (result.duplicate) {
         const existing = result.existingApplication;
         const location = existing
@@ -314,7 +357,7 @@ export function ProfileWorkspace({
       if (!result.success) throw new Error("The application could not be added.");
       setGeneratedApplication(null);
       if (isActive) toast({
-        title: "Application added",
+        title: result.alreadyAdded ? "Application already added" : "Application added",
         description: `${generatedApplication.job_title || "Job"}${generatedApplication.company_name ? ` at ${generatedApplication.company_name}` : ""}`,
       });
     } catch (err) {
@@ -322,6 +365,7 @@ export function ProfileWorkspace({
       setError(msg);
       if (isActive) toast({ title: "Application Not Added", description: msg });
     } finally {
+      addingApplicationRef.current = false;
       setIsAddingApplication(false);
     }
   };
