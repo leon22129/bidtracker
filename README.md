@@ -687,7 +687,7 @@ Full annotated list in [.env.example](.env.example). The ones worth knowing:
 | `MAX_XLSX_EXPANDED_MB`                            | `100`                 | Maximum streamed XLSX expansion before parsing.                                        |
 | `MAX_XLSX_ZIP_ENTRIES`                            | `2000`                | Maximum number of files inside an XLSX archive.                                        |
 | `DISABLE_CRON`                                     | `false`               | Set`true` on a staging copy so it can't produce authoritative-looking reports.       |
-| `OPENAI_CONVERSATION_RETENTION_DAYS`              | `30`                  | Deletes inactive provider items, conversations, and local mappings daily.               |
+| `OPENAI_CONVERSATION_RETENTION_DAYS`              | `90`                  | Deletes inactive provider items, conversations, and local mappings daily.               |
 | `DISABLE_CONVERSATION_CLEANUP`                    | `false`               | Disables provider conversation retention cleanup when explicitly required.             |
 | `ALLOW_BIDDER_PENDING_TO_REJECTED`                 | `false`               | Adds one extra transition beyond the spec's two.                                       |
 | `OPENAI_API_KEY`                                    | —                    | Server-only key used by `POST /api/applications/generate`; never send it to the browser. |

@@ -8,8 +8,8 @@ const CLEANUP_LOCK_ID = 734927451012345679n;
 const PROVIDER_CONCURRENCY = 5;
 
 function retentionDays() {
-  const configured = Number(process.env.OPENAI_CONVERSATION_RETENTION_DAYS ?? 30);
-  return Number.isFinite(configured) ? Math.min(365, Math.max(1, Math.trunc(configured))) : 30;
+  const configured = Number(process.env.OPENAI_CONVERSATION_RETENTION_DAYS ?? 90);
+  return Number.isFinite(configured) ? Math.min(365, Math.max(1, Math.trunc(configured))) : 90;
 }
 
 @Injectable()

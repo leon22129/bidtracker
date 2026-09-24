@@ -3,18 +3,24 @@ import { ConversationCleanupService } from './conversation-cleanup.service';
 
 describe('ConversationCleanupService', () => {
   const originalApiKey = process.env.OPENAI_API_KEY;
+  const originalRetentionDays = process.env.OPENAI_CONVERSATION_RETENTION_DAYS;
 
   beforeEach(() => {
     process.env.OPENAI_API_KEY = 'test-key';
+    delete process.env.OPENAI_CONVERSATION_RETENTION_DAYS;
   });
 
   afterEach(() => {
     jest.restoreAllMocks();
+    jest.useRealTimers();
     if (originalApiKey === undefined) delete process.env.OPENAI_API_KEY;
     else process.env.OPENAI_API_KEY = originalApiKey;
+    if (originalRetentionDays === undefined) delete process.env.OPENAI_CONVERSATION_RETENTION_DAYS;
+    else process.env.OPENAI_CONVERSATION_RETENTION_DAYS = originalRetentionDays;
   });
 
   it('deletes expired conversations at the provider before removing local mappings', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-09-24T12:00:00.000Z'));
     const row = { id: 'local-1', openai_conversation_id: 'conv-1' };
     const tx = {
       $queryRaw: jest.fn().mockResolvedValue([{ acquired: true }]),
@@ -32,6 +38,9 @@ describe('ConversationCleanupService', () => {
     const service = new ConversationCleanupService(prisma as never);
 
     await expect(service.cleanupExpired()).resolves.toMatchObject({ deleted: 1 });
+    expect(tx.resumeConversation.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { updated_at: { lt: new Date('2026-06-26T12:00:00.000Z') } },
+    }));
     expect(fetch).toHaveBeenLastCalledWith(
       'https://api.openai.com/v1/conversations/conv-1',
       expect.objectContaining({ method: 'DELETE' }),
