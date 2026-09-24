@@ -22,7 +22,6 @@ describe('DuplicateService URL-only detection', () => {
       workspace_id: 'workspace-1',
       date: new Date('2026-09-22T00:00:00.000Z'),
       number: 1,
-      workspace: { name: 'Workspace' },
     }]);
 
     const [verdict] = await service.classifyBatch(
@@ -31,6 +30,28 @@ describe('DuplicateService URL-only detection', () => {
     );
 
     expect(verdict).toMatchObject({ is_duplicate: true, duplicate_type: 'url' });
+    expect(verdict.existing).toMatchObject({ same_workspace: true, id: 'app-1' });
+  });
+
+  it('does not expose metadata for a duplicate in another workspace', async () => {
+    const { service } = serviceWith([{
+      id: 'secret-app',
+      url: 'https://example.com/jobs/123',
+      normalized_url: 'example.com/jobs/123',
+      job_title: 'Secret title',
+      company_name: 'Secret company',
+      workspace_id: 'secret-workspace',
+      date: new Date('2026-09-22T00:00:00.000Z'),
+      number: 42,
+    }]);
+
+    const [verdict] = await service.classifyBatch(
+      'workspace-1',
+      ['https://example.com/jobs/123'],
+    );
+
+    expect(verdict).toMatchObject({ is_duplicate: true, existing: { same_workspace: false } });
+    expect(verdict.existing).toEqual({ same_workspace: false });
   });
 
   it('detects repeated normalized URLs within one batch', async () => {
@@ -68,7 +89,6 @@ describe('DuplicateService URL-only detection', () => {
       workspace_id: 'workspace-1',
       date: new Date('2026-09-22T00:00:00.000Z'),
       number: 1,
-      workspace: { name: 'Workspace' },
     };
     const { service, prisma } = serviceWith();
     prisma.jobApplication.findFirst.mockResolvedValue(row);

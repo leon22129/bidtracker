@@ -15,6 +15,7 @@ describe('ApplicationGenerationService application metadata eligibility', () => 
   };
   const profile = {
     id: 'profile-1',
+    workspace_id: 'workspace-1',
     career_path: '',
     location: 'Chicago, IL',
     full_name: 'Candidate',
@@ -26,10 +27,14 @@ describe('ApplicationGenerationService application metadata eligibility', () => 
         id: dto.workspace_id,
         owner_user_id: user.id,
         name: 'Workspace',
-        resume_profile_id: profile.id,
         resumeProfile: profile,
       }) },
-      resumeProfile: { findFirst: jest.fn().mockResolvedValue(profile) },
+      resumeProfile: { findUnique: jest.fn().mockResolvedValue(profile) },
+      resumeConversation: {
+        findUnique: jest.fn(),
+        create: jest.fn(),
+        update: jest.fn().mockResolvedValue({}),
+      },
     };
     const access = { assertCanEdit: jest.fn().mockResolvedValue(undefined) };
     const duplicates = {
@@ -44,7 +49,11 @@ describe('ApplicationGenerationService application metadata eligibility', () => 
       {} as any,
       {} as any,
     );
-    return { service, duplicates };
+    jest.spyOn(service as any, 'createAnswerConversation').mockResolvedValue({
+      id: 'conversation-1',
+      openai_conversation_id: 'conv_openai_1',
+    });
+    return { service, duplicates, prisma, access };
   }
 
   const eligible = (overrides: Record<string, unknown> = {}) => JSON.stringify({
@@ -109,10 +118,55 @@ describe('ApplicationGenerationService application metadata eligibility', () => 
 
     await expect(service.generate(user, dto)).resolves.toMatchObject({
       success: true,
+      conversation_id: 'conversation-1',
       application: {
         company_name: 'Acme',
         job_title: 'Software Engineer',
       },
     });
+  });
+
+  it('answers from an owned compact conversation without resending the JD or resume', async () => {
+    const { service, prisma, access } = setup();
+    prisma.resumeConversation.findUnique.mockResolvedValue({
+      id: 'conversation-1',
+      user_id: user.id,
+      workspace_id: dto.workspace_id,
+      openai_conversation_id: 'conv_openai_1',
+    });
+    const openAi = jest.spyOn(service as any, 'openAi').mockResolvedValue(JSON.stringify({
+      answers: [{ question: 'Why this role?', answer: 'It aligns with my experience.' }],
+    }));
+
+    await expect(service.answerQuestions(user, {
+      conversation_id: 'conversation-1',
+      questions: ['Why this role?'],
+    })).resolves.toEqual({
+      answers: [{ question: 'Why this role?', answer: 'It aligns with my experience.' }],
+    });
+
+    expect(access.assertCanEdit).toHaveBeenCalledWith(user, dto.workspace_id);
+    expect(openAi).toHaveBeenCalledWith(
+      expect.stringContaining('Why this role?'),
+      expect.objectContaining({ conversationId: 'conv_openai_1' }),
+    );
+    expect(openAi.mock.calls[0][0]).not.toContain(dto.job_description);
+  });
+
+  it('does not allow another user to use a conversation id', async () => {
+    const { service, prisma } = setup();
+    prisma.resumeConversation.findUnique.mockResolvedValue({
+      id: 'conversation-1',
+      user_id: 'different-user',
+      workspace_id: dto.workspace_id,
+      openai_conversation_id: 'conv_openai_1',
+    });
+    const openAi = jest.spyOn(service as any, 'openAi');
+
+    await expect(service.answerQuestions(user, {
+      conversation_id: 'conversation-1',
+      questions: ['Why this role?'],
+    })).rejects.toThrow('Conversation not found');
+    expect(openAi).not.toHaveBeenCalled();
   });
 });

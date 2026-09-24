@@ -2,11 +2,14 @@ import { FileInterceptor as NestFileInterceptor } from '@nestjs/platform-express
 import { BadRequestException } from '@nestjs/common';
 import { memoryStorage } from 'multer';
 
-const MAX_UPLOAD_BYTES = Number(process.env.MAX_UPLOAD_MB || 25) * 1024 * 1024;
+const configuredUploadMb = Number(process.env.MAX_UPLOAD_MB ?? 25);
+const MAX_UPLOAD_BYTES = (
+  Number.isFinite(configuredUploadMb) ? Math.min(100, Math.max(1, configuredUploadMb)) : 25
+) * 1024 * 1024;
 
 /**
  * Memory storage rather than disk: the file is parsed once and discarded, so writing it to the
- * container filesystem would only add cleanup work and a place for stale uploads to accumulate.
+ * server filesystem would only add cleanup work and a place for stale uploads to accumulate.
  * 25 MB comfortably covers a 20k-row xlsx.
  */
 export const FileInterceptor = NestFileInterceptor('file', {

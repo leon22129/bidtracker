@@ -1,5 +1,7 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import ExcelJS from 'exceljs';
+import { Readable } from 'node:stream';
+import * as unzipper from 'unzipper';
 import { PrismaService } from '../prisma/prisma.service';
 import { WorkspaceAccessService } from '../workspaces/workspace-access.service';
 import { ApplicationsService } from '../applications/applications.service';
@@ -17,7 +19,6 @@ import {
 } from '../common/utils/url.util';
 import { createJobFingerprint } from '../common/utils/job-fingerprint.util';
 import { BannedUrlService } from '../applications/banned-url.service';
-import { ApplicationIngestionLockService } from '../applications/application-ingestion-lock.service';
 
 /**
  * Column aliases. Real-world spreadsheets from bidders never use exactly the header you asked for, so
@@ -58,7 +59,6 @@ export class ImportService {
     private readonly duplicates: DuplicateService,
     private readonly numbering: NumberingService,
     private readonly bannedUrls: BannedUrlService,
-    private readonly ingestionLock: ApplicationIngestionLockService,
   ) {}
 
   async import(
@@ -183,87 +183,85 @@ export class ImportService {
 
     const missingFields = collectMissingFields(parsed);
 
-    return this.ingestionLock.runExclusive(async () => {
-      // --- Pass 2: duplicate classification (one batched query set) ---------
-      const urlVerdicts = await this.duplicates.classifyBatch(
-        workspaceId,
-        parsed.map((p) => p.url),
-      );
+    // --- Pass 2: duplicate classification (one batched query set) ---------
+    const urlVerdicts = await this.duplicates.classifyBatch(
+      workspaceId,
+      parsed.map((p) => p.url),
+    );
 
-      // --- Pass 3: classify company/title identities exactly as supplied ------
-      const bannedVerdicts = await this.bannedUrls.matchMany(parsed.map((row) => row.url));
-      const identityVerdicts = await this.duplicates.classifyJobIdentities(
-        workspaceId,
-        parsed.map((row) => ({
-          company_name: row.company_name,
-          job_title: row.job_title,
-        })),
-      );
-      const verdicts = urlVerdicts.map((verdict, index) => {
-        const identity = identityVerdicts[index];
-        return verdict.is_duplicate || !identity.is_duplicate
-          ? verdict
-          : {
-              ...verdict,
-              is_duplicate: true,
-              reason: identity.reason,
-              duplicate_type: 'job_fingerprint' as const,
-              existing: identity.existing,
-            };
-      });
-      const verdictByRow = new Map(parsed.map((row, index) => [row, verdicts[index]]));
-      const bannedByRow = new Map(parsed.map((row, index) => [row, bannedVerdicts[index]]));
-
-      // --- Pass 4: allocate numbers per date, then batch insert ---------------
-      const byDate = new Map<number, ParsedRow[]>();
-      for (const row of parsed) {
-        const key = row.date.getTime();
-        if (!byDate.has(key)) byDate.set(key, []);
-        byDate.get(key)!.push(row);
-      }
-
-      const inserts: any[] = [];
-      for (const [time, rows] of byDate) {
-        const date = new Date(time);
-        const start = await this.numbering.reserveBlock(this.prisma, workspaceId, date, rows.length);
-        rows.forEach((row, idx) => {
-          const verdict = verdictByRow.get(row);
-          const banned = bannedByRow.get(row) ?? false;
-          inserts.push({
-            workspace_id: workspaceId,
-            date,
-            number: start + idx,
-            url: row.url,
-            normalized_url: verdict?.normalized_url ?? normalizeUrl(row.url),
-            job_source: detectJobSource(row.url),
-            // Banned URLs are auto-rejected, regardless of spreadsheet status or duplicate checks.
-            application_status: banned ? 'Rejected' : verdict?.is_duplicate ? 'Duplicated' : row.status,
-            pipeline_status: 'Not Started',
-            job_title: row.job_title,
-            company_name: row.company_name,
-            job_fingerprint: createJobFingerprint(row.company_name, row.job_title),
-            note: banned ? BANNED_URL_NOTE : row.note,
-            created_by_user_id: user.id,
-          });
-        });
-      }
-
-      const created = await this.applications.insertChunked(inserts, workspaceId);
-
-      this.logger.log(
-        `Import into ${workspaceId} by ${user.username}: ${created} created, ` +
-          `${verdicts.filter((v) => v.is_duplicate).length} duplicates, ${skipped.length} skipped`,
-      );
-
-      return {
-        total_rows: dataRows.length,
-        created,
-        duplicates: verdicts.filter((v) => v.is_duplicate).length,
-        skipped: skipped.slice(0, 200),
-        missing_fields: missingFields,
-        detected_columns: map as any,
-      };
+    // --- Pass 3: classify company/title identities exactly as supplied ------
+    const bannedVerdicts = await this.bannedUrls.matchMany(parsed.map((row) => row.url));
+    const identityVerdicts = await this.duplicates.classifyJobIdentities(
+      workspaceId,
+      parsed.map((row) => ({
+        company_name: row.company_name,
+        job_title: row.job_title,
+      })),
+    );
+    const verdicts = urlVerdicts.map((verdict, index) => {
+      const identity = identityVerdicts[index];
+      return verdict.is_duplicate || !identity.is_duplicate
+        ? verdict
+        : {
+            ...verdict,
+            is_duplicate: true,
+            reason: identity.reason,
+            duplicate_type: 'job_fingerprint' as const,
+            existing: identity.existing,
+          };
     });
+    const verdictByRow = new Map(parsed.map((row, index) => [row, verdicts[index]]));
+    const bannedByRow = new Map(parsed.map((row, index) => [row, bannedVerdicts[index]]));
+
+    // --- Pass 4: allocate numbers per date, then batch insert ---------------
+    const byDate = new Map<number, ParsedRow[]>();
+    for (const row of parsed) {
+      const key = row.date.getTime();
+      if (!byDate.has(key)) byDate.set(key, []);
+      byDate.get(key)!.push(row);
+    }
+
+    const inserts: any[] = [];
+    for (const [time, rows] of byDate) {
+      const date = new Date(time);
+      const start = await this.numbering.reserveBlock(this.prisma, workspaceId, date, rows.length);
+      rows.forEach((row, idx) => {
+        const verdict = verdictByRow.get(row);
+        const banned = bannedByRow.get(row) ?? false;
+        inserts.push({
+          workspace_id: workspaceId,
+          date,
+          number: start + idx,
+          url: row.url,
+          normalized_url: verdict?.normalized_url ?? normalizeUrl(row.url),
+          job_source: detectJobSource(row.url),
+          // Banned URLs are auto-rejected, regardless of spreadsheet status or duplicate checks.
+          application_status: banned ? 'Rejected' : verdict?.is_duplicate ? 'Duplicated' : row.status,
+          pipeline_status: 'Not Started',
+          job_title: row.job_title,
+          company_name: row.company_name,
+          job_fingerprint: createJobFingerprint(row.company_name, row.job_title),
+          note: banned ? BANNED_URL_NOTE : row.note,
+          created_by_user_id: user.id,
+        });
+      });
+    }
+
+    const created = await this.applications.insertChunked(inserts, workspaceId);
+
+    this.logger.log(
+      `Import into ${workspaceId} by ${user.username}: ${created} created, ` +
+        `${verdicts.filter((v) => v.is_duplicate).length} duplicates, ${skipped.length} skipped`,
+    );
+
+    return {
+      total_rows: dataRows.length,
+      created,
+      duplicates: verdicts.filter((v) => v.is_duplicate).length,
+      skipped: skipped.slice(0, 200),
+      missing_fields: missingFields,
+      detected_columns: map as any,
+    };
   }
 
   /** Column-mapping dry run so the UI can show the user what it understood before committing. */
@@ -327,6 +325,7 @@ function mapColumns(header: string[]): Record<string, number | null> {
 }
 
 async function parseXlsx(buffer: Buffer): Promise<any[][]> {
+  await assertSafeXlsxArchive(buffer);
   const workbook = new ExcelJS.Workbook();
   await workbook.xlsx.load(buffer as any);
   const sheet = workbook.worksheets[0];
@@ -353,6 +352,48 @@ async function parseXlsx(buffer: Buffer): Promise<any[][]> {
     rows.push(cells);
   });
   return rows;
+}
+
+export async function assertSafeXlsxArchive(
+  buffer: Buffer,
+  maxExpandedBytes = boundedEnvironmentNumber('MAX_XLSX_EXPANDED_MB', 100, 1, 512) * 1024 * 1024,
+  maxEntries = boundedEnvironmentNumber('MAX_XLSX_ZIP_ENTRIES', 2000, 10, 10_000),
+) {
+  if (!Number.isFinite(maxExpandedBytes) || maxExpandedBytes <= 0) {
+    throw new BadRequestException('The XLSX expanded-size limit is invalid');
+  }
+  if (!Number.isFinite(maxEntries) || maxEntries <= 0) {
+    throw new BadRequestException('The XLSX archive-entry limit is invalid');
+  }
+  const archive = Readable.from([buffer]).pipe(unzipper.Parse({ forceStream: true }));
+  let totalBytes = 0;
+  let entryCount = 0;
+
+  try {
+    for await (const entry of archive as AsyncIterable<NodeJS.ReadableStream>) {
+      entryCount++;
+      if (entryCount > maxEntries) {
+        throw new BadRequestException(`The XLSX archive contains more than ${maxEntries} entries`);
+      }
+      for await (const chunk of entry as AsyncIterable<Buffer | string>) {
+        totalBytes += typeof chunk === 'string' ? Buffer.byteLength(chunk) : chunk.length;
+        if (totalBytes > maxExpandedBytes) {
+          throw new BadRequestException(
+            `The XLSX archive expands beyond the ${Math.floor(maxExpandedBytes / 1024 / 1024)} MB limit`,
+          );
+        }
+      }
+    }
+  } catch (error) {
+    archive.destroy();
+    if (error instanceof BadRequestException) throw error;
+    throw new BadRequestException('The XLSX file is not a valid or safely bounded ZIP archive');
+  }
+}
+
+function boundedEnvironmentNumber(name: string, fallback: number, minimum: number, maximum: number) {
+  const parsed = Number(process.env[name] ?? fallback);
+  return Number.isFinite(parsed) ? Math.min(maximum, Math.max(minimum, parsed)) : fallback;
 }
 
 /** RFC-4180-aware CSV parser: handles quoted fields, embedded commas/newlines and escaped quotes. */

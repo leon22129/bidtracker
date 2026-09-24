@@ -92,23 +92,21 @@ async function main() {
   const workspaces: Workspace[] = [];
   for (const bidder of bidders) {
     const name = `${bidder.username.charAt(0).toUpperCase()}${bidder.username.slice(1)} Applications`;
-    workspaces.push(
-      await prisma.workspace.upsert({
+    const workspace = await prisma.$transaction(async (tx) => {
+      const row = await tx.workspace.upsert({
         where: { name },
         update: {},
         create: { name, owner_user_id: bidder.id, created_by_user_id: admin.id },
-      }),
-    );
+      });
+      await tx.resumeProfile.upsert({
+        where: { workspace_id: row.id },
+        update: {},
+        create: { workspace_id: row.id, name },
+      });
+      return row;
+    });
+    workspaces.push(workspace);
   }
-
-  // Mike (bidder_manager) gets edit access to John's tab — the spec's exact example.
-  const john = workspaces[0];
-  const mike = bidders[1];
-  await prisma.workspacePermission.upsert({
-    where: { workspace_id_user_id: { workspace_id: john.id, user_id: mike.id } },
-    update: { permission_type: 'edit' },
-    create: { workspace_id: john.id, user_id: mike.id, permission_type: 'edit' },
-  });
 
   console.log(`Users: ${admin.username} (admin), ${bidders.map((b) => b.username).join(', ')}`);
   console.log(`Workspaces: ${workspaces.map((w) => w.name).join(', ')}`);
@@ -183,7 +181,7 @@ async function main() {
         });
       }
 
-      // Chunked createMany: at 50k rows, per-row inserts would take minutes on SQLite.
+      // Chunked createMany keeps memory and query payloads bounded at larger seed sizes.
       for (let i = 0; i < rows.length; i += 500) {
         const res = await prisma.jobApplication.createMany({ data: rows.slice(i, i + 500) });
         created += res.count;

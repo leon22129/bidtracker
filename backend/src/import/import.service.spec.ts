@@ -1,4 +1,4 @@
-import { ImportService } from './import.service';
+import { assertSafeXlsxArchive, ImportService } from './import.service';
 import ExcelJS from 'exceljs';
 
 describe('ImportService missing company/title warnings', () => {
@@ -34,7 +34,6 @@ describe('ImportService missing company/title warnings', () => {
     };
     const numbering = { reserveBlock: jest.fn().mockResolvedValue(1) };
     const bannedUrls = { matchMany: jest.fn(async (urls: string[]) => urls.map(() => false)) };
-    const ingestionLock = { runExclusive: jest.fn((operation) => operation()) };
     const service = new ImportService(
       {} as any,
       access as any,
@@ -42,9 +41,8 @@ describe('ImportService missing company/title warnings', () => {
       duplicates as any,
       numbering as any,
       bannedUrls as any,
-      ingestionLock as any,
     );
-    return { service, applications, ingestionLock };
+    return { service, applications };
   }
 
   it('reports missing fields during preview', async () => {
@@ -59,7 +57,7 @@ describe('ImportService missing company/title warnings', () => {
   });
 
   it('imports blank fields without a network lookup and returns rows that need review', async () => {
-    const { service, applications, ingestionLock } = setup();
+    const { service, applications } = setup();
 
     const result = await service.import(user, 'workspace-1', file);
 
@@ -74,7 +72,6 @@ describe('ImportService missing company/title warnings', () => {
       ]),
       'workspace-1',
     );
-    expect(ingestionLock.runExclusive).toHaveBeenCalledTimes(1);
   });
 
   it('imports an Excel workbook through the same validated path', async () => {
@@ -96,5 +93,15 @@ describe('ImportService missing company/title warnings', () => {
       skipped: [],
       missing_fields: [],
     });
+  });
+
+  it('rejects an XLSX archive whose expanded contents exceed the configured bound', async () => {
+    const workbook = new ExcelJS.Workbook();
+    workbook.addWorksheet('Applications').addRow(['URL', 'https://example.com/jobs/1']);
+    const buffer = Buffer.from(await workbook.xlsx.writeBuffer());
+
+    await expect(assertSafeXlsxArchive(buffer, 1, 2000)).rejects.toThrow(
+      'XLSX archive expands beyond',
+    );
   });
 });

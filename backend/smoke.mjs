@@ -10,7 +10,7 @@
  *
  *   node smoke.mjs                                            # local dev server on :3001
  *   SMOKE_BASE=http://127.0.0.1:3000/api \
- *     SMOKE_ADMIN_PASSWORD=... node smoke.mjs                 # a docker compose stack via the proxy
+ *     SMOKE_ADMIN_PASSWORD=... node smoke.mjs                 # a deployed frontend proxy
  *
  * Env: SMOKE_BASE, SMOKE_ADMIN_EMAIL, SMOKE_ADMIN_PASSWORD.
  */
@@ -116,13 +116,7 @@ async function provision(adminToken) {
     b.workspaceId = ws.id;
   }
 
-  // The spec's own example: Mike manages John's tab without owning it.
   const johnWs = BIDDERS[0].workspaceId;
-  await req(`/workspaces/${johnWs}/permissions`, {
-    method: 'POST',
-    token: adminToken,
-    body: { user_id: BIDDERS[1].userId, permission_type: 'edit' },
-  });
 
   async function createExtensionFixture(token, workspaceId, url, index) {
     const created = await req('/applications/generated', {

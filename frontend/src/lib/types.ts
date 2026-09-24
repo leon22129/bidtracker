@@ -25,9 +25,6 @@ export const JOB_SOURCES = [
 ] as const;
 export type JobSource = (typeof JOB_SOURCES)[number];
 
-export type PermissionType = 'view' | 'edit';
-export type AccessLevel = 'none' | 'view' | 'edit';
-
 export interface User {
   id: string;
   username: string;
@@ -37,7 +34,6 @@ export interface User {
   created_at: string;
   updated_at: string;
   owned_workspace_count?: number;
-  granted_workspace_count?: number;
 }
 
 export interface BannedUrlPattern {
@@ -48,14 +44,6 @@ export interface BannedUrlPattern {
   createdByUser?: { username: string } | null;
 }
 
-export interface WorkspacePermissionRow {
-  id: string;
-  user_id: string;
-  username: string;
-  role: Role;
-  permission_type: PermissionType;
-}
-
 export interface Workspace {
   id: string;
   name: string;
@@ -64,11 +52,8 @@ export interface Workspace {
   owner: { id: string; username: string; email: string };
   is_archived: boolean;
   application_count: number;
-  my_access: AccessLevel;
-  permissions?: WorkspacePermissionRow[];
   created_at: string;
   updated_at: string;
-  resume_profile_id?: string | null;
   profile: ResumeProfile | null;
 }
 
@@ -109,6 +94,8 @@ export interface JobApplication {
   job_source: JobSource;
   application_status: ApplicationStatus;
   pipeline_status: PipelineStatus;
+  interview_date: string | null;
+  interview_note: string | null;
   note: string | null;
   paid: boolean;
   created_by_user_id: string | null;
@@ -196,6 +183,17 @@ export interface AnalyticsOverview {
   }>;
   pipeline_breakdown: Array<{ pipeline_status: PipelineStatus; count: number }>;
   daily_volume: Array<{ date: string; applied: number }>;
+}
+
+export interface UpcomingInterview {
+  id: string;
+  workspace_id: string;
+  job_title: string | null;
+  company_name: string | null;
+  interview_date: string;
+  interview_note: string | null;
+  pipeline_status: PipelineStatus;
+  workspace: { name: string };
 }
 
 export interface ImportResult {

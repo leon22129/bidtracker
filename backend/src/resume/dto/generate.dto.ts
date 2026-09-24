@@ -1,5 +1,15 @@
 import { Transform } from 'class-transformer';
-import { IsArray, IsIn, IsOptional, IsString, IsUrl, MaxLength, MinLength } from 'class-validator';
+import {
+  ArrayMaxSize,
+  ArrayMinSize,
+  IsArray,
+  IsIn,
+  IsOptional,
+  IsString,
+  IsUrl,
+  MaxLength,
+  MinLength,
+} from 'class-validator';
 
 export class GenerateApplicationDto {
   @IsString()
@@ -45,4 +55,19 @@ export class GenerateProfilePromptDto {
 
   @IsOptional()
   resume?: unknown;
+}
+
+export class AnswerApplicationQuestionsDto {
+  @IsString()
+  @MinLength(1)
+  @MaxLength(128)
+  conversation_id: string;
+
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(50)
+  @IsString({ each: true })
+  @MinLength(1, { each: true })
+  @MaxLength(2000, { each: true })
+  questions: string[];
 }

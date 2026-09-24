@@ -124,23 +124,35 @@ const webAiProfiles: AiProfilesApi = {
     throw new Error("Profiles are deleted in BidTracker.")
   },
   async generate(input: GenerateResumeInput): Promise<GenerateResumeResult> {
-    const applicationGeneration = Boolean(input.url && input.workspaceId)
-    const response = await apiFetch(applicationGeneration ? "/applications/generate" : "/resume/profile-generate", {
+    const conversationAnswers = input.kind === "applicationAnswers" && Boolean(input.conversationId)
+    const applicationGeneration = !conversationAnswers && Boolean(input.url && input.workspaceId)
+    const path = conversationAnswers
+      ? "/resume/answers"
+      : applicationGeneration
+        ? "/applications/generate"
+        : "/resume/profile-generate"
+    const response = await apiFetch(path, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        ...(applicationGeneration ? { workspace_id: input.workspaceId, url: input.url } : {}),
-        profile_id: input.profileId,
-        job_description: input.jobDescription,
-        kind: input.kind,
-        questions: input.questions,
-        resume: input.resume,
-      }),
+      body: JSON.stringify(conversationAnswers
+        ? { conversation_id: input.conversationId, questions: input.questions }
+        : {
+            ...(applicationGeneration ? { workspace_id: input.workspaceId, url: input.url } : {}),
+            profile_id: input.profileId,
+            job_description: input.jobDescription,
+            kind: input.kind,
+            questions: input.questions,
+            resume: input.resume,
+          }),
     })
-    const data = await response.json().catch(() => null) as { tailored_resume?: string; full_name?: string; error?: string; eligible?: boolean; reason?: string; banned?: boolean; resume?: unknown; application?: GenerateResumeResult["application"]; duplicate?: boolean; duplicate_type?: string | null; can_override?: boolean; existing_application?: GenerateResumeResult["existingApplication"] } | null
-    if (!response.ok) throw new Error(data?.error || `Generation failed (${response.status}).`)
+    const data = await response.json().catch(() => null) as { tailored_resume?: string; full_name?: string; conversation_id?: string; error?: string; message?: string; eligible?: boolean; reason?: string; banned?: boolean; resume?: unknown; answers?: unknown; application?: GenerateResumeResult["application"]; duplicate?: boolean; duplicate_type?: string | null; can_override?: boolean; existing_application?: GenerateResumeResult["existingApplication"] } | null
+    if (!response.ok) throw new Error(data?.message || data?.error || `Generation failed (${response.status}).`)
+    if (conversationAnswers) {
+      if (!Array.isArray(data?.answers)) throw new Error("The AI provider returned an empty response.")
+      return { tailored_resume: JSON.stringify({ answers: data.answers }) }
+    }
     if (applicationGeneration) {
       if (data?.duplicate) return {
         duplicate: true,
@@ -154,10 +166,10 @@ const webAiProfiles: AiProfilesApi = {
       if (data?.banned) return { banned: true, tailored_resume: "" }
       if (data?.eligible === false) return { eligible: false, reason: data.reason, tailored_resume: "" }
       if (!data?.resume) throw new Error("The AI provider returned an empty response.")
-      return { eligible: true, tailored_resume: JSON.stringify(data.resume), full_name: data.full_name, application: data.application }
+      return { eligible: true, tailored_resume: JSON.stringify(data.resume), full_name: data.full_name, conversationId: data.conversation_id, application: data.application }
     }
     if (!data?.tailored_resume) throw new Error("The AI provider returned an empty response.")
-    return { tailored_resume: data.tailored_resume, full_name: data.full_name }
+    return { tailored_resume: data.tailored_resume, full_name: data.full_name, conversationId: data.conversation_id }
   },
   async addGeneratedApplication(workspaceId, application) {
     const jobTitle = typeof application.job_title === "string" ? application.job_title.trim() : ""

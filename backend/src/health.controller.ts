@@ -1,4 +1,4 @@
-import { Controller, Get } from '@nestjs/common';
+import { Controller, Get, ServiceUnavailableException } from '@nestjs/common';
 import { PrismaService } from './prisma/prisma.service';
 import { Public } from './common/decorators/public.decorator';
 
@@ -6,19 +6,22 @@ import { Public } from './common/decorators/public.decorator';
 export class HealthController {
   constructor(private readonly prisma: PrismaService) {}
 
-  /** Used by the Docker healthcheck and by the tunnel's origin check. */
+  /** Liveness and database probe for operators and reverse proxies. */
   @Public()
   @Get('health')
   async health() {
-    let db = 'down';
     try {
       await this.prisma.$queryRaw`SELECT 1`;
-      db = 'up';
     } catch {
-      db = 'down';
+      throw new ServiceUnavailableException(this.response(false, 'down'));
     }
+
+    return this.response(true, 'up');
+  }
+
+  private response(ok: boolean, db: 'up' | 'down') {
     return {
-      ok: db === 'up',
+      ok,
       db,
       uptime_seconds: Math.round(process.uptime()),
       version: process.env.APP_VERSION || '1.0.0',

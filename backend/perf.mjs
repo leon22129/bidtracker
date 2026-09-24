@@ -6,9 +6,10 @@
  * offsets, each filter, each sort, and the dashboard aggregates. Every figure is the median of five
  * runs after one warm-up, so it reflects a warm page cache rather than cold-start I/O.
  *
- *   DATABASE_URL="file:./perf.db" npx prisma migrate deploy
- *   DATABASE_URL="file:./perf.db" npm run seed -- --applications 150000 --reset   # 50k per workspace
- *   DATABASE_URL="file:./perf.db" node dist/main.js &
+ *   export DATABASE_URL="postgresql://bidtracker:PASSWORD@127.0.0.1:5432/bidtracker?schema=public"
+ *   npx prisma migrate deploy
+ *   npm run seed -- --applications 150000 --reset   # 50k per workspace
+ *   node dist/main.js &
  *   SMOKE_ADMIN_EMAIL=... SMOKE_ADMIN_PASSWORD=... node perf.mjs
  */
 const B = 'http://127.0.0.1:3001/api';

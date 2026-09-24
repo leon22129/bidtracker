@@ -3,15 +3,11 @@ const isDevelopment = process.env.NODE_ENV !== 'production';
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
-  // `standalone` produces a self-contained server bundle, which keeps the runtime Docker image small
-  // (no node_modules copy) — meaningful on a free VPS.
-  output: 'standalone',
   poweredByHeader: false,
   eslint: { ignoreDuringBuilds: true },
 
   // The `/api/*` proxy deliberately lives in src/app/api/[...path]/route.ts and NOT in a `rewrites()`
-  // entry here: rewrites are serialised into the build manifest, so BACKEND_INTERNAL_URL would be
-  // frozen to whatever it was at image-build time. See that file for the full explanation.
+  // entry here so BACKEND_URL can be changed when the server starts without rebuilding the frontend.
 
   async headers() {
     return [

@@ -103,6 +103,36 @@ export class AnalyticsService {
       .sort((a, b) => b.interviews - a.interviews);
   }
 
+  /** Future scheduled interviews, ordered for the admin dashboard. */
+  async upcomingInterviews(range: RangeFilter = {}) {
+    const now = new Date();
+    const requestedStart = range.from ? toDayStart(range.from) : now;
+    const start = requestedStart > now ? requestedStart : now;
+    return this.prisma.jobApplication.findMany({
+      where: {
+        ...(range.workspace_id
+          ? { workspace_id: range.workspace_id }
+          : range.workspace_ids ? { workspace_id: { in: range.workspace_ids } } : {}),
+        interview_date: {
+          gte: start,
+          ...(range.to ? { lte: endOfDay(toDayStart(range.to)) } : {}),
+        },
+      },
+      select: {
+        id: true,
+        workspace_id: true,
+        job_title: true,
+        company_name: true,
+        interview_date: true,
+        interview_note: true,
+        pipeline_status: true,
+        workspace: { select: { name: true } },
+      },
+      orderBy: { interview_date: 'asc' },
+      take: 500,
+    });
+  }
+
   /**
    * One GROUP BY per status column. Everything on the dashboard except the daily trend and the
    * upcoming-interview list is arithmetic over these two maps, so the whole page costs two index scans.
@@ -131,8 +161,7 @@ export class AnalyticsService {
    * Funnel totals + conversion rates.
    *
    * Every number comes from two GROUP BY scans rather than eight COUNT queries. The naive version
-   * measured ~570 ms on a 150,000-row database because SQLite serialises work on a single connection,
-   * so `Promise.all` over eight counts is eight sequential scans, not eight concurrent ones.
+   * The grouped form also lets PostgreSQL use selective indexes without eight application round trips.
    *
    * `counts` is passed in by `overview()`, which already has them; a direct caller omits it.
    */

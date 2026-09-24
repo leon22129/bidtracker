@@ -6,6 +6,7 @@ import {
   BulkUpdatePatchDto,
   CreateGeneratedApplicationDto,
   CreateManualApplicationDto,
+  UpdatePipelineDto,
 } from './application.dto';
 
 describe('BulkUpdateApplicationsDto', () => {
@@ -17,6 +18,27 @@ describe('BulkUpdateApplicationsDto', () => {
 
     expect(value.patch).toBeInstanceOf(BulkUpdatePatchDto);
     await expect(validate(value)).resolves.toHaveLength(0);
+  });
+});
+
+describe('UpdatePipelineDto', () => {
+  it('accepts interview scheduling metadata and nullable clearing values', async () => {
+    await expect(validate(plainToInstance(UpdatePipelineDto, {
+      pipeline_status: 'Recruiter Interview',
+      interview_date: '2026-09-30T15:00:00.000Z',
+      interview_note: 'Video call',
+    }))).resolves.toHaveLength(0);
+    await expect(validate(plainToInstance(UpdatePipelineDto, {
+      interview_date: null,
+      interview_note: null,
+    }))).resolves.toHaveLength(0);
+  });
+
+  it('rejects an invalid interview date', async () => {
+    const errors = await validate(plainToInstance(UpdatePipelineDto, {
+      interview_date: 'not-a-date',
+    }));
+    expect(errors.some((error) => error.property === 'interview_date')).toBe(true);
   });
 });
 

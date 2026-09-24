@@ -47,6 +47,11 @@ export class AnalyticsController {
     return this.scope(user, query).then((range) => this.analytics.interviewsBySource(range));
   }
 
+  @Get('upcoming-interviews')
+  upcomingInterviews(@CurrentUser() user: AuthUser, @Query() query: AnalyticsQueryDto) {
+    return this.scope(user, query).then((range) => this.analytics.upcomingInterviews(range));
+  }
+
   @Get('pipeline')
   pipeline(@CurrentUser() user: AuthUser, @Query() query: AnalyticsQueryDto) {
     return this.scope(user, query).then((range) => this.analytics.pipelineBreakdown(range));

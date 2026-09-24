@@ -3,6 +3,7 @@ import {
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { Response } from 'express';
+import { isActiveUrlCollision } from '../utils/prisma-error.util';
 
 /**
  * Turns Prisma's error codes into sensible HTTP responses.
@@ -31,7 +32,9 @@ export class PrismaExceptionFilter implements ExceptionFilter {
       case 'P2002':
         return res.status(HttpStatus.CONFLICT).json({
           statusCode: HttpStatus.CONFLICT,
-          message: target
+          message: isActiveUrlCollision(exception)
+            ? 'An active application with that URL already exists.'
+            : target
             ? `A record with that ${humanise(target)} already exists.`
             : 'That record already exists.',
         });

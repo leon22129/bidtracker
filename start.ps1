@@ -255,20 +255,29 @@ function Start-ManagedNpmProcess {
     # The helper waits before starting npm. This gives the launcher time to put
     # it in the job first, so npm and Node inherit job membership with no race.
     $GateName = "Local\BidTracker-$PID-$([Guid]::NewGuid().ToString('N'))"
+    $ReadyName = "$GateName-Ready"
     $Gate = [Threading.EventWaitHandle]::new(
         $false,
         [Threading.EventResetMode]::ManualReset,
         $GateName
     )
+    $Ready = [Threading.EventWaitHandle]::new(
+        $false,
+        [Threading.EventResetMode]::ManualReset,
+        $ReadyName
+    )
     $Process = $null
 
     $HelperScript = @"
 `$gate = [Threading.EventWaitHandle]::OpenExisting('$GateName')
+`$ready = [Threading.EventWaitHandle]::OpenExisting('$ReadyName')
 try {
+    `$ready.Set() | Out-Null
     `$gate.WaitOne() | Out-Null
 }
 finally {
     `$gate.Dispose()
+    `$ready.Dispose()
 }
 & npm.cmd run $NpmScript
 exit `$LASTEXITCODE
@@ -289,6 +298,9 @@ exit `$LASTEXITCODE
             -PassThru
 
         [BidTrackerProcessJob]::AddProcess($Process.Handle)
+        if (!$Ready.WaitOne(10000)) {
+            throw "npm process helper did not initialize within 10 seconds"
+        }
         $Gate.Set() | Out-Null
         return $Process
     }
@@ -300,6 +312,7 @@ exit `$LASTEXITCODE
     }
     finally {
         $Gate.Dispose()
+        $Ready.Dispose()
     }
 }
 

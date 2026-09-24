@@ -11,7 +11,7 @@ import { useToast } from '@/components/ui/toast';
  *
  * This closes the loop on the default-admin requirement: the bootstrapped admin signs in with the
  * env-var password and changes it here. The bootstrap only runs when zero admins exist, so a changed
- * password is never reverted by a container restart.
+ * password is never reverted by a server restart.
  */
 export default function AccountPage() {
   const { user } = useAuth();

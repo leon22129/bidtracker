@@ -1,5 +1,5 @@
 import { ApplicationsService } from './applications.service';
-import { ApplicationIngestionLockService } from './application-ingestion-lock.service';
+import { Prisma } from '@prisma/client';
 
 describe('ApplicationsService generated-application duplicate-click protection', () => {
   const user = {
@@ -15,9 +15,9 @@ describe('ApplicationsService generated-application duplicate-click protection',
     company_name: 'Example',
   };
   const existing = {
+    same_workspace: true as const,
     id: 'application-1',
     workspace_id: dto.workspace_id,
-    workspace_name: 'Workspace',
     normalized_url: 'example.com/jobs/123',
     url: dto.url,
     job_title: dto.job_title,
@@ -31,6 +31,7 @@ describe('ApplicationsService generated-application duplicate-click protection',
     const prisma = {
       jobApplication: {
         findUnique: jest.fn(),
+        findFirst: jest.fn(),
         create: jest.fn(),
       },
     };
@@ -49,7 +50,6 @@ describe('ApplicationsService generated-application duplicate-click protection',
       numbering as any,
       duplicates as any,
       { matches: jest.fn().mockResolvedValue(false), matchMany: jest.fn() } as any,
-      new ApplicationIngestionLockService(),
     );
     return { service, prisma, numbering, duplicates };
   }
@@ -78,40 +78,38 @@ describe('ApplicationsService generated-application duplicate-click protection',
       normalized_url: existing.normalized_url,
       is_duplicate: true,
       duplicate_type: 'url',
-      existing: { ...existing, workspace_id: 'workspace-2' },
+      existing: { same_workspace: false },
     }]);
 
-    await expect(service.createGenerated(user, dto)).resolves.toMatchObject({
+    const result = await service.createGenerated(user, dto);
+    expect(result).toMatchObject({
       success: false,
       duplicate: true,
     });
+    expect(result).not.toHaveProperty('existing_application');
   });
 
-  it('serializes simultaneous requests for the same normalized URL', async () => {
+  it('treats a database race won in the same workspace as a successful retry', async () => {
     const { service, prisma, duplicates } = setup();
-    let created = false;
-    duplicates.classifyBatch.mockImplementation(async () => created
-      ? [{
-          normalized_url: existing.normalized_url,
-          is_duplicate: true,
-          duplicate_type: 'url',
-          existing,
-        }]
-      : [{ normalized_url: existing.normalized_url, is_duplicate: false }]);
-    prisma.jobApplication.create.mockImplementation(async () => {
-      await Promise.resolve();
-      created = true;
-      return existing;
+    duplicates.classifyBatch.mockResolvedValue([{
+      normalized_url: existing.normalized_url,
+      is_duplicate: false,
+    }]);
+    prisma.jobApplication.create.mockRejectedValue(new Prisma.PrismaClientKnownRequestError(
+      'Active URL collision',
+      {
+        code: 'P2002',
+        clientVersion: '5.22.0',
+        meta: { target: ['normalized_url'] },
+      },
+    ));
+    prisma.jobApplication.findFirst.mockResolvedValue(existing);
+
+    await expect(service.createGenerated(user, dto)).resolves.toMatchObject({
+      success: true,
+      already_added: true,
+      application: existing,
     });
-    prisma.jobApplication.findUnique.mockResolvedValue(existing);
-
-    const [first, second] = await Promise.all([
-      service.createGenerated(user, dto),
-      service.createGenerated(user, dto),
-    ]);
-
-    expect(first).toMatchObject({ success: true, already_added: false });
-    expect(second).toMatchObject({ success: true, already_added: true });
     expect(prisma.jobApplication.create).toHaveBeenCalledTimes(1);
   });
 

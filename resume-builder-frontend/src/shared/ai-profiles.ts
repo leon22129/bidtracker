@@ -54,12 +54,14 @@ export type GenerateResumeInput = {
   jobDescription?: string
   questions?: string[]
   resume?: unknown
+  conversationId?: string
   kind?: "resume" | "applicationAnswers" | "jobEligibility"
 }
 
 export type GenerateResumeResult = {
   tailored_resume?: string
   full_name?: string
+  conversationId?: string
   eligible?: boolean
   reason?: string
   banned?: boolean

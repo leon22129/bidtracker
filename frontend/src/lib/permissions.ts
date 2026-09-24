@@ -1,4 +1,4 @@
-import type { AccessLevel, ApplicationStatus, JobApplication, Role, User } from './types';
+import type { ApplicationStatus, JobApplication, Role, User } from './types';
 
 /**
  * Client-side mirror of `backend/src/common/policies/application.policy.ts`.
@@ -10,6 +10,8 @@ import type { AccessLevel, ApplicationStatus, JobApplication, Role, User } from 
 
 export const ADMIN_ONLY_FIELDS = new Set<keyof JobApplication>([
   'pipeline_status',
+  'interview_date',
+  'interview_note',
   'paid',
   'number',
   'workspace_id',
@@ -29,13 +31,11 @@ export function isAdmin(user: Pick<User, 'role'> | null | undefined): boolean {
 /** Can this user edit this specific field on this specific row? */
 export function canEditField(
   user: Pick<User, 'role'> | null,
-  access: AccessLevel,
   row: Pick<JobApplication, 'paid' | 'application_status'>,
   field: keyof JobApplication,
 ): boolean {
   if (!user) return false;
   if (isAdmin(user)) return true;
-  if (access !== 'edit') return false;
   if (row.paid) return false;                 // paid rows are locked
   if (row.application_status === 'Rejected') return false;
   if (row.application_status === 'Duplicated' && !DUPLICATED_EDITABLE_FIELDS.has(field)) return false;
@@ -88,12 +88,10 @@ export function roleLabel(role: Role): string {
 /** Human explanation for a disabled control — better than a silently dead input. */
 export function whyLocked(
   user: Pick<User, 'role'> | null,
-  access: AccessLevel,
   row: Pick<JobApplication, 'paid' | 'application_status'>,
   field: keyof JobApplication,
 ): string | null {
-  if (canEditField(user, access, row, field)) return null;
-  if (access === 'view') return 'You have view-only access to this workspace';
+  if (canEditField(user, row, field)) return null;
   if (row.paid) return 'This row is paid and locked — only an admin can edit it';
   if (row.application_status === 'Rejected') return 'Rejected applications are locked — only an admin can edit them';
   if (row.application_status === 'Duplicated') {

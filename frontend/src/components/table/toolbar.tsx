@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import type {
-  AccessLevel, ApplicationFilters, ApplicationStatus, JobSource, PipelineStatus, User,
+  ApplicationFilters, ApplicationStatus, JobSource, PipelineStatus, User,
   WorkspaceSummary,
 } from '@/lib/types';
 import { APPLICATION_STATUSES, JOB_SOURCES, PIPELINE_STATUSES } from '@/lib/types';
@@ -13,7 +13,6 @@ interface Props {
   workspaceId: string;
   workspaceName: string;
   ownerUsername: string;
-  access: AccessLevel;
   user: User | null;
   filters: ApplicationFilters;
   onFiltersChange: (next: ApplicationFilters) => void;
@@ -30,7 +29,7 @@ interface Props {
  */
 export function TableToolbar(props: Props) {
   const {
-    workspaceId, workspaceName, ownerUsername, access, user, filters, onFiltersChange, summary,
+    workspaceId, workspaceName, ownerUsername, user, filters, onFiltersChange, summary,
     onReload,
   } = props;
 
@@ -76,7 +75,7 @@ export function TableToolbar(props: Props) {
         <div className="mr-1 min-w-0">
           <h1 className="truncate text-sm font-semibold leading-tight">{workspaceName}</h1>
           <p className="text-2xs text-gray-500">
-            Owner {ownerUsername} · {access === 'edit' ? 'edit access' : 'view only'}
+            Owner {ownerUsername}
             {summary && (
               <>
                 {' · '}
@@ -141,16 +140,12 @@ export function TableToolbar(props: Props) {
           ↻
         </button>
 
-        {access === 'edit' && (
-          <>
-            <Link href={`/workspaces/${workspaceId}/add`} className="btn-primary btn-xs">
-              Add application
-            </Link>
-            <Link href={`/workspaces/${workspaceId}/import`} className="btn-secondary btn-xs">
-              Import Excel/CSV
-            </Link>
-          </>
-        )}
+        <Link href={`/workspaces/${workspaceId}/add`} className="btn-primary btn-xs">
+          Add application
+        </Link>
+        <Link href={`/workspaces/${workspaceId}/import`} className="btn-secondary btn-xs">
+          Import Excel/CSV
+        </Link>
       </div>
 
       {showMore && (

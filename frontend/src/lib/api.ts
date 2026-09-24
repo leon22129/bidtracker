@@ -2,16 +2,15 @@
 
 import type {
   AnalyticsOverview, ApplicationFilters, BannedUrlPattern, ImportPreview, ImportResult, JobApplication, Paginated,
-  PermissionType, PaymentReport, PaymentReportResult, Role, User, Workspace,
+  PaymentReport, PaymentReportResult, Role, UpcomingInterview, User, Workspace,
   WorkspaceSummary,
 } from './types';
 
 /**
  * Single HTTP client for the whole app.
  *
- * Base URL is '' by default, so requests go to `/api/*` on the app's own origin and Next's rewrite
- * forwards them to the backend container. That keeps production same-origin (no CORS, tighter CSP,
- * one tunnel hostname) while `NEXT_PUBLIC_API_BASE_URL` still allows a split-origin setup.
+ * Base URL is '' by default, so requests go to `/api/*` on the app's own origin and Next's route
+ * handler forwards them to the backend. `NEXT_PUBLIC_API_BASE_URL` allows a split-origin setup.
  */
 const BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? '';
 const TOKEN_KEY = 'bidtracker_token';
@@ -133,7 +132,7 @@ export const api = {
   updateWorkspace: (
     id: string,
     data: Partial<{
-      name: string; owner_user_id: string; is_archived: boolean; resume_profile_id: string;
+      name: string; owner_user_id: string; is_archived: boolean;
       profile_name: string; career_path: string; full_name: string; title: string; email: string;
       phone: string; location: string; linkedin: string;
       update_headline: boolean; use_generated_role_titles: boolean;
@@ -149,16 +148,6 @@ export const api = {
     request<{ success: boolean; deleted_applications: number }>(`/workspaces/${id}`, {
       method: 'DELETE',
     }),
-  grantPermission: (workspaceId: string, userId: string, permission: PermissionType) =>
-    request<unknown>(`/workspaces/${workspaceId}/permissions`, {
-      method: 'POST',
-      body: JSON.stringify({ user_id: userId, permission_type: permission }),
-    }),
-  revokePermission: (workspaceId: string, userId: string) =>
-    request<{ success: boolean }>(`/workspaces/${workspaceId}/permissions/${userId}`, {
-      method: 'DELETE',
-    }),
-
   // ---- applications ----
   listApplications: (
     workspaceId: string,
@@ -201,7 +190,11 @@ export const api = {
   }),
   updatePipeline: (
     id: string,
-    patch: { pipeline_status?: string },
+    patch: {
+      pipeline_status?: string;
+      interview_date?: string | null;
+      interview_note?: string | null;
+    },
   ) =>
     request<JobApplication>(`/applications/${id}/pipeline`, {
       method: 'PATCH',
@@ -251,4 +244,6 @@ export const api = {
   // ---- analytics (admin) ----
   analyticsOverview: (params: { from?: string; to?: string; workspace_id?: string } = {}) =>
     request<AnalyticsOverview>(`/analytics/overview${qs(params)}`),
+  upcomingInterviews: (params: { from?: string; to?: string; workspace_id?: string } = {}) =>
+    request<UpcomingInterview[]>(`/analytics/upcoming-interviews${qs(params)}`),
 };

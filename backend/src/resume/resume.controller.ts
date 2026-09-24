@@ -1,6 +1,10 @@
 import { Body, Controller, Post, UseGuards } from '@nestjs/common';
 import { ApplicationGenerationService } from './resume.service';
-import { GenerateApplicationDto, GenerateProfilePromptDto } from './dto/generate.dto';
+import {
+  AnswerApplicationQuestionsDto,
+  GenerateApplicationDto,
+  GenerateProfilePromptDto,
+} from './dto/generate.dto';
 import { AuthUser, CurrentUser } from '../common/decorators/current-user.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
 
@@ -17,5 +21,10 @@ export class ResumeController {
   @Post('profile-generate')
   generateProfilePrompt(@CurrentUser() user: AuthUser, @Body() dto: GenerateProfilePromptDto) {
     return this.generation.generateProfilePrompt(user, dto);
+  }
+
+  @Post('answers')
+  answerQuestions(@CurrentUser() user: AuthUser, @Body() dto: AnswerApplicationQuestionsDto) {
+    return this.generation.answerQuestions(user, dto);
   }
 }

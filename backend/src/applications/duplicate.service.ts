@@ -3,14 +3,9 @@ import { PrismaService } from '../prisma/prisma.service';
 import { normalizeUrl } from '../common/utils/url.util';
 import { createJobFingerprint } from '../common/utils/job-fingerprint.util';
 
-export type DuplicateScope = 'global' | 'workspace';
-
 /** Exact URL detection plus a recent workspace-local company/title signal for cross-site jobs. */
 @Injectable()
 export class DuplicateService {
-  readonly scope: DuplicateScope =
-    process.env.DUPLICATE_SCOPE === 'workspace' ? 'workspace' : 'global';
-
   constructor(private readonly prisma: PrismaService) {}
 
   async classifyJobIdentities(
@@ -136,17 +131,15 @@ export class DuplicateService {
     workspaceId: string,
     urls: string[],
     excludeId?: string,
-  ): Promise<Map<string, ExistingRef>> {
+  ): Promise<Map<string, DuplicateReference>> {
     const normalized = urls.map(normalizeUrl);
-    const scopeFilter = this.scope === 'workspace' ? { workspace_id: workspaceId } : {};
-    const byNormalized = new Map<string, ExistingRef>();
+    const byNormalized = new Map<string, DuplicateReference>();
 
-    // SQLite limits the number of bound parameters, so imports are queried in bounded chunks.
+    // Bounded chunks keep query payloads predictable for very large imports.
     const CHUNK = 400;
     for (let i = 0; i < normalized.length; i += CHUNK) {
       const rows = await this.prisma.jobApplication.findMany({
         where: {
-          ...scopeFilter,
           ...(excludeId ? { id: { not: excludeId } } : {}),
           normalized_url: { in: normalized.slice(i, i + CHUNK) },
         },
@@ -159,24 +152,21 @@ export class DuplicateService {
           workspace_id: true,
           date: true,
           number: true,
-          workspace: { select: { name: true } },
         },
         orderBy: { created_at: 'asc' },
       });
 
       for (const row of rows) {
-        if (byNormalized.has(row.normalized_url)) continue;
-        byNormalized.set(row.normalized_url, {
-          id: row.id,
-          url: row.url,
-          job_title: row.job_title,
-          company_name: row.company_name,
-          normalized_url: row.normalized_url,
-          workspace_id: row.workspace_id,
-          workspace_name: row.workspace.name,
-          date: row.date,
-          number: row.number,
-        });
+        const current = byNormalized.get(row.normalized_url);
+        // Prefer a reference from the caller's workspace when both local and cross-workspace rows
+        // exist. This preserves safe idempotent retries without exposing another workspace.
+        if (current?.same_workspace || (current && row.workspace_id !== workspaceId)) continue;
+        byNormalized.set(
+          row.normalized_url,
+          row.workspace_id === workspaceId
+            ? toExistingRef(row)
+            : { same_workspace: false },
+        );
       }
     }
 
@@ -227,16 +217,23 @@ export class DuplicateService {
 }
 
 export interface ExistingRef {
+  same_workspace: true;
   id: string;
   url: string;
   job_title: string | null;
   company_name: string | null;
   normalized_url: string;
   workspace_id: string;
-  workspace_name: string;
   date: Date;
   number: number;
 }
+
+/** Deliberately contains no tenant or application metadata. */
+export interface CrossWorkspaceDuplicateRef {
+  same_workspace: false;
+}
+
+export type DuplicateReference = ExistingRef | CrossWorkspaceDuplicateRef;
 
 export interface DuplicateVerdict {
   url: string;
@@ -244,7 +241,7 @@ export interface DuplicateVerdict {
   is_duplicate: boolean;
   reason: 'existing' | 'within_batch' | null;
   duplicate_type: 'url' | 'job_fingerprint' | null;
-  existing?: ExistingRef;
+  existing?: DuplicateReference;
 }
 
 export interface JobIdentityVerdict {
@@ -264,7 +261,6 @@ function existingRefSelect() {
     workspace_id: true,
     date: true,
     number: true,
-    workspace: { select: { name: true } },
   } as const;
 }
 
@@ -277,16 +273,15 @@ function toExistingRef(row: {
   workspace_id: string;
   date: Date;
   number: number;
-  workspace: { name: string };
 }): ExistingRef {
   return {
+    same_workspace: true,
     id: row.id,
     url: row.url,
     job_title: row.job_title,
     company_name: row.company_name,
     normalized_url: row.normalized_url,
     workspace_id: row.workspace_id,
-    workspace_name: row.workspace.name,
     date: row.date,
     number: row.number,
   };

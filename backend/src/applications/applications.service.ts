@@ -4,7 +4,7 @@ import {
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { WorkspaceAccessService } from '../workspaces/workspace-access.service';
-import { NumberingService } from './numbering.service';
+import { isNumberCollision, NumberingService } from './numbering.service';
 import { DuplicateService } from './duplicate.service';
 import { AuthUser } from '../common/decorators/current-user.decorator';
 import {
@@ -22,8 +22,8 @@ import {
   normalizeUrl,
 } from '../common/utils/url.util';
 import { createJobFingerprint } from '../common/utils/job-fingerprint.util';
+import { isActiveUrlCollision } from '../common/utils/prisma-error.util';
 import { BannedUrlService } from './banned-url.service';
-import { ApplicationIngestionLockService } from './application-ingestion-lock.service';
 import {
   BulkIdsDto, BulkUpdateApplicationsDto, CreateGeneratedApplicationDto, CreateManualApplicationDto,
   QueryApplicationsDto,
@@ -33,7 +33,7 @@ import {
 const ROW_SELECT = {
   id: true, workspace_id: true, date: true, number: true, job_title: true, company_name: true,
   url: true, normalized_url: true, job_source: true, application_status: true, pipeline_status: true,
-  note: true, paid: true,
+  interview_date: true, interview_note: true, note: true, paid: true,
   created_by_user_id: true, created_at: true, updated_at: true,
 } as const;
 
@@ -47,7 +47,6 @@ export class ApplicationsService {
     private readonly numbering: NumberingService,
     private readonly duplicates: DuplicateService,
     private readonly bannedUrls: BannedUrlService,
-    private readonly ingestionLock: ApplicationIngestionLockService,
   ) {}
 
   // -------------------------------------------------------------------------
@@ -261,6 +260,12 @@ export class ApplicationsService {
       where: { id },
       data: {
         ...(dto.pipeline_status !== undefined ? { pipeline_status: dto.pipeline_status } : {}),
+        ...(dto.interview_date !== undefined
+          ? { interview_date: dto.interview_date === null ? null : new Date(dto.interview_date) }
+          : {}),
+        ...(dto.interview_note !== undefined
+          ? { interview_note: emptyToNull(dto.interview_note) }
+          : {}),
       },
       select: ROW_SELECT,
     });
@@ -415,22 +420,21 @@ export class ApplicationsService {
     }
     if (!looksLikeUrl(url)) throw new BadRequestException(`"${url}" is not a valid URL`);
 
-    return this.ingestionLock.runExclusive(async () => {
-      const [[urlVerdict], banned] = await Promise.all([
-        this.duplicates.classifyBatch(dto.workspace_id, [url]),
-        this.bannedUrls.matches(url),
-      ]);
-      const similar = urlVerdict.is_duplicate
-        ? null
-        : await this.duplicates.findRecentJobMatch(dto.workspace_id, companyName, jobTitle);
-      const applicationStatus: ApplicationStatus = banned
-        ? 'Rejected'
-        : urlVerdict.is_duplicate || similar
-          ? 'Duplicated'
-          : dto.application_status;
-      const date = toDayStart(new Date());
-
-      return this.numbering.withNextNumber(dto.workspace_id, date, (number) =>
+    const [[urlVerdict], banned] = await Promise.all([
+      this.duplicates.classifyBatch(dto.workspace_id, [url]),
+      this.bannedUrls.matches(url),
+    ]);
+    const similar = urlVerdict.is_duplicate
+      ? null
+      : await this.duplicates.findRecentJobMatch(dto.workspace_id, companyName, jobTitle);
+    const applicationStatus: ApplicationStatus = banned
+      ? 'Rejected'
+      : urlVerdict.is_duplicate || similar
+        ? 'Duplicated'
+        : dto.application_status;
+    const date = toDayStart(new Date());
+    const create = (status: ApplicationStatus) =>
+      this.numbering.withNextNumber(dto.workspace_id, date, (number) =>
         this.prisma.jobApplication.create({
           data: {
             workspace_id: dto.workspace_id,
@@ -439,7 +443,7 @@ export class ApplicationsService {
             url,
             normalized_url: urlVerdict.normalized_url ?? normalizeUrl(url),
             job_source: detectJobSource(url),
-            application_status: applicationStatus,
+            application_status: status,
             pipeline_status: 'Not Started',
             company_name: companyName,
             job_title: jobTitle,
@@ -450,7 +454,17 @@ export class ApplicationsService {
           select: ROW_SELECT,
         }),
       );
-    });
+
+    try {
+      return await create(applicationStatus);
+    } catch (error) {
+      if (isActiveUrlCollision(error) && ['Pending', 'Applied'].includes(applicationStatus)) {
+        // Another backend committed this URL after classification. Preserve the attempted row as an
+        // explicit duplicate; the database remains the final authority under cross-process races.
+        return create('Duplicated');
+      }
+      throw error;
+    }
   }
 
   /** Saves the application candidate returned by resume generation after the user confirms it. */
@@ -465,55 +479,57 @@ export class ApplicationsService {
     }
     const normalizedUrl = normalizeUrl(url);
     const jobFingerprint = createJobFingerprint(companyName, jobTitle);
-    return this.ingestionLock.runExclusive(async () => {
-      const [verdict] = await this.duplicates.classifyBatch(
-        dto.workspace_id,
-        [url],
-      );
+    const [verdict] = await this.duplicates.classifyBatch(
+      dto.workspace_id,
+      [url],
+    );
 
-      if (verdict.is_duplicate) {
-        // A retry of this endpoint is successful when this exact URL is already in the requested
-        // workspace. This covers a lost HTTP response as well as a second click that waited on the
-        // in-process URL lock. Cross-workspace and company-only duplicates remain normal conflicts.
-        if (
-          verdict.duplicate_type === 'url' &&
-          verdict.existing?.workspace_id === dto.workspace_id &&
-          verdict.existing.normalized_url === normalizedUrl
-        ) {
-          const existingApplication = await this.prisma.jobApplication.findUnique({
-            where: { id: verdict.existing.id },
-            select: ROW_SELECT,
-          });
-          if (existingApplication) {
-            return { success: true, already_added: true, application: existingApplication };
-          }
+    if (verdict.is_duplicate) {
+      // A retry is successful only when this exact URL already belongs to the requested workspace.
+      // Cross-workspace and company-only duplicates remain conflicts with no tenant metadata.
+      if (
+        verdict.duplicate_type === 'url' &&
+        verdict.existing?.same_workspace &&
+        verdict.existing.workspace_id === dto.workspace_id &&
+        verdict.existing.normalized_url === normalizedUrl
+      ) {
+        const existingApplication = await this.prisma.jobApplication.findUnique({
+          where: { id: verdict.existing.id },
+          select: ROW_SELECT,
+        });
+        if (existingApplication) {
+          return { success: true, already_added: true, application: existingApplication };
         }
+      }
+      return {
+        success: false,
+        duplicate: true,
+        duplicate_type: verdict.duplicate_type,
+        ...(verdict.existing?.same_workspace
+          ? { existing_application: verdict.existing }
+          : {}),
+      };
+    }
+
+    if (!dto.allow_similar_job) {
+      const similar = await this.duplicates.findRecentJobMatch(
+        dto.workspace_id,
+        companyName,
+        jobTitle,
+      );
+      if (similar) {
         return {
           success: false,
           duplicate: true,
-          duplicate_type: verdict.duplicate_type,
-          existing_application: verdict.existing,
+          duplicate_type: 'job_fingerprint' as const,
+          existing_application: similar,
+          can_override: true,
         };
       }
+    }
 
-      if (!dto.allow_similar_job) {
-        const similar = await this.duplicates.findRecentJobMatch(
-          dto.workspace_id,
-          companyName,
-          jobTitle,
-        );
-        if (similar) {
-          return {
-            success: false,
-            duplicate: true,
-            duplicate_type: 'job_fingerprint' as const,
-            existing_application: similar,
-            can_override: true,
-          };
-        }
-      }
-
-      const date = toDayStart(new Date());
+    const date = toDayStart(new Date());
+    try {
       const application = await this.numbering.withNextNumber(
         dto.workspace_id,
         date,
@@ -537,7 +553,22 @@ export class ApplicationsService {
       );
 
       return { success: true, already_added: false, application };
-    });
+    } catch (error) {
+      if (!isActiveUrlCollision(error)) throw error;
+
+      const winner = await this.prisma.jobApplication.findFirst({
+        where: {
+          normalized_url: normalizedUrl,
+          application_status: { in: ['Pending', 'Applied'] },
+        },
+        select: ROW_SELECT,
+        orderBy: { created_at: 'asc' },
+      });
+      if (winner?.workspace_id === dto.workspace_id) {
+        return { success: true, already_added: true, application: winner };
+      }
+      return { success: false, duplicate: true, duplicate_type: 'url' as const };
+    }
   }
 
   /** Canonical write path for a banned URL discovered during application generation. */
@@ -545,39 +576,37 @@ export class ApplicationsService {
     await this.access.assertCanEdit(user, workspaceId);
     const url = rawUrl.trim();
     const normalizedUrl = normalizeUrl(url);
-    return this.ingestionLock.runExclusive(async () => {
-      const [verdict] = await this.duplicates.classifyBatch(workspaceId, [url]);
-      if (verdict.is_duplicate && verdict.existing) {
-        return this.prisma.jobApplication.findUnique({
-          where: { id: verdict.existing.id },
-          select: ROW_SELECT,
-        });
-      }
-      const date = toDayStart(new Date());
-      return this.numbering.withNextNumber(workspaceId, date, (number) =>
-        this.prisma.jobApplication.create({
-          data: {
-            workspace_id: workspaceId,
-            date,
-            number,
-            url,
-            normalized_url: normalizedUrl,
-            job_source: detectJobSource(url),
-            application_status: 'Rejected',
-            note: BANNED_URL_NOTE,
-            created_by_user_id: user.id,
-          },
-          select: ROW_SELECT,
-        }),
-      );
-    });
+    const [verdict] = await this.duplicates.classifyBatch(workspaceId, [url]);
+    if (verdict.is_duplicate && verdict.existing?.same_workspace) {
+      return this.prisma.jobApplication.findUnique({
+        where: { id: verdict.existing.id },
+        select: ROW_SELECT,
+      });
+    }
+    const date = toDayStart(new Date());
+    return this.numbering.withNextNumber(workspaceId, date, (number) =>
+      this.prisma.jobApplication.create({
+        data: {
+          workspace_id: workspaceId,
+          date,
+          number,
+          url,
+          normalized_url: normalizedUrl,
+          job_source: detectJobSource(url),
+          application_status: 'Rejected',
+          note: BANNED_URL_NOTE,
+          created_by_user_id: user.id,
+        },
+        select: ROW_SELECT,
+      }),
+    );
   }
 
   /**
    * Chunked `createMany` inside a single transaction, with a retry that renumbers on collision.
    *
-   * `createMany` is ~50× faster than N inserts on SQLite. The chunk size keeps us well under SQLite's
-   * bound-parameter ceiling.
+   * `createMany` is much faster than N inserts. Chunking bounds each query payload and prevents one
+   * enormous SQL statement from monopolising a connection.
    */
   async insertChunked(
     rows: Prisma.JobApplicationCreateManyInput[],
@@ -599,9 +628,38 @@ export class ApplicationsService {
         );
         return inserted;
       } catch (err) {
-        const collision =
-          err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002';
-        if (collision && attempt < attempts) {
+        if (isActiveUrlCollision(err) && attempt < attempts) {
+          const activeUrls = [...new Set(rows
+            .filter((row) => ['Pending', 'Applied'].includes(String(row.application_status)))
+            .map((row) => String(row.normalized_url)))];
+          const conflicts = activeUrls.length
+            ? await this.prisma.jobApplication.findMany({
+                where: {
+                  normalized_url: { in: activeUrls },
+                  application_status: { in: ['Pending', 'Applied'] },
+                },
+                select: { normalized_url: true },
+              })
+            : [];
+          const conflictUrls = new Set(conflicts.map((row) => row.normalized_url));
+          let reclassified = 0;
+          for (const row of rows) {
+            if (
+              ['Pending', 'Applied'].includes(String(row.application_status)) &&
+              conflictUrls.has(String(row.normalized_url))
+            ) {
+              row.application_status = 'Duplicated';
+              reclassified++;
+            }
+          }
+          if (reclassified > 0) {
+            this.logger.warn(
+              `${reclassified} import row(s) became duplicates during concurrent ingestion; retrying`,
+            );
+            continue;
+          }
+        }
+        if (isNumberCollision(err) && attempt < attempts) {
           // A concurrent insert took our numbers. Re-read the high-water mark and shift the block.
           this.logger.warn(`Number collision during batch insert; renumbering (attempt ${attempt})`);
           const dates = [...new Set(rows.map((r) => (r.date as Date).getTime()))];
@@ -633,7 +691,7 @@ export class ApplicationsService {
     try {
       return await this.prisma.jobApplication.update({ where: { id }, data, select: ROW_SELECT });
     } catch (err) {
-      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002' && data.date) {
+      if (isNumberCollision(err) && data.date) {
         data.number = await this.numbering.reserveBlock(
           this.prisma, workspaceId, data.date as Date, 1,
         );
@@ -662,13 +720,11 @@ export class ApplicationsService {
 
     if (query.search?.trim()) {
       const q = query.search.trim();
-      // SQLite `LIKE` is case-insensitive for ASCII by default, which is what we want here and is
-      // why `mode: 'insensitive'` (unsupported on SQLite) is not used.
       where.OR = [
-        { job_title: { contains: q } },
-        { company_name: { contains: q } },
-        { url: { contains: q } },
-        { note: { contains: q } },
+        { job_title: { contains: q, mode: 'insensitive' } },
+        { company_name: { contains: q, mode: 'insensitive' } },
+        { url: { contains: q, mode: 'insensitive' } },
+        { note: { contains: q, mode: 'insensitive' } },
       ];
     }
     return where;

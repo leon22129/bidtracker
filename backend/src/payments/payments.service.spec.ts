@@ -1,6 +1,55 @@
 import { PaymentsService } from './payments.service';
 
 describe('PaymentsService', () => {
+  it('atomically settles the previous week for every payable application creator', async () => {
+    const report = {
+      id: 'report-auto', bidder_id: 'bidder-1', applied_count: 3,
+      start_date: new Date('2026-09-14'), end_date: new Date('2026-09-20'),
+      processed_by: null, processed_at: new Date('2026-09-21'),
+    };
+    const tx = {
+      $queryRaw: jest.fn().mockResolvedValue([{ acquired: true }]),
+      user: { findMany: jest.fn().mockResolvedValue([{ id: 'bidder-1' }]) },
+      jobApplication: { updateMany: jest.fn().mockResolvedValue({ count: 3 }) },
+      paymentReport: { create: jest.fn().mockResolvedValue(report) },
+    };
+    const prisma = { $transaction: jest.fn((callback) => callback(tx)) };
+    const service = new PaymentsService(prisma as never, {} as never);
+
+    await expect(service.processPreviousWeekAutomatically(
+      new Date('2026-09-21T00:05:00.000Z'),
+    )).resolves.toMatchObject({
+      skipped: false,
+      total_applied: 3,
+      reports: [report],
+    });
+
+    expect(tx.jobApplication.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ created_by_user_id: 'bidder-1', paid: false }),
+      data: { paid: true },
+    }));
+    expect(tx.paymentReport.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ processed_by: null, applied_count: 3 }),
+    }));
+  });
+
+  it('skips automatic settlement when another backend owns the advisory lock', async () => {
+    const tx = {
+      $queryRaw: jest.fn().mockResolvedValue([{ acquired: false }]),
+      user: { findMany: jest.fn() },
+      jobApplication: { updateMany: jest.fn() },
+      paymentReport: { create: jest.fn() },
+    };
+    const prisma = { $transaction: jest.fn((callback) => callback(tx)) };
+    const service = new PaymentsService(prisma as never, {} as never);
+
+    await expect(service.processPreviousWeekAutomatically()).resolves.toMatchObject({
+      skipped: true,
+      reason: 'another_backend_is_processing',
+    });
+    expect(tx.user.findMany).not.toHaveBeenCalled();
+  });
+
   it('returns the existing exact-period report when payment was already processed', async () => {
     const existing = {
       id: 'report-1', bidder_id: 'bidder-1', start_date: new Date('2026-09-01'),

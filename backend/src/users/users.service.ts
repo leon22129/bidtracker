@@ -5,6 +5,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { hashPassword } from '../auth/auth.service';
 import { CreateUserDto, ResetPasswordDto, UpdateUserDto } from './dto/user.dto';
 import { AuthUser } from '../common/decorators/current-user.decorator';
+import { ConversationCleanupService } from '../resume/conversation-cleanup.service';
 
 /** Fields returned to clients. `password_hash` is absent by construction, not by filtering. */
 const PUBLIC_SELECT = {
@@ -19,21 +20,23 @@ const PUBLIC_SELECT = {
 
 @Injectable()
 export class UsersService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly conversationCleanup: ConversationCleanupService,
+  ) {}
 
   async findAll(actingUser: AuthUser) {
     const users = await this.prisma.user.findMany({
       where: this.visibilityWhere(actingUser),
       select: {
         ...PUBLIC_SELECT,
-        _count: { select: { ownedWorkspaces: true, permissions: true } },
+        _count: { select: { ownedWorkspaces: true } },
       },
       orderBy: [{ role: 'asc' }, { username: 'asc' }],
     });
     return users.map(({ _count, ...u }) => ({
       ...u,
       owned_workspace_count: _count.ownedWorkspaces,
-      granted_workspace_count: _count.permissions,
     }));
   }
 
@@ -43,9 +46,6 @@ export class UsersService {
       select: {
         ...PUBLIC_SELECT,
         ownedWorkspaces: { select: { id: true, name: true } },
-        permissions: {
-          select: { permission_type: true, workspace: { select: { id: true, name: true } } },
-        },
       },
     });
     if (!user) throw new NotFoundException('User not found');
@@ -176,6 +176,7 @@ export class UsersService {
       if (otherAdmins === 0) throw new BadRequestException('At least one active admin must remain');
     }
 
+    await this.conversationCleanup.deleteForUserOrThrow(id);
     await this.prisma.user.delete({ where: { id } });
     return { success: true };
   }

@@ -26,6 +26,8 @@ export const ADMIN_ONLY_FIELDS = [
   'number',
   'workspace_id',
   'pipeline_status',
+  'interview_date',
+  'interview_note',
   'paid',
 ] as const;
 

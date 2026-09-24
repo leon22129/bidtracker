@@ -2,14 +2,18 @@
   "name": "bidtracker-backend",
   "version": "1.0.0",
   "private": true,
+  "engines": {
+    "node": ">=20.19.4"
+  },
   "description": "NestJS API for the job application / bidder tracking system",
   "scripts": {
-    "build": "nest build",
+    "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
     "start": "node dist/main.js",
-    "start:dev": "nest start --watch --path tsconfig.build.json",
+    "start:dev": "node scripts/dev.mjs",
     "start:prod": "node dist/main.js",
     "prisma:generate": "prisma generate",
+    "prisma:generate:sqlite": "prisma generate --schema prisma/sqlite/schema.prisma",
     "prisma:migrate": "prisma migrate dev",
     "prisma:deploy": "prisma migrate deploy",
     "prisma:studio": "prisma studio",
@@ -18,7 +22,8 @@
     "smoke": "node smoke.mjs",
     "perf": "node perf.mjs",
     "template": "node make-import-template.cjs",
-    "backfill:fingerprints": "ts-node scripts/backfill-job-fingerprints.ts"
+    "backfill:fingerprints": "ts-node scripts/backfill-job-fingerprints.ts",
+    "migrate:sqlite-to-postgres": "prisma generate && prisma generate --schema prisma/sqlite/schema.prisma && ts-node scripts/migrate-sqlite-to-postgres.ts"
   },
   "dependencies": {
     "@nestjs/common": "^12.0.4",
@@ -36,12 +41,12 @@
     "multer": "^2.4.0",
     "passport": "^0.7.0",
     "passport-jwt": "^4.0.1",
+    "prisma": "^5.22.0",
     "reflect-metadata": "^0.2.2",
-    "rxjs": "^7.8.1"
+    "rxjs": "^7.8.1",
+    "unzipper": "^0.12.5"
   },
   "devDependencies": {
-    "@nestjs/cli": "^12.0.5",
-    "@nestjs/schematics": "^12.0.4",
     "@nestjs/testing": "^12.0.4",
     "@types/bcryptjs": "^2.4.6",
     "@types/express": "^4.17.21",
@@ -50,7 +55,6 @@
     "@types/node": "^22.10.2",
     "@types/passport-jwt": "^4.0.1",
     "jest": "^29.7.0",
-    "prisma": "^5.22.0",
     "ts-jest": "^29.2.5",
     "ts-node": "^10.9.2",
     "typescript": "^6.0.3"
@@ -72,7 +76,8 @@
         {
           "useESM": true,
           "tsconfig": {
-            "module": "ES2022"
+            "module": "ES2022",
+            "moduleResolution": "node"
           }
         }
       ]

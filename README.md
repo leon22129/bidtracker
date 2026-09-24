@@ -7,7 +7,7 @@ Three roles (**admin**, **bidder manager**, **junior bidder**) work in per-bidde
 the company and job title, detects duplicates, and numbers rows per date. Admins manage the
 recruiting pipeline, settle weekly bid payments, and read conversion analytics.
 
-**Stack:** Next.js 14 + TypeScript + Tailwind · NestJS 10 + TypeScript · SQLite + Prisma · Docker.
+**Stack:** Next.js 14 + TypeScript + Tailwind · NestJS + TypeScript · PostgreSQL + Prisma.
 No managed services, no paid dependencies, runs on the smallest VPS you can rent.
 
 ---
@@ -31,14 +31,16 @@ No managed services, no paid dependencies, runs on the smallest VPS you can rent
 
 ## Quick start
 
-### With Docker (how it's meant to run)
+### Windows quick start
 
-```bash
-cp .env.example .env
-# Edit .env: set JWT_SECRET (openssl rand -base64 48) and DEFAULT_ADMIN_PASSWORD.
-
-docker compose up -d --build
-docker compose logs -f backend      # watch for "Default admin created"
+```powershell
+Copy-Item .env.example backend/.env
+# Start PostgreSQL 16 as a local service, then edit backend/.env.
+cd backend
+npm install
+npx prisma migrate deploy
+cd ..
+.\start.ps1 --no-cloudflare
 ```
 
 Open [http://localhost:3000](http://localhost:3000) and sign in with `DEFAULT_ADMIN_EMAIL` /
@@ -55,6 +57,7 @@ For development, run both the backend and frontend directly from source with aut
 no build step:
 
 ```powershell
+# Start PostgreSQL locally and put the DATABASE_URL shown in .env.example into backend/.env first.
 .\start.ps1 --dev
 ```
 
@@ -74,7 +77,7 @@ another operating system), use two terminals:
 # --- terminal 1: backend on :3001
 cd backend
 npm install
-printf 'DATABASE_URL="file:./dev.db"\nJWT_SECRET=dev-secret-not-for-production\nDEFAULT_ADMIN_EMAIL=admin@example.com\nDEFAULT_ADMIN_USERNAME=admin\nDEFAULT_ADMIN_PASSWORD=devpassword\n' > .env
+printf 'DATABASE_URL="postgresql://bidtracker:YOUR_PASSWORD@127.0.0.1:5432/bidtracker?schema=public"\nJWT_SECRET=dev-secret-not-for-production\nDEFAULT_ADMIN_EMAIL=admin@example.com\nDEFAULT_ADMIN_USERNAME=admin\nDEFAULT_ADMIN_PASSWORD=devpassword\n' > .env
 npx prisma migrate deploy
 npx prisma generate
 npm run seed                          # users + workspaces + 2,000 applications
@@ -87,7 +90,7 @@ npm run dev
 ```
 
 Seed accounts (bidders share the password `Password123!`): `admin`, `john` (bidder),
-`mike` (bidder\_manager, granted **edit** on *John Applications*), `sarah` (bidder).
+`mike` (bidder\_manager, owner of *Mike Applications*), `sarah` (bidder).
 
 To exercise the stated performance target:
 
@@ -99,7 +102,7 @@ cd backend && npm run seed -- --reset --applications 50000
 
 ```bash
 cd backend  && npm run typecheck              # tsc --noEmit over src + prisma
-cd backend  && npm run build && npm test      # 43 unit tests over the policy + URL + date logic
+cd backend  && npm run build && npm test      # backend unit and service tests
 cd frontend && npm run typecheck && npm run build
 ```
 
@@ -112,20 +115,21 @@ cd backend && npm run smoke                   # 100+ assertions end-to-end; exit
 cd backend && npm run perf                    # latency benchmark, median of 5 after a warm-up
 ```
 
-`smoke` provisions the users, workspaces, permission grant and fixture rows it needs through the admin
+`smoke` provisions the users, owned workspaces, and fixture rows it needs through the admin
 API, so it runs against a stack that contains nothing but the bootstrapped admin account, and it is
 idempotent across repeated runs. Point it at any deployment:
 
 ```bash
 SMOKE_BASE=http://127.0.0.1:3000/api \
   SMOKE_ADMIN_EMAIL=admin@example.com \
-  SMOKE_ADMIN_PASSWORD='...' node smoke.mjs   # a docker compose stack, through the frontend proxy
+  SMOKE_ADMIN_PASSWORD='...' node smoke.mjs   # through the frontend proxy
 ```
 
 ### Measured performance
 
 Median of 5 requests after one warm-up, on a database seeded to the stated target — **50,082 rows in
-the workspace being queried, 150,148 rows in total** — running SQLite on a laptop SSD:
+the workspace being queried, 150,148 rows in total**. These historical numbers were measured on the
+previous SQLite deployment; rerun `npm run perf` to establish the PostgreSQL baseline for your host:
 
 | Operation                          | Latency |
 | ---------------------------------- | ------- |
@@ -158,7 +162,7 @@ The reasoning behind the code, written before it:
 | Document                                          | Contents                                                                                                                 |
 | ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
 | [docs/01-ARCHITECTURE.md](docs/01-ARCHITECTURE.md) | Requirements analysis, system diagram, request lifecycle, technical decisions and tradeoffs, explicitly rejected options |
-| [docs/02-DATABASE.md](docs/02-DATABASE.md)         | ER diagram, every table and column, index strategy, database-enforced invariants, SQLite pragmas                         |
+| [docs/02-DATABASE.md](docs/02-DATABASE.md)         | ER diagram, every table and column, index strategy, and database-enforced invariants                                    |
 | [docs/03-PERMISSIONS.md](docs/03-PERMISSIONS.md)   | The three-layer authorization model, role capability matrix, status state machine, enforcement-point audit               |
 | [docs/04-ROADMAP.md](docs/04-ROADMAP.md)           | Build phases 0–11, why this order, per-phase verification                                                               |
 
@@ -180,13 +184,13 @@ Legend: 🔓 public · 👤 any authenticated user · 🛡 **admin only** (enfor
 | POST   | `/auth/login`           | 🔓     | `{ email, password }` → `{ access_token, user }`      |
 | GET    | `/auth/me`              | 👤     | Current user, re-read from the database                    |
 | POST   | `/auth/change-password` | 👤     | `{ current_password, new_password }` — own account only |
-| GET    | `/health`               | 🔓     | Liveness + database probe for Docker and the tunnel        |
+| GET    | `/health`               | 🔓     | Readiness probe: HTTP 200 when PostgreSQL is up, 503 when down |
 
 ### Users — `/api/users` 🛡
 
 | Method | Path                          | Description                                                                                 |
 | ------ | ----------------------------- | ------------------------------------------------------------------------------------------- |
-| GET    | `/users`                    | All users with owned/granted workspace counts                                               |
+| GET    | `/users`                    | Manageable users with owned workspace counts                                                 |
 | GET    | `/users/:id`                | One user                                                                                    |
 | POST   | `/users`                    | `{ username, email, password, role }`                                                     |
 | PATCH  | `/users/:id`                | `{ username?, email?, role?, is_active? }` — refuses to demote/deactivate the last admin |
@@ -200,13 +204,11 @@ whitelist projection, not by deleting fields from a Prisma row.
 
 | Method | Path                                    | Access | Description                                                                        |
 | ------ | --------------------------------------- | ------ | ---------------------------------------------------------------------------------- |
-| GET    | `/workspaces`                         | 👤     | Only workspaces you own or were granted (admins see all).`?includeArchived=true` |
-| GET    | `/workspaces/:id`                     | 🔑     | One workspace incl.`my_access`                                                   |
+| GET    | `/workspaces`                         | 👤     | Owned workspaces; admins see ones they created, super-admin sees all. `?includeArchived=true` |
+| GET    | `/workspaces/:id`                     | 🔑     | One accessible workspace                                                         |
 | POST   | `/workspaces`                         | 🛡     | `{ name, owner_user_id }` — owner controls the current profile assignment       |
 | PATCH  | `/workspaces/:id`                     | 🛡     | `{ name?, owner_user_id?, is_archived? }`                                        |
 | DELETE | `/workspaces/:id`                     | 🛡     | Cascades to its applications; returns the deleted count                            |
-| POST   | `/workspaces/:id/permissions`         | 🛡     | `{ user_id, permission_type: 'view' \| 'edit' }`                                  |
-| DELETE | `/workspaces/:id/permissions/:userId` | 🛡     | Revoke                                                                             |
 
 Requesting a workspace you can't see returns **404, not 403** — a 403 would confirm the id exists.
 
@@ -275,7 +277,7 @@ All accept `?from&to&workspace_id`.
 | GET    | `/analytics/interviews-by-workspace` |                                                                |
 | GET    | `/analytics/interviews-by-source`    | Includes per-source interview rate                             |
 | GET    | `/analytics/pipeline`                | Count per pipeline stage                                       |
-| GET    | `/analytics/upcoming-interviews`     | Future`interview_date`s, ascending                           |
+| GET    | `/analytics/upcoming-interviews`     | Future `interview_date`s, ascending                           |
 
 Rates return `null`, never `NaN` or `0`, when the denominator is zero.
 
@@ -286,11 +288,12 @@ Rates return `null`, never `NaN` or `0`, when the denominator is zero.
 ```
 backend/
 ├── prisma/
-│   ├── schema.prisma                 # 5 models; String "enums" (SQLite has none)
+│   ├── schema.prisma                 # PostgreSQL application schema
 │   ├── migrations/
-│   │   ├── 20260101000000_init/
-│   │   │   └── migration.sql         # handcrafted so `migrate deploy` works in the container
+│   │   ├── 20260924000000_postgresql_baseline/
+│   │   │   └── migration.sql         # complete PostgreSQL baseline
 │   │   └── migration_lock.toml
+│   ├── sqlite/                       # legacy schema + migrations for one-time data import
 │   └── seed.ts                       # dev data + 50k-row load generator
 ├── src/
 │   ├── main.ts                       # /api prefix, ValidationPipe, filters, security headers
@@ -309,7 +312,7 @@ backend/
 │   │       ├── url.util.ts           # normalise, detect source, extract company/title (+ spec)
 │   │       └── date.util.ts          # UTC day buckets, Mon–Sun weeks (+ spec)
 │   │
-│   ├── prisma/prisma.service.ts      # connection + WAL/foreign_keys/busy_timeout pragmas
+│   ├── prisma/prisma.service.ts      # shared PostgreSQL client lifecycle
 │   ├── bootstrap/admin-bootstrap.service.ts   # default admin, only when zero admins exist
 │   │
 │   ├── auth/                         # login, /me, change-password, JWT strategy
@@ -320,14 +323,13 @@ backend/
 │   ├── applications/
 │   │   ├── applications.service.ts   # list/update/bulk/generated — every write goes through the policy
 │   │   ├── numbering.service.ts      # per-date numbering, unique index + P2002 retry
-│   │   └── duplicate.service.ts      # exact URL, then normalised URL, chunked for SQLite
+│   │   └── duplicate.service.ts      # exact URL, then normalised URL, bounded batches
 │   ├── import/                       # ExcelJS + a hand-written RFC-4180 CSV parser
 │   ├── payments/
-│   │   ├── payments.service.ts       # Mon–Sun weeks, Applied only, credited to the owner
+│   │   ├── payments.service.ts       # Mon–Sun weeks, Applied only, credited to the creator
 │   │   └── payments.cron.ts          # Monday 00:05 UTC
 │   └── analytics/
-├── Dockerfile
-└── docker-entrypoint.sh              # migrate deploy, then drop to the `node` user
+└── package.json
 ```
 
 **Layering rule:** Controller → Guards → Service → *Policy* → Prisma. Controllers hold no business
@@ -350,7 +352,7 @@ frontend/
     │       ├── layout.tsx            # header, role-filtered nav, sign-out
     │       ├── account/page.tsx      # change own password
     │       ├── workspaces/
-    │       │   ├── page.tsx          # workspace cards + PermissionsModal
+    │       │   ├── page.tsx          # workspace cards + ownership controls
     │       │   └── [id]/
     │       │       ├── page.tsx      # ★ the grid page (owns filters + selection)
     │       │       ├── add/page.tsx  # required-field manual application form
@@ -448,13 +450,14 @@ Three independent layers. A request must pass all three; see
 | **B. Scope** | May you see/edit*this workspace*?                               | `WorkspaceAccessService.resolve()` |
 | **C. Field** | May you change*this field*, to *this value*, on *this row*? | `application.policy.ts`            |
 
-**Scope** resolves to `edit` for admins and for the workspace owner, otherwise to the granted
-`WorkspacePermission` (`view` / `edit`), otherwise `none`.
+**Scope** is ownership-based. Super-admin can access every workspace, an admin can access workspaces
+they created, and a bidder or bidder manager can access the workspace assigned to them. There is no
+sharing or view-only access mode.
 
 **Field-level rules, all enforced server-side:**
 
-- Admin-only fields: `pipeline_status`, `interview_date`, `interview_note`, `paid`, `paid_by`,
-  `paid_at`, `number`, `workspace_id`.
+- Admin-only fields: `pipeline_status`, `interview_date`, `interview_note`, `paid`, `number`,
+  `workspace_id`.
 - Status transitions for non-admins are an **allow-list**: `Pending → Applied` and
   `Applied → Rejected`. Nothing else. In particular nobody but an admin may set or clear
   `Duplicated`, because duplicates are excluded from payment.
@@ -471,44 +474,40 @@ convenience only: bypassing it with devtools or curl produces a 403, not an esca
 ### Payment integrity
 
 The credit for an applied row goes to its immutable `JobApplication.created_by_user_id`: the bidder
-who actually created/performed the application. Reassigning a workspace or resume profile therefore
+who actually created/performed the application. Reassigning a workspace therefore
 does not move earlier unpaid work to the new owner. Archived workspaces remain eligible until their
 `Applied` rows are processed. Creators with application history are deactivated rather than deleted.
+
+At Monday 00:05 UTC, the scheduler atomically settles the previous Monday–Sunday period for every
+eligible bidder. A PostgreSQL advisory transaction lock ensures only one backend replica performs the
+run. Automated reports have `processed_by = null`; set `DISABLE_CRON=true` to disable this job.
 
 ---
 
 ## Database & migrations
 
-SQLite at `/data/app.db` on a Docker volume. Core tables include `users`, `workspaces`,
-`resume_profiles`, `workspace_permissions`, `job_applications`, and `payment_reports`.
+PostgreSQL 16 stores its cluster in the host PostgreSQL data directory. Core tables include `users`, `workspaces`,
+`resume_profiles`, `job_applications`, and `payment_reports`.
 Full column-by-column reference in [docs/02-DATABASE.md](docs/02-DATABASE.md).
 
 ### Migrations
 
 ```bash
-# Production / container — applies committed migrations only, never generates or resets.
+# Production — applies committed migrations only, never generates or resets.
 npx prisma migrate deploy
 
 # Development — after editing schema.prisma
 npx prisma migrate dev --name describe_your_change
 ```
 
-The container entrypoint runs `migrate deploy` on every boot. It is idempotent, so restarts are safe.
-The initial migration is committed as SQL, which means the image needs no dev tooling to bring up a
-fresh database.
+Run `migrate deploy` before starting a new backend release. It is idempotent, so repeated runs are
+safe. The initial migration is committed as SQL.
 
-### Pragmas
+### Moving an existing SQLite deployment
 
-Applied on connect in [prisma.service.ts](backend/src/prisma/prisma.service.ts):
-
-| Pragma           | Value      | Why                                                                                      |
-| ---------------- | ---------- | ---------------------------------------------------------------------------------------- |
-| `journal_mode` | `WAL`    | Readers don't block the writer — essential when a 50k-row scroll runs beside an import  |
-| `busy_timeout` | `5000`   | Wait for a lock instead of failing instantly under concurrent writes                     |
-| `synchronous`  | `NORMAL` | WAL makes this durable enough;`FULL` costs an fsync per commit                         |
-| `foreign_keys` | `ON`     | **SQLite defaults this OFF.** Without it, cascades and restrictions are decorative |
-| `cache_size`   | `-64000` | 64 MB page cache — keeps the hot indexes resident                                       |
-| `temp_store`   | `MEMORY` | Sorting a large filtered result doesn't hit disk                                         |
+The previous SQLite schema and migrations remain under `backend/prisma/sqlite` only for the one-time
+data transfer. Follow [docs/05-POSTGRESQL-MIGRATION.md](docs/05-POSTGRESQL-MIGRATION.md); the importer
+copies in 500-row pages, preserves IDs and timestamps, and refuses a non-empty destination.
 
 ### Indexes
 
@@ -516,16 +515,16 @@ Every composite index leads with `workspace_id`, because no query in the applica
 workspaces without also filtering by one. Covered: `(workspace_id, date, number)` UNIQUE (the
 numbering guarantee *and* the default sort), plus `workspace_id` paired with `application_status`,
 `pipeline_status`, `job_source`, `paid`, `job_fingerprint`, and `created_at`; standalone indexes on
-`normalized_url` and `date` support global URL duplicate detection and cross-tab reporting.
+`normalized_url` and `date` support global URL duplicate detection and cross-tab reporting. A partial
+unique index on `normalized_url` is the final concurrency-safe guarantee for `Pending`/`Applied` rows.
 
-Two things are deliberately *not* indexed, which is why they are the slowest rows in the
-[performance table](#measured-performance):
+Free-text search uses PostgreSQL `pg_trgm` GIN indexes on URL, company, title, and note, allowing the
+existing case-insensitive `%contains%` query to avoid a full table scan. The 115 ms figure in the
+[performance table](#measured-performance) predates those indexes.
 
-- **Free-text search** (~115 ms at 50k rows) is `LIKE '%term%'` across url, company and title. A B-tree
-  cannot serve a leading wildcard, so this is a scan by construction. The fix would be an FTS5 virtual
-  table plus triggers to keep it in sync — real cost in migration complexity and write latency, for a
-  feature used to find one known row, not to browse. Revisit if search becomes a primary workflow.
-- **Sorting by `company_name`** (~88 ms) has no index to read in order, so SQLite materialises and sorts
+One occasional query remains deliberately unindexed:
+
+- **Sorting by `company_name`** (~88 ms in the historical benchmark) has no index to read in order, so PostgreSQL sorts
   the filtered set. Adding `(workspace_id, company_name)` would fix it, but every extra index is paid
   for on every insert — and imports write in batches of 500. The default sort is `(date, number)`, which
   *is* indexed; sorting by company is an occasional click.
@@ -534,40 +533,41 @@ Two things are deliberately *not* indexed, which is why they are the slowest row
 
 ## Deployment
 
-Target: a small VPS (1 vCPU / 1 GB is enough), a home server, or anything that runs Docker. No
-managed database, no external cache, no object storage.
+Target: a small VPS (1 vCPU / 1 GB is enough), a home server, or a local workstation. No managed
+database, external cache, or object storage is required.
 
 ### 1. Host prerequisites
 
-```bash
-# Docker Engine + compose plugin
-curl -fsSL https://get.docker.com | sh
-sudo usermod -aG docker "$USER"   # then log out and back in
-```
+Install Node.js 22.22.3 or newer, PostgreSQL 16, `pg_dump`, `pg_restore`, and a process manager such as systemd or
+PM2. Ensure PostgreSQL is running and create the configured database and user.
 
 ### 2. Deploy
 
 ```bash
 git clone <your-repo> /srv/bidtracker && cd /srv/bidtracker
-cp .env.example .env
+cp .env.example backend/.env
 
-# Two values are mandatory:
-sed -i "s|^JWT_SECRET=.*|JWT_SECRET=$(openssl rand -base64 48)|" .env
-$EDITOR .env                       # set DEFAULT_ADMIN_* 
+# Configure the backend environment and mandatory values:
+sed -i "s|^JWT_SECRET=.*|JWT_SECRET=$(openssl rand -base64 48)|" backend/.env
+$EDITOR backend/.env               # set DATABASE_URL and DEFAULT_ADMIN_PASSWORD
 
-docker compose up -d --build
-docker compose ps                  # both services should reach (healthy)
+cd backend
+npm ci
+npx prisma generate
+npx prisma migrate deploy
+npm run build
+cd ../frontend
+npm ci
+npm run build
 ```
 
-The frontend binds to `127.0.0.1:3000` and the backend publishes **no** port at all. The browser only
-ever talks to the frontend, which proxies `/api/*` to `http://backend:3001` over the internal Docker
-network. One origin, no CORS, and an API that isn't reachable from the internet even if the firewall
-is wrong. The proxy is a Node route handler at
+Start `backend/dist/main.js` on port 3001 and `next start` on port 3000 with your process manager.
+Set `BACKEND_URL=http://127.0.0.1:3001` for the frontend service. The browser talks to the frontend,
+which proxies `/api/*` to the backend. The proxy is a Node route handler at
 [frontend/src/app/api/[...path]/route.ts](frontend/src/app/api/%5B...path%5D/route.ts) rather than a
-`next.config` rewrite, because rewrites are baked into the build manifest and would freeze the backend
-address at image-build time — the file says so at length.
+`next.config` rewrite so the backend address can be changed at server startup.
 
-Then verify the deployment answers correctly, not just that the containers are up:
+Then verify the deployment answers correctly:
 
 ```bash
 curl -s localhost:3000/api/health                       # {"ok":true,"db":"up",...}
@@ -579,17 +579,15 @@ cd backend && SMOKE_BASE=http://127.0.0.1:3000/api \
 ```
 
 `smoke.mjs` needs no seed data and exits non-zero if any of its ~100 assertions fail. It **writes test
-rows**, so run it before the deployment carries real data — or accept the fixture users and rows it
-leaves behind (`docker compose down -v` clears them, along with everything else).
+rows**, so run it before the deployment carries real data or remove its fixture rows afterward.
 
 ### 3. Expose it — pick one
 
 **A. Cloudflare Tunnel (free, no open ports, no public IP needed)**
 
 1. [https://one.dash.cloudflare.com](https://one.dash.cloudflare.com) → Networks → Tunnels → **Create a tunnel** (Cloudflared).
-2. Add a public hostname, e.g. `bids.example.com`, service `http://frontend:3000`.
-3. Copy the token into `.env` as `CLOUDFLARE_TUNNEL_TOKEN`.
-4. `docker compose --profile tunnel up -d`
+2. Add a public hostname, e.g. `bids.example.com`, with service `http://127.0.0.1:3000`.
+3. Install `cloudflared` on the host and run the tunnel as a system service.
 
 Cloudflare terminates TLS and the tunnel dials outbound, so the host needs no inbound rule at all.
 Worth adding: **Cloudflare Access** in front of the hostname, which puts a second identity check
@@ -603,7 +601,7 @@ bids.example.com {
 }
 ```
 
-**C. LAN only** — change the frontend port mapping to `3000:3000` and reach it at
+**C. LAN only** — bind the frontend server to the host LAN address and reach it at
 `http://<host-ip>:3000`.
 
 ### 4. Updating
@@ -612,45 +610,37 @@ bids.example.com {
 cd /srv/bidtracker
 ./scripts/backup.sh                 # always, before a schema change
 git pull
-docker compose up -d --build        # entrypoint applies new migrations
-docker compose logs -f --tail=50
+cd backend && npm ci && npx prisma generate && npx prisma migrate deploy && npm run build
+cd ../frontend && npm ci && npm run build
+# Restart both services with your process manager.
 ```
 
 ### 5. Sizing and limits
 
 | Concern           | Reality                                                                                                                                     |
 | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| Disk              | ~250 MB per 500k applications, plus WAL. Budget 2 GB.                                                                                       |
+| Disk              | Budget at least 2 GB for PostgreSQL data, indexes, and backups.                                                                              |
 | Memory            | Backend ~150 MB idle, ~400 MB peak during a large import (ExcelJS holds the workbook).                                                      |
-| Concurrent users  | Comfortable to a few dozen. SQLite serialises writers; readers are unaffected.                                                              |
-| Scaling           | **Vertically.** Do not run `--scale backend=2`: it would be correct but would burn time retrying `SQLITE_BUSY`.                   |
-| Outgrowing SQLite | Every "enum" is already a`String` and no raw SQL is dialect-specific — switching `provider` to `postgresql` needs no column changes. |
+| Concurrent users  | PostgreSQL supports concurrent readers and writers; application-level load is the practical limit.                                            |
+| Scaling           | Backend replicas may share PostgreSQL, though scheduled jobs should still have one designated runner.                                      |
 
 ---
 
 ## Backup & restore
 
-**The rule that matters: never `cp app.db`.** In WAL mode, committed transactions may live in
-`app.db-wal` and not yet in `app.db`. Copying the main file alone yields a torn, stale snapshot;
-copying all three during a write yields a corrupt one.
-
-[scripts/backup.sh](scripts/backup.sh) uses `VACUUM INTO`, which takes a read lock, writes a
-fully-checkpointed and defragmented copy to a new file, and never blocks writers. The result is one
-self-contained, immediately-usable database file.
+[scripts/backup.sh](scripts/backup.sh) uses PostgreSQL's custom-format `pg_dump`, then parses the
+complete archive with `pg_restore --list` before accepting it.
 
 ```bash
-./scripts/backup.sh                       # back up the running container's database
+./scripts/backup.sh                       # back up the running PostgreSQL service
 BACKUP_DIR=/mnt/backups ./scripts/backup.sh
-./scripts/backup.sh /path/to/app.db       # direct-file mode (needs sqlite3 on the host)
 ```
 
 What the script does, in order:
 
-1. `VACUUM INTO` a timestamped file (inside the container, via Prisma — the image has no `sqlite3`).
-2. `PRAGMA integrity_check` and a row count. **A backup you haven't verified is a rumour.** A failed
-   check renames the file `.CORRUPT` and exits non-zero so cron alerts you.
-3. `gzip -9` (these files compress to roughly a quarter of their size).
-4. Retention: 14 daily copies, and Sunday's copy promoted to a weekly set kept for 8 weeks.
+1. `pg_dump --format custom` creates a compressed, consistent archive without stopping the app.
+2. `pg_restore --list` validates the archive. A failed check renames it `.CORRUPT` and exits non-zero.
+3. Retention keeps 14 daily copies and promotes Sunday's copy to an 8-week set.
 
 **Schedule it:**
 
@@ -668,18 +658,15 @@ mistakes, not from hardware:
 **Restore:**
 
 ```bash
-docker compose stop backend
-gunzip -c backups/daily/app-20260825-031500.db.gz > /tmp/app.db
-docker run --rm -v bidtracker-data:/data -v /tmp:/in alpine \
-  sh -c 'rm -f /data/app.db-wal /data/app.db-shm && cp /in/app.db /data/app.db'
-docker compose start backend
-docker compose logs backend | tail -20
+# Stop the backend service first.
+dropdb -U bidtracker --if-exists bidtracker
+createdb -U bidtracker bidtracker
+pg_restore -U bidtracker -d bidtracker --no-owner --no-privileges \
+  backups/daily/bidtracker-20260825-031500.dump
+# Start the backend service again and inspect backend/logs.
 ```
 
-Deleting the stale `-wal`/`-shm` files is not optional: left beside a restored database, SQLite will
-try to replay a write-ahead log that belongs to a different file.
-
-**Test the restore.** Once a quarter, restore the newest backup into a throwaway volume and log in.
+**Test the restore.** Once a quarter, restore the newest backup into a throwaway database and log in.
 An untested restore procedure is a plan, not a backup.
 
 ---
@@ -695,17 +682,37 @@ Full annotated list in [.env.example](.env.example). The ones worth knowing:
 | `JWT_SECRET`                                       | — (**required**) | Signs tokens. Changing it signs everyone out.                                          |
 | `DEFAULT_ADMIN_*`                                  | — (**required**) | First-boot admin; ignored once any admin exists.                                       |
 | `JWT_EXPIRES_IN`                                   | `7d`                  | Session length.                                                                        |
-| `DUPLICATE_SCOPE`                                  | `global`              | `global` = a URL seen in any workspace is a duplicate; `workspace` = per-tab only. |
 | `JOB_FINGERPRINT_WINDOW_DAYS`                     | `90`                  | Window for workspace-local company/title cross-site duplicate warnings.                |
 | `MAX_UPLOAD_MB`                                    | `25`                  | Import file ceiling.                                                                   |
+| `MAX_XLSX_EXPANDED_MB`                            | `100`                 | Maximum streamed XLSX expansion before parsing.                                        |
+| `MAX_XLSX_ZIP_ENTRIES`                            | `2000`                | Maximum number of files inside an XLSX archive.                                        |
 | `DISABLE_CRON`                                     | `false`               | Set`true` on a staging copy so it can't produce authoritative-looking reports.       |
+| `OPENAI_CONVERSATION_RETENTION_DAYS`              | `30`                  | Deletes inactive provider items, conversations, and local mappings daily.               |
+| `DISABLE_CONVERSATION_CLEANUP`                    | `false`               | Disables provider conversation retention cleanup when explicitly required.             |
 | `ALLOW_BIDDER_PENDING_TO_REJECTED`                 | `false`               | Adds one extra transition beyond the spec's two.                                       |
 | `OPENAI_API_KEY`                                    | —                    | Server-only key used by `POST /api/applications/generate`; never send it to the browser. |
 | `OPENAI_MODEL`                                      | `gpt-5.6-sol`        | OpenAI Responses API model used for eligibility, resume, and answer generation.        |
 
+### Logging and AI cost variables
+
+`LOG_LEVEL` defaults to `info` and accepts `fatal`, `error`, `warn`, `info`, `debug`, or
+`verbose`. Every API response includes `X-Request-Id`; use it to correlate the JSON payloads in
+`http_request_*` and `openai_request_*` log events.
+
+AI content is excluded by default because prompts and responses contain resumes and job
+descriptions. Set `AI_LOG_CONTENT=true` to include previews, bounded by
+`AI_LOG_CONTENT_MAX_CHARS` (default 2,000; hard maximum 10,000). Token usage, latency, model, and
+provider request IDs are logged regardless. Set `OPENAI_INPUT_COST_PER_1M_TOKENS`,
+`OPENAI_CACHED_INPUT_COST_PER_1M_TOKENS`, and `OPENAI_OUTPUT_COST_PER_1M_TOKENS` to the current
+rates for `OPENAI_MODEL` to add separate input/output and total estimated USD costs.
+
+Logs continue to appear in the terminal and are also stored as newline-delimited JSON in
+`backend/logs/YYYY-MM-DD.log`. Filesystem writes are queued asynchronously, and files older than
+`LOG_RETENTION_DAYS` (default 30) are removed during startup and daily rotation.
+
 ### Resume generation
 
-`GET /api/workspaces/profiles/assigned` returns only profiles assigned to the authenticated user.
+`GET /api/workspaces/profiles/assigned` returns the one-to-one profiles belonging to workspaces the authenticated user can access.
 `POST /api/applications/generate` accepts `{ workspace_id, url, job_description, profile_id?, questions? }`,
 checks the supplied job description, and generates the resume and optional application answers through OpenAI. It returns
 an application candidate without writing it, so a lost extension response cannot leave an inaccessible
@@ -718,9 +725,8 @@ Workspace profile details are edited through `PATCH /api/workspaces/:id`.
 ### Common tasks
 
 ```bash
-docker compose logs -f backend            # tail logs
-docker compose restart backend            # restart just the API
-docker compose exec backend npx prisma studio --port 5555   # inspect data (admin-only, port-forward it)
+tail -f backend/logs/$(date -u +%F).log
+cd backend && npx prisma studio --port 5555   # inspect data on a trusted host only
 
 # Process a bidder's payment period by hand
 curl -X POST localhost:3000/api/payments/process \
@@ -732,13 +738,13 @@ curl -X POST localhost:3000/api/payments/process \
 
 | Symptom                                    | Cause and fix                                                                                                                                                                                        |
 | ------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `JWT_SECRET must be set` on boot         | `.env` missing or unset. `cp .env.example .env` and fill it in.                                                                                                                                  |
-| Login fails right after a fresh deploy     | Look for "Default admin created" in`docker compose logs backend`. If the database already had an admin, the env vars were ignored — use the real password or reset it from another admin account. |
-| `SQLITE_BUSY` in the logs                | Concurrent writers exceeding`busy_timeout`. Check for a second backend replica; there should be exactly one.                                                                                       |
+| `JWT_SECRET must be set` on boot         | `backend/.env` missing or unset. Copy `.env.example` there and fill it in. |
+| Login fails right after a fresh deploy     | Check the backend log for "Default admin created". If the database already had an admin, use the real password or reset it from another admin account. |
+| PostgreSQL connection error on boot      | Confirm the PostgreSQL service is running and that `DATABASE_URL` contains the correct host, user, password, and database. |
 | Import reports many skipped rows           | Open the skip list on the results panel — it gives a reason per row. Usually a missing/unparseable URL column.                                                                                      |
 | Company/title columns arrive blank         | The import result lists every affected spreadsheet row. Fill those values in on the table after import.                                                                                              |
 | Weekly report shows an amber "Live" figure | Rows changed after settlement. Expected when an admin edits history; regenerate the week if the new figure is the correct one.                                                                       |
-| Table scrolls but rows stay blank          | Backend unreachable — check`docker compose ps` and `/api/health`.     
+| Table scrolls but rows stay blank          | Backend unreachable — check the backend process and `/api/health`. |
 
 ## Import file format
 

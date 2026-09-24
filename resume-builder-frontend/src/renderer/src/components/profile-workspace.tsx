@@ -111,6 +111,7 @@ export function ProfileWorkspace({
   // Per-generation data
   const [jobDescription, setJobDescription] = useState("");
   const [resumeData, setResumeData] = useState<ResumeData | null>(null);
+  const [conversationId, setConversationId] = useState<string | null>(null);
   const [coverLetterText, setCoverLetterText] = useState<string | null>(null);
   const [applicationQuestions, setApplicationQuestions] = useState("");
   const [applicationAnswers, setApplicationAnswers] = useState<Array<{ question: string; answer: string }>>([]);
@@ -177,6 +178,7 @@ export function ProfileWorkspace({
     }
     setError("");
     setGeneratedApplication(null);
+    setConversationId(null);
     setCompanyName("");
     setIsGenerating(true);
 
@@ -310,6 +312,10 @@ export function ProfileWorkspace({
       };
 
       setResumeData(nextResumeData);
+      if (!data.conversationId) {
+        throw new Error("The server did not create an application-question conversation.");
+      }
+      setConversationId(data.conversationId);
       setGeneratedApplication(application);
       setApplicationAnswers([]);
 
@@ -408,7 +414,7 @@ export function ProfileWorkspace({
   };
 
   const handleGenerateAnswers = async () => {
-    if (!resumeData) {
+    if (!resumeData || !conversationId) {
       setApplicationError("Generate a resume before answering application questions.");
       return;
     }
@@ -428,9 +434,8 @@ export function ProfileWorkspace({
       const data = await window.aiProfiles.generate({
         profileId: profile.id,
         kind: "applicationAnswers",
-        jobDescription,
+        conversationId,
         questions,
-        resume: resumeData,
       });
       const responseText = (data.tailored_resume || "")
         .trim()
@@ -729,7 +734,7 @@ export function ProfileWorkspace({
               setApplicationQuestions(event.target.value);
               setApplicationError("");
             }}
-            disabled={!resumeData || isGeneratingAnswers}
+            disabled={!resumeData || !conversationId || isGeneratingAnswers}
           />
           {applicationError && (
             <Alert variant="destructive">
@@ -740,7 +745,7 @@ export function ProfileWorkspace({
           <Button
             variant="outline"
             onClick={() => void handleGenerateAnswers()}
-            disabled={!resumeData || isGeneratingAnswers || isGenerating}
+            disabled={!resumeData || !conversationId || isGeneratingAnswers || isGenerating}
           >
             {isGeneratingAnswers ? "Writing Answers..." : "Generate Answers"}
           </Button>

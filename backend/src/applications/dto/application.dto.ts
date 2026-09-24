@@ -68,7 +68,7 @@ export class QueryApplicationsDto {
   @IsOptional()
   @IsIn([
     'date', 'number', 'job_title', 'company_name', 'job_source',
-    'application_status', 'pipeline_status', 'paid', 'created_at',
+    'application_status', 'pipeline_status', 'paid', 'interview_date', 'created_at',
   ])
   sort_by?: string = 'date';
 
@@ -231,4 +231,12 @@ export class UpdatePipelineDto {
   @IsIn(PIPELINE_STATUSES)
   pipeline_status?: PipelineStatus;
 
+  @IsOptional()
+  @IsDateString()
+  interview_date?: string | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(5000)
+  interview_note?: string | null;
 }

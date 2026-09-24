@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import type { AccessLevel, ApplicationFilters, JobApplication, User } from '@/lib/types';
+import type { ApplicationFilters, JobApplication, User } from '@/lib/types';
 import { Cell } from './cell';
 import {
   COLUMNS, HEADER_HEIGHT, ROW_HEIGHT, SELECT_COL_WIDTH, loadColumnWidths, saveColumnWidths,
@@ -15,7 +15,6 @@ function isWeekBoundary(date: string): boolean {
 
 interface Props {
   user: User | null;
-  access: AccessLevel;
   total: number;
   loading: boolean;
   getRow: (index: number) => JobApplication | undefined;
@@ -45,7 +44,7 @@ interface Props {
  */
 export function ApplicationsTable(props: Props) {
   const {
-    user, access, total, loading, getRow, ensureRange, filters, onSortChange,
+    user, total, loading, getRow, ensureRange, filters, onSortChange,
     selectedIds, onToggleSelect, onSelectAllVisible, onEditCell,
   } = props;
 
@@ -328,7 +327,6 @@ export function ApplicationsTable(props: Props) {
                         row={row}
                         column={col}
                         user={user}
-                        access={access}
                         boundary={col.key === 'date' ? (weekBoundary ? 'week' : dayStart ? 'day' : undefined) : undefined}
                         onCommit={(field, value) => onEditCell(row, field, value)}
                       />

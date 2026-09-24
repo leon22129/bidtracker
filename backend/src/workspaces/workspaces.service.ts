@@ -4,21 +4,19 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthUser } from '../common/decorators/current-user.decorator';
 import { WorkspaceAccessService } from './workspace-access.service';
-import { CreateWorkspaceDto, GrantPermissionDto, UpdateWorkspaceDto } from './dto/workspace.dto';
+import { CreateWorkspaceDto, UpdateWorkspaceDto } from './dto/workspace.dto';
 import { isAdmin } from '../common/policies/application.policy';
+import { ConversationCleanupService } from '../resume/conversation-cleanup.service';
 
 @Injectable()
 export class WorkspacesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly access: WorkspaceAccessService,
+    private readonly conversationCleanup: ConversationCleanupService,
   ) {}
 
-  /**
-   * Returns only the workspaces the caller may see, each annotated with the caller's own access
-   * level. The frontend's workspace switcher is therefore correct by construction — there is nothing
-   * to hide client-side because nothing extra is sent.
-   */
+  /** Returns only workspaces in the caller's ownership/creator scope. */
   async findAllForUser(user: AuthUser, includeArchived = false) {
     const ids = await this.access.visibleWorkspaceIds(user);
 
@@ -29,9 +27,6 @@ export class WorkspacesService {
       },
       include: {
         owner: { select: { id: true, username: true, email: true } },
-        permissions: {
-          include: { user: { select: { id: true, username: true, role: true } } },
-        },
         _count: { select: { applications: true } },
         resumeProfile: true,
       },
@@ -47,24 +42,8 @@ export class WorkspacesService {
       is_archived: w.is_archived,
       created_at: w.created_at,
       updated_at: w.updated_at,
-      resume_profile_id: w.resume_profile_id,
       profile: w.resumeProfile ? this.toProfile(w.resumeProfile) : null,
       application_count: w._count.applications,
-      my_access:
-        user.role === 'super_admin' || w.created_by_user_id === user.id || w.owner_user_id === user.id
-          ? 'edit'
-          : (w.permissions.find((p) => p.user_id === user.id)?.permission_type ?? 'none'),
-      // Grant list is admin-only information: who else can edit this tab.
-      permissions:
-        user.role === 'admin' || user.role === 'super_admin'
-          ? w.permissions.map((p) => ({
-              id: p.id,
-              user_id: p.user_id,
-              username: p.user.username,
-              role: p.user.role,
-              permission_type: p.permission_type,
-            }))
-          : undefined,
     }));
   }
 
@@ -88,17 +67,21 @@ export class WorkspacesService {
     if (clash) throw new ConflictException('A workspace with that name already exists');
 
     return this.prisma.$transaction(async (tx) => {
-      const profile = await tx.resumeProfile.create({
-        data: { user_id: dto.owner_user_id, created_by_user_id: user.id, name },
-      });
-      return tx.workspace.create({
+      const workspace = await tx.workspace.create({
         data: {
           name,
           owner_user_id: dto.owner_user_id,
           created_by_user_id: user.id,
-          resume_profile_id: profile.id,
         },
         include: { owner: { select: { id: true, username: true, email: true } } },
+      });
+      await tx.resumeProfile.create({ data: { workspace_id: workspace.id, name } });
+      return tx.workspace.findUniqueOrThrow({
+        where: { id: workspace.id },
+        include: {
+          owner: { select: { id: true, username: true, email: true } },
+          resumeProfile: true,
+        },
       });
     });
   }
@@ -110,9 +93,9 @@ export class WorkspacesService {
 
     if (
       !isAdmin(user.role) &&
-      (dto.owner_user_id !== undefined || dto.resume_profile_id !== undefined || dto.is_archived !== undefined)
+      (dto.owner_user_id !== undefined || dto.is_archived !== undefined)
     ) {
-      throw new ForbiddenException('Only an admin can change workspace ownership, profile assignment, or archive state');
+      throw new ForbiddenException('Only an admin can change workspace ownership or archive state');
     }
 
     const profileData = this.profileData(dto);
@@ -134,38 +117,16 @@ export class WorkspacesService {
       // creator continues to receive credit for both settled and still-unpaid historical work.
     }
 
-    const targetOwnerId = dto.owner_user_id ?? workspace.owner_user_id;
-    let targetProfileId = dto.resume_profile_id ?? workspace.resume_profile_id;
-    if (dto.resume_profile_id) {
-      const profile = await this.prisma.resumeProfile.findFirst({
-        where: {
-          id: dto.resume_profile_id,
-          user_id: targetOwnerId,
-          ...(user.role === 'super_admin'
-            ? {}
-            : { OR: [{ created_by_user_id: user.id }, { id: workspace.resume_profile_id ?? '' }] }),
-        },
-      });
-      if (!profile) throw new BadRequestException('The selected resume profile does not belong to the workspace owner');
-    }
-
     return this.prisma.$transaction(async (tx) => {
-      if (!targetProfileId) {
-        const profile = await tx.resumeProfile.create({
-          data: {
-            user_id: targetOwnerId,
-            created_by_user_id: workspace.created_by_user_id,
-            name: `Profile for ${workspace.id}`,
-          },
+      let profile = await tx.resumeProfile.findUnique({ where: { workspace_id: workspace.id } });
+      if (!profile) {
+        profile = await tx.resumeProfile.create({
+          data: { workspace_id: workspace.id, name: `Profile for ${workspace.id}` },
         });
-        targetProfileId = profile.id;
       }
       if (dto.profile_name !== undefined) profileData.name = dto.profile_name.trim();
-      if (dto.owner_user_id !== undefined && dto.resume_profile_id === undefined) {
-        profileData.user_id = targetOwnerId;
-      }
       if (Object.keys(profileData).length) {
-        await tx.resumeProfile.update({ where: { id: targetProfileId }, data: profileData });
+        await tx.resumeProfile.update({ where: { id: profile.id }, data: profileData });
       }
       return tx.workspace.update({
         where: { id },
@@ -173,7 +134,6 @@ export class WorkspacesService {
           ...(dto.name !== undefined ? { name: dto.name.trim() } : {}),
           ...(dto.owner_user_id !== undefined ? { owner_user_id: dto.owner_user_id } : {}),
           ...(dto.is_archived !== undefined ? { is_archived: dto.is_archived } : {}),
-          resume_profile_id: targetProfileId,
         },
         include: { owner: { select: { id: true, username: true, email: true } }, resumeProfile: true },
       });
@@ -181,33 +141,28 @@ export class WorkspacesService {
   }
 
   async listProfiles(user: AuthUser) {
-    const ownership = user.role === 'admin' || user.role === 'super_admin'
-      ? { OR: [{ user_id: user.id }, { created_by_user_id: user.id }] }
-      : { user_id: user.id };
+    const workspaceIds = await this.access.visibleWorkspaceIds(user);
 
     return this.prisma.resumeProfile.findMany({
       where: {
-        AND: [
-          ownership,
-          { workspaces: { some: { is_archived: false } } },
-        ],
+        workspace: {
+          is_archived: false,
+          ...(workspaceIds ? { id: { in: workspaceIds } } : {}),
+        },
       },
-      include: { workspaces: { where: { is_archived: false }, select: { id: true } } },
+      include: { workspace: { select: { id: true } } },
       orderBy: { name: 'asc' },
     }).then((profiles) => profiles.map((profile) => this.toProfile(profile)));
   }
 
   async updateProfile(profileId: string, dto: UpdateWorkspaceDto, user: AuthUser) {
     this.assertCanEditProfile(user, dto);
-    const profile = await this.prisma.resumeProfile.findFirst({
-      where: {
-        id: profileId,
-        OR: user.role === 'admin' || user.role === 'super_admin'
-          ? [{ user_id: user.id }, { created_by_user_id: user.id }]
-          : [{ user_id: user.id }],
-      },
+    const profile = await this.prisma.resumeProfile.findUnique({
+      where: { id: profileId },
+      select: { id: true, workspace_id: true },
     });
     if (!profile) throw new NotFoundException('Profile not found');
+    await this.access.assertCanEdit(user, profile.workspace_id);
 
     const data = this.profileData(dto);
     if (Object.keys(data).length) {
@@ -245,20 +200,15 @@ export class WorkspacesService {
     return this.toProfile(await this.ensureProfile(workspace));
   }
 
-  async ensureProfile(workspace: { id: string; owner_user_id: string; created_by_user_id?: string | null; resume_profile_id: string | null }) {
-    if (workspace.resume_profile_id) {
-      const existing = await this.prisma.resumeProfile.findUnique({ where: { id: workspace.resume_profile_id } });
-      if (existing) return existing;
-    }
-    const profile = await this.prisma.resumeProfile.create({
-      data: {
-        user_id: workspace.owner_user_id,
-        created_by_user_id: workspace.created_by_user_id,
-        name: `Profile for ${workspace.id}`,
+  async ensureProfile(workspace: { id: string; name?: string }) {
+    return this.prisma.resumeProfile.upsert({
+      where: { workspace_id: workspace.id },
+      update: {},
+      create: {
+        workspace_id: workspace.id,
+        name: workspace.name || `Profile for ${workspace.id}`,
       },
     });
-    await this.prisma.workspace.update({ where: { id: workspace.id }, data: { resume_profile_id: profile.id } });
-    return profile;
   }
 
   private profileData(dto: UpdateWorkspaceDto): Record<string, unknown> {
@@ -284,7 +234,7 @@ export class WorkspacesService {
     };
     return {
       id: profile.id,
-      workspace_id: profile.workspaces?.[0]?.id,
+      workspace_id: profile.workspace_id,
       name: profile.name,
       career_path: profile.career_path,
       personal_info: {
@@ -305,7 +255,7 @@ export class WorkspacesService {
     };
   }
 
-  /** Cascades to applications, permissions and weekly reports. Admin-only, irreversible. */
+  /** Cascades to applications, the resume profile, and conversations. Admin-only, irreversible. */
   async remove(id: string, user: AuthUser) {
     await this.access.assertCanEdit(user, id);
     const workspace = await this.prisma.workspace.findUnique({
@@ -314,61 +264,9 @@ export class WorkspacesService {
     });
     if (!workspace) throw new NotFoundException('Workspace not found');
 
+    await this.conversationCleanup.deleteForWorkspaceOrThrow(id);
     await this.prisma.workspace.delete({ where: { id } });
     return { success: true, deleted_applications: workspace._count.applications };
   }
 
-  async grantPermission(workspaceId: string, dto: GrantPermissionDto, actingUser: AuthUser) {
-    await this.assertCanManageSharing(workspaceId, actingUser);
-    await this.access.assertCanEdit(actingUser, workspaceId);
-    const [workspace, user] = await Promise.all([
-      this.prisma.workspace.findUnique({ where: { id: workspaceId } }),
-      this.prisma.user.findUnique({ where: { id: dto.user_id } }),
-    ]);
-    if (!workspace) throw new NotFoundException('Workspace not found');
-    if (!user) throw new BadRequestException('User does not exist');
-
-    if (workspace.owner_user_id === dto.user_id) {
-      throw new BadRequestException('The owner already has full edit access to this workspace');
-    }
-    if (user.role === 'super_admin') {
-      throw new BadRequestException('Super admins already have access to every workspace');
-    }
-
-    // Upsert on (workspace_id, user_id): re-granting changes the level instead of duplicating.
-    return this.prisma.workspacePermission.upsert({
-      where: { workspace_id_user_id: { workspace_id: workspaceId, user_id: dto.user_id } },
-      create: {
-        workspace_id: workspaceId,
-        user_id: dto.user_id,
-        permission_type: dto.permission_type,
-      },
-      update: { permission_type: dto.permission_type },
-      include: { user: { select: { id: true, username: true, role: true } } },
-    });
-  }
-
-  async revokePermission(workspaceId: string, userId: string, user: AuthUser) {
-    await this.assertCanManageSharing(workspaceId, user);
-    await this.access.assertCanEdit(user, workspaceId);
-    const grant = await this.prisma.workspacePermission.findUnique({
-      where: { workspace_id_user_id: { workspace_id: workspaceId, user_id: userId } },
-    });
-    if (!grant) throw new NotFoundException('That user has no grant on this workspace');
-
-    await this.prisma.workspacePermission.delete({ where: { id: grant.id } });
-    return { success: true };
-  }
-
-  private async assertCanManageSharing(workspaceId: string, user: AuthUser) {
-    if (user.role === 'super_admin') return;
-    const workspace = await this.prisma.workspace.findUnique({
-      where: { id: workspaceId },
-      select: { created_by_user_id: true },
-    });
-    if (!workspace) throw new NotFoundException('Workspace not found');
-    if (workspace.created_by_user_id !== user.id) {
-      throw new ForbiddenException('Only the workspace owner admin can manage sharing');
-    }
-  }
 }

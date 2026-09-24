@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import type { AccessLevel, ApplicationStatus, JobApplication, PipelineStatus, User } from '@/lib/types';
+import type { ApplicationStatus, JobApplication, PipelineStatus, User } from '@/lib/types';
 import { allowedStatusTransitions, canEditField, whyLocked } from '@/lib/permissions';
 import { PipelinePill, StatusPill } from '@/components/ui/status-pill';
 import type { ColumnDef } from './columns';
@@ -10,7 +10,6 @@ interface CellProps {
   row: JobApplication;
   column: ColumnDef;
   user: User | null;
-  access: AccessLevel;
   boundary?: 'day' | 'week';
   onCommit: (field: keyof JobApplication, value: unknown) => void;
 }
@@ -26,11 +25,11 @@ interface CellProps {
  * Permission handling: `canEditField` mirrors the backend policy, so locked cells render as static
  * text with a tooltip explaining *why*. The backend re-checks regardless.
  */
-export function Cell({ row, column, user, access, boundary, onCommit }: CellProps) {
+export function Cell({ row, column, user, boundary, onCommit }: CellProps) {
   const [editing, setEditing] = useState(false);
   const [customSource, setCustomSource] = useState(false);
-  const editable = column.editor !== 'readonly' && canEditField(user, access, row, column.key);
-  const lockReason = whyLocked(user, access, row, column.key);
+  const editable = column.editor !== 'readonly' && canEditField(user, row, column.key);
+  const lockReason = whyLocked(user, row, column.key);
 
   function commit(value: unknown) {
     setEditing(false);

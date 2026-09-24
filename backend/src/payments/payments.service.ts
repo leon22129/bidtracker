@@ -1,4 +1,5 @@
 import { BadRequestException, ForbiddenException, Injectable } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthUser } from '../common/decorators/current-user.decorator';
 import { endOfDay, previousWeekRange, toDayStart } from '../common/utils/date.util';
@@ -123,6 +124,67 @@ export class PaymentsService {
       return { ...report, already_processed: false };
     });
     return { id: result.id, bidder_id: result.bidder_id, start_date: result.start_date, end_date: result.end_date, applied_count: result.applied_count, processed_at: result.processed_at, already_processed: result.already_processed };
+  }
+
+  /** Settles the previous Monday-Sunday period once across all backend replicas. */
+  async processPreviousWeekAutomatically(asOf: Date = new Date()) {
+    const range = previousWeekRange(asOf);
+
+    return this.prisma.$transaction(async (tx) => {
+      const [lock] = await tx.$queryRaw<Array<{ acquired: boolean }>>(Prisma.sql`
+        SELECT pg_try_advisory_xact_lock(734927451012345678::bigint) AS acquired
+      `);
+      if (!lock?.acquired) {
+        return {
+          skipped: true,
+          reason: 'another_backend_is_processing',
+          start_date: range.start,
+          end_date: range.end,
+          reports: [],
+          total_applied: 0,
+        };
+      }
+
+      const eligibleBase = {
+        application_status: 'Applied',
+        paid: false,
+        date: { gte: range.start, lte: endOfDay(range.end) },
+      } as const;
+      const bidders = await tx.user.findMany({
+        where: {
+          role: { in: [...PAYABLE_ROLES] },
+          createdApplications: { some: eligibleBase },
+        },
+        select: { id: true },
+      });
+
+      const reports: Array<{ applied_count: number }> = [];
+      for (const bidder of bidders) {
+        const updated = await tx.jobApplication.updateMany({
+          where: { ...eligibleBase, created_by_user_id: bidder.id },
+          data: { paid: true },
+        });
+        if (updated.count === 0) continue;
+
+        reports.push(await tx.paymentReport.create({
+          data: {
+            bidder_id: bidder.id,
+            start_date: range.start,
+            end_date: range.end,
+            applied_count: updated.count,
+            processed_by: null,
+          },
+        }));
+      }
+
+      return {
+        skipped: false,
+        start_date: range.start,
+        end_date: range.end,
+        reports,
+        total_applied: reports.reduce((total, report) => total + report.applied_count, 0),
+      };
+    }, { timeout: 120_000, maxWait: 15_000 });
   }
 
   async history(user: AuthUser) {

@@ -1,5 +1,4 @@
-import { IsArray, IsBoolean, IsEmail, IsIn, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
-import { PERMISSION_TYPES, PermissionType } from '../../common/constants';
+import { IsArray, IsBoolean, IsEmail, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
 
 export class CreateWorkspaceDto {
   @IsString()
@@ -26,10 +25,6 @@ export class UpdateWorkspaceDto {
   @IsOptional()
   @IsBoolean()
   is_archived?: boolean;
-
-  @IsOptional()
-  @IsString()
-  resume_profile_id?: string;
 
   @IsOptional()
   @IsString()
@@ -106,12 +101,4 @@ export class UpdateWorkspaceDto {
   @IsOptional()
   @IsArray()
   certifications?: Array<{ name: string; issuer: string; year: string }>;
-}
-
-export class GrantPermissionDto {
-  @IsString()
-  user_id: string;
-
-  @IsIn(PERMISSION_TYPES)
-  permission_type: PermissionType;
 }

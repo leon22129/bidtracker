@@ -6,9 +6,7 @@ import { useParams } from 'next/navigation';
 import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 import { useApplications } from '@/lib/use-applications';
-import type {
-  AccessLevel, ApplicationFilters, JobApplication, Workspace, WorkspaceSummary,
-} from '@/lib/types';
+import type { ApplicationFilters, JobApplication, Workspace, WorkspaceSummary } from '@/lib/types';
 import { ApplicationsTable } from '@/components/table/applications-table';
 import { BulkActionsBar } from '@/components/table/bulk-actions';
 import { TableToolbar } from '@/components/table/toolbar';
@@ -21,7 +19,7 @@ import { ADMIN_ONLY_FIELDS } from '@/lib/permissions';
  * It owns three pieces of state and passes them down:
  *   - `filters` (drives the data hook; any change resets the row cache)
  *   - `selectedIds` (drives the bulk bar; supports shift-range selection)
- *   - the workspace metadata (name, owner, my_access) used to gate the UI
+ *   - the workspace metadata (name and owner)
  *
  * Edits are optimistic: the cached row is patched immediately, the request goes out, and on failure the
  * previous value is restored and the error surfaced. With per-cell writes over a local network the
@@ -48,8 +46,6 @@ export default function WorkspaceTablePage() {
 
   const { total, loading, error, getRow, ensureRange, patchRow, reload, loadedRows } =
     useApplications(workspaceId, filters);
-
-  const access: AccessLevel = workspace?.my_access ?? 'none';
 
   const loadMeta = useCallback(async () => {
     try {
@@ -215,7 +211,7 @@ export default function WorkspaceTablePage() {
         <h1 className="text-sm font-semibold">Workspace unavailable</h1>
         <p className="mt-2 text-xs text-gray-600">{loadError}</p>
         <p className="mt-1 text-2xs text-gray-500">
-          If you believe you should have access to this tab, ask an admin to grant it.
+          If you believe this workspace should be assigned to you, ask an admin to reassign it.
         </p>
         <Link href="/workspaces" className="btn-secondary btn-xs mt-4 inline-flex">
           Back to workspaces
@@ -234,7 +230,6 @@ export default function WorkspaceTablePage() {
         workspaceId={workspaceId}
         workspaceName={workspace.name}
         ownerUsername={workspace.owner.username}
-        access={access}
         user={user}
         filters={filters}
         onFiltersChange={(next) => {
@@ -251,7 +246,6 @@ export default function WorkspaceTablePage() {
       <div className="min-h-0 flex-1">
         <ApplicationsTable
           user={user}
-          access={access}
           total={total}
           loading={loading}
           getRow={getRow}
