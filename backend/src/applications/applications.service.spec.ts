@@ -33,7 +33,9 @@ describe('ApplicationsService generated-application duplicate-click protection',
         findUnique: jest.fn(),
         findFirst: jest.fn(),
         create: jest.fn(),
+        update: jest.fn(),
       },
+      resumeConversation: { findUnique: jest.fn() },
     };
     const access = { assertCanEdit: jest.fn().mockResolvedValue(undefined) };
     const numbering = {
@@ -149,6 +151,42 @@ describe('ApplicationsService generated-application duplicate-click protection',
       allow_similar_job: true,
     })).resolves.toMatchObject({ success: true, already_added: false });
     expect(duplicates.findRecentJobMatch).not.toHaveBeenCalled();
+  });
+
+  it('persists the reviewed resume, JD, template, and owned conversation', async () => {
+    const { service, prisma, duplicates } = setup();
+    duplicates.classifyBatch.mockResolvedValue([{
+      normalized_url: existing.normalized_url,
+      is_duplicate: false,
+    }]);
+    prisma.resumeConversation.findUnique.mockResolvedValue({
+      user_id: user.id,
+      workspace_id: dto.workspace_id,
+    });
+    prisma.jobApplication.create.mockResolvedValue(existing);
+    const generatedResume = { summary: 'Tailored summary', skills: [] };
+
+    await service.createGenerated(user, {
+      ...dto,
+      conversation_id: 'conversation-1',
+      job_description: 'A sufficiently detailed remote engineering job description.',
+      generated_resume: generatedResume,
+      resume_template: 'modern',
+      cover_letter_text: 'Dear Hiring Team,\n\nI am excited to apply.',
+      cover_letter_template: 'minimal',
+    });
+
+    expect(prisma.jobApplication.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        conversation_id: 'conversation-1',
+        job_description: 'A sufficiently detailed remote engineering job description.',
+        generated_resume_json: JSON.stringify(generatedResume),
+        resume_template: 'modern',
+        resume_generated_at: expect.any(Date),
+        cover_letter_text: 'Dear Hiring Team,\n\nI am excited to apply.',
+        cover_letter_template: 'minimal',
+      }),
+    }));
   });
 
   it('creates a complete manual application with the selected status', async () => {

@@ -34,6 +34,7 @@ const ROW_SELECT = {
   id: true, workspace_id: true, date: true, number: true, job_title: true, company_name: true,
   url: true, normalized_url: true, job_source: true, application_status: true, pipeline_status: true,
   interview_date: true, interview_note: true, note: true, paid: true,
+  resume_generated_at: true, cover_letter_template: true,
   created_by_user_id: true, created_at: true, updated_at: true,
 } as const;
 
@@ -131,6 +132,47 @@ export class ApplicationsService {
     });
     if (!row) throw new NotFoundException('Application not found');
     return row;
+  }
+
+  async getResume(user: AuthUser, id: string) {
+    const workspaceWhere = this.access.visibilityWhere(user);
+    const row = await this.prisma.jobApplication.findFirst({
+      where: {
+        id,
+        ...(workspaceWhere ? { workspace: workspaceWhere } : {}),
+      },
+      select: {
+        id: true,
+        job_title: true,
+        company_name: true,
+        generated_resume_json: true,
+        resume_template: true,
+        resume_generated_at: true,
+        job_description: true,
+        conversation_id: true,
+        cover_letter_text: true,
+        cover_letter_template: true,
+      },
+    });
+    if (!row) throw new NotFoundException('Application not found');
+    if (!row.generated_resume_json) throw new NotFoundException('No saved resume for this application');
+
+    try {
+      return {
+        id: row.id,
+        job_title: row.job_title,
+        company_name: row.company_name,
+        resume: JSON.parse(row.generated_resume_json),
+        template: row.resume_template || 'classic',
+        generated_at: row.resume_generated_at,
+        job_description: row.job_description,
+        cover_letter_text: row.cover_letter_text,
+        cover_letter_template: row.cover_letter_template || 'classic',
+        conversation_available: Boolean(row.conversation_id),
+      };
+    } catch {
+      throw new BadRequestException('The saved resume is corrupted');
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -467,9 +509,11 @@ export class ApplicationsService {
     }
   }
 
-  /** Saves the application candidate returned by resume generation after the user confirms it. */
+  /** Idempotent compatibility save path for older resume clients. */
   async createGenerated(user: AuthUser, dto: CreateGeneratedApplicationDto) {
     await this.access.assertCanEdit(user, dto.workspace_id);
+
+    const artifactData = await this.generatedArtifactData(user, dto);
 
     const url = dto.url.trim();
     const companyName = emptyToNull(dto.company_name);
@@ -498,6 +542,14 @@ export class ApplicationsService {
           select: ROW_SELECT,
         });
         if (existingApplication) {
+          if (Object.keys(artifactData).length) {
+            const application = await this.prisma.jobApplication.update({
+              where: { id: existingApplication.id },
+              data: artifactData,
+              select: ROW_SELECT,
+            });
+            return { success: true, already_added: true, application };
+          }
           return { success: true, already_added: true, application: existingApplication };
         }
       }
@@ -547,6 +599,7 @@ export class ApplicationsService {
             job_title: jobTitle,
             job_fingerprint: jobFingerprint,
             created_by_user_id: user.id,
+            ...artifactData,
           },
           select: ROW_SELECT,
         }),
@@ -569,6 +622,44 @@ export class ApplicationsService {
       }
       return { success: false, duplicate: true, duplicate_type: 'url' as const };
     }
+  }
+
+  private async generatedArtifactData(user: AuthUser, dto: CreateGeneratedApplicationDto) {
+    if (dto.conversation_id) {
+      const conversation = await this.prisma.resumeConversation.findUnique({
+        where: { id: dto.conversation_id },
+        select: { user_id: true, workspace_id: true },
+      });
+      if (
+        !conversation ||
+        conversation.user_id !== user.id ||
+        conversation.workspace_id !== dto.workspace_id
+      ) {
+        throw new BadRequestException('Conversation not found');
+      }
+    }
+
+    let generatedResumeJson: string | undefined;
+    if (dto.generated_resume) {
+      generatedResumeJson = JSON.stringify(dto.generated_resume);
+      if (generatedResumeJson.length > 250_000) {
+        throw new BadRequestException('Generated resume is too large to save');
+      }
+    }
+
+    return {
+      ...(dto.conversation_id ? { conversation_id: dto.conversation_id } : {}),
+      ...(dto.job_description ? { job_description: dto.job_description } : {}),
+      ...(generatedResumeJson ? {
+        generated_resume_json: generatedResumeJson,
+        resume_template: dto.resume_template || 'classic',
+        resume_generated_at: new Date(),
+      } : {}),
+      ...(dto.cover_letter_text?.trim() ? {
+        cover_letter_text: dto.cover_letter_text,
+        cover_letter_template: dto.cover_letter_template || 'classic',
+      } : {}),
+    };
   }
 
   /** Canonical write path for a banned URL discovered during application generation. */

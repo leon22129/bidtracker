@@ -371,7 +371,7 @@ export default function Home() {
     let dismissNotification: (() => void) | undefined;
     const { dismiss } = toast({
       title: `${tab?.label || profile?.name || "Profile"} — Resume Ready`,
-      description: "Generation complete. Click View to preview and download.",
+      description: "Generation complete and the application was saved. Click View to preview and download.",
       duration: Infinity,
       action: (
         <ToastAction
@@ -388,14 +388,6 @@ export default function Home() {
     });
     dismissNotification = dismiss;
     notificationDismissersRef.current.set(key, dismiss);
-  };
-
-  const handleApplicationAdded = (tabId: string) => {
-    setTabCompanyNames((prev) => {
-      const next = { ...prev };
-      delete next[tabId];
-      return next;
-    });
   };
 
   // ─── Browser login ──────────────────────────────────────────────────────────
@@ -694,7 +686,6 @@ export default function Home() {
                 onGenerationComplete={(profileId, companyName) =>
                   handleGenerationComplete(profileId, tab.tabId, companyName)
                 }
-                onApplicationAdded={() => handleApplicationAdded(tab.tabId)}
                 triggerPreview={triggerPreviewFor === tab.tabId}
                 onPreviewTriggered={() => setTriggerPreviewFor(null)}
                 settingsOpen={settingsProfileId === profile.id}

@@ -1,7 +1,6 @@
 import type {
   AiProfile,
   AiProfilesApi,
-  AddGeneratedApplicationResult,
   CreateAiProfileInput,
   GenerateResumeInput,
   GenerateResumeResult,
@@ -147,7 +146,7 @@ const webAiProfiles: AiProfilesApi = {
             resume: input.resume,
           }),
     })
-    const data = await response.json().catch(() => null) as { tailored_resume?: string; full_name?: string; conversation_id?: string; error?: string; message?: string; eligible?: boolean; reason?: string; banned?: boolean; resume?: unknown; answers?: unknown; application?: GenerateResumeResult["application"]; duplicate?: boolean; duplicate_type?: string | null; can_override?: boolean; existing_application?: GenerateResumeResult["existingApplication"] } | null
+    const data = await response.json().catch(() => null) as { tailored_resume?: string; full_name?: string; conversation_id?: string; error?: string; message?: string; eligible?: boolean; reason?: string; banned?: boolean; resume?: unknown; answers?: unknown; application?: GenerateResumeResult["application"]; duplicate?: boolean; duplicate_type?: string | null; existing_application?: GenerateResumeResult["existingApplication"] } | null
     if (!response.ok) throw new Error(data?.message || data?.error || `Generation failed (${response.status}).`)
     if (conversationAnswers) {
       if (!Array.isArray(data?.answers)) throw new Error("The AI provider returned an empty response.")
@@ -157,7 +156,6 @@ const webAiProfiles: AiProfilesApi = {
       if (data?.duplicate) return {
         duplicate: true,
         duplicateType: data.duplicate_type,
-        canOverride: data.can_override,
         existingApplication: data.existing_application,
         application: data.application,
         tailored_resume: data.resume ? JSON.stringify(data.resume) : undefined,
@@ -170,44 +168,6 @@ const webAiProfiles: AiProfilesApi = {
     }
     if (!data?.tailored_resume) throw new Error("The AI provider returned an empty response.")
     return { tailored_resume: data.tailored_resume, full_name: data.full_name, conversationId: data.conversation_id }
-  },
-  async addGeneratedApplication(workspaceId, application) {
-    const jobTitle = typeof application.job_title === "string" ? application.job_title.trim() : ""
-    const companyName = typeof application.company_name === "string" ? application.company_name.trim() : ""
-    if (!jobTitle || !companyName) {
-      throw new Error("Company name and job title are required before adding an application.")
-    }
-    const response = await apiFetch("/applications/generated", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        workspace_id: workspaceId,
-        url: application.url,
-        job_title: jobTitle,
-        company_name: companyName,
-        allow_similar_job: application.allowSimilarJob,
-      }),
-    })
-    const data = await response.json().catch(() => null) as {
-      success?: boolean
-      already_added?: boolean
-      duplicate?: boolean
-      duplicate_type?: string | null
-      can_override?: boolean
-      application?: AddGeneratedApplicationResult["application"]
-      existing_application?: GenerateResumeResult["existingApplication"]
-      message?: string
-    } | null
-    if (!response.ok) throw new Error(data?.message || `Unable to add application (${response.status}).`)
-    return {
-      success: data?.success === true,
-      alreadyAdded: data?.already_added,
-      duplicate: data?.duplicate,
-      duplicateType: data?.duplicate_type,
-      canOverride: data?.can_override,
-      application: data?.application,
-      existingApplication: data?.existing_application,
-    }
   },
 }
 

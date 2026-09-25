@@ -12,6 +12,11 @@ import { BulkActionsBar } from '@/components/table/bulk-actions';
 import { TableToolbar } from '@/components/table/toolbar';
 import { useToast } from '@/components/ui/toast';
 import { ADMIN_ONLY_FIELDS } from '@/lib/permissions';
+import {
+  downloadCoverLetterPdf,
+  downloadJobDescription as downloadSavedJobDescription,
+  downloadResumePdf,
+} from '@/lib/resume-pdf';
 
 /**
  * The workspace grid page — the app's primary screen.
@@ -204,6 +209,36 @@ export default function WorkspaceTablePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedIds, reload, clearSelection, refreshSummary]);
 
+  const downloadResume = useCallback(async (row: JobApplication) => {
+    try {
+      const artifact = await api.getApplicationResume(row.id);
+      await downloadResumePdf(artifact);
+      toast.success('Resume downloaded.');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not download the resume');
+    }
+  }, [toast]);
+
+  const downloadJobDescription = useCallback(async (row: JobApplication) => {
+    try {
+      const artifact = await api.getApplicationResume(row.id);
+      downloadSavedJobDescription(artifact);
+      toast.success('Job description downloaded.');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not download the job description');
+    }
+  }, [toast]);
+
+  const downloadCoverLetter = useCallback(async (row: JobApplication) => {
+    try {
+      const artifact = await api.getApplicationResume(row.id);
+      await downloadCoverLetterPdf(artifact);
+      toast.success('Cover letter downloaded.');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not download the cover letter');
+    }
+  }, [toast]);
+
   // ---- render --------------------------------------------------------------
   if (loadError) {
     return (
@@ -259,6 +294,9 @@ export default function WorkspaceTablePage() {
           onToggleSelect={onToggleSelect}
           onSelectAllVisible={onSelectAllVisible}
           onEditCell={onEditCell}
+          onDownloadResume={downloadResume}
+          onDownloadJobDescription={downloadJobDescription}
+          onDownloadCoverLetter={downloadCoverLetter}
         />
       </div>
 

@@ -35,25 +35,40 @@ describe('ApplicationGenerationService application metadata eligibility', () => 
         create: jest.fn(),
         update: jest.fn().mockResolvedValue({}),
       },
+      jobApplication: {
+        findUnique: jest.fn(),
+        update: jest.fn().mockResolvedValue({}),
+      },
     };
     const access = { assertCanEdit: jest.fn().mockResolvedValue(undefined) };
     const duplicates = {
       classifyBatch: jest.fn().mockResolvedValue([{ is_duplicate: false }]),
       findRecentJobMatch: jest.fn().mockResolvedValue(null),
     };
+    const applications = {
+      createGenerated: jest.fn().mockImplementation(async (_user, application) => ({
+        success: true,
+        already_added: false,
+        application: {
+          id: 'application-1',
+          number: 1,
+          ...application,
+        },
+      })),
+    };
     const service = new ApplicationGenerationService(
       prisma as any,
       access as any,
       duplicates as any,
       { matches: jest.fn().mockResolvedValue(false) } as any,
-      {} as any,
+      applications as any,
       {} as any,
     );
     jest.spyOn(service as any, 'createAnswerConversation').mockResolvedValue({
       id: 'conversation-1',
       openai_conversation_id: 'conv_openai_1',
     });
-    return { service, duplicates, prisma, access };
+    return { service, duplicates, prisma, access, applications };
   }
 
   const eligible = (overrides: Record<string, unknown> = {}) => JSON.stringify({
@@ -107,13 +122,15 @@ describe('ApplicationGenerationService application metadata eligibility', () => 
     expect(openAi).toHaveBeenCalledTimes(1);
   });
 
-  it('uses eligibility metadata for the saved application candidate', async () => {
-    const { service } = setup();
+  it('uses eligibility metadata and automatically saves the generated application', async () => {
+    const { service, applications } = setup();
     jest.spyOn(service as any, 'openAi')
       .mockResolvedValueOnce(eligible())
       .mockResolvedValueOnce(JSON.stringify({
         target_company: 'Different AI spelling',
         target_job_title: 'Different AI title',
+        summary: 'Tailored summary',
+        skills: ['TypeScript', 'PostgreSQL'],
       }));
 
     await expect(service.generate(user, dto)).resolves.toMatchObject({
@@ -124,6 +141,21 @@ describe('ApplicationGenerationService application metadata eligibility', () => 
         job_title: 'Software Engineer',
       },
     });
+    expect(applications.createGenerated).toHaveBeenCalledWith(
+      user,
+      expect.objectContaining({
+        workspace_id: dto.workspace_id,
+        url: dto.url,
+        company_name: 'Acme',
+        job_title: 'Software Engineer',
+        job_description: dto.job_description,
+        conversation_id: 'conversation-1',
+        generated_resume: expect.objectContaining({
+          summary: 'Tailored summary',
+          skills: [{ category: 'Technical Skills', items: ['TypeScript', 'PostgreSQL'] }],
+        }),
+      }),
+    );
   });
 
   it('answers from an owned compact conversation without resending the JD or resume', async () => {
@@ -169,4 +201,5 @@ describe('ApplicationGenerationService application metadata eligibility', () => 
     })).rejects.toThrow('Conversation not found');
     expect(openAi).not.toHaveBeenCalled();
   });
+
 });

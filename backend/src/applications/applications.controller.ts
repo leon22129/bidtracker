@@ -71,6 +71,11 @@ export class ApplicationsController {
     return this.generation.generate(user, dto);
   }
 
+  @Get(':id/resume')
+  getResume(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.applications.getResume(user, id);
+  }
+
   @Get('banned-patterns')
   @Roles('admin', 'super_admin')
   bannedPatterns() {

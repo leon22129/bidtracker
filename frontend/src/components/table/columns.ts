@@ -9,7 +9,8 @@ export type EditorKind =
   | 'date'
   | 'datetime'
   | 'select'
-  | 'checkbox';
+  | 'checkbox'
+  | 'resume';
 
 export interface ColumnDef {
   key: keyof JobApplication;
@@ -44,6 +45,10 @@ export const COLUMNS: ColumnDef[] = [
     sortable: true,
   },
   { key: 'url', label: 'URL', width: 300, minWidth: 140, editor: 'url', sortable: false },
+  {
+    key: 'resume_generated_at', label: 'Generated files', width: 330, minWidth: 300, editor: 'resume',
+    sortable: false, align: 'center',
+  },
   {
     key: 'job_source', label: 'Job Source', width: 150, minWidth: 110, editor: 'select',
     options: JOB_SOURCES, sortable: true,

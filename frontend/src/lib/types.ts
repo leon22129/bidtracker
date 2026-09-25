@@ -98,6 +98,8 @@ export interface JobApplication {
   interview_note: string | null;
   note: string | null;
   paid: boolean;
+  resume_generated_at: string | null;
+  cover_letter_template: string | null;
   created_by_user_id: string | null;
   created_at: string;
   updated_at: string;
@@ -183,6 +185,44 @@ export interface AnalyticsOverview {
   }>;
   pipeline_breakdown: Array<{ pipeline_status: PipelineStatus; count: number }>;
   daily_volume: Array<{ date: string; applied: number }>;
+}
+
+export interface ResumeData {
+  personalInfo: {
+    fullName: string;
+    title: string;
+    email: string;
+    phone: string;
+    location: string;
+    linkedin: string;
+  };
+  education: Array<{ degree: string; school: string; year: string }>;
+  certifications: Array<{ name: string; issuer: string; year: string }>;
+  summary: string;
+  skills: Array<{ category: string; items: string[] }>;
+  workexperience: Array<{
+    role: string;
+    original_role?: string;
+    companyname: string;
+    duration: string;
+    experience: string[];
+  }>;
+  annualSalary?: string;
+  hourlyRate?: string;
+  rateInJd?: boolean;
+}
+
+export interface ResumeArtifact {
+  id: string;
+  job_title: string | null;
+  company_name: string | null;
+  resume: ResumeData;
+  template: string;
+  generated_at: string | null;
+  job_description: string | null;
+  cover_letter_text: string | null;
+  cover_letter_template: string;
+  conversation_available: boolean;
 }
 
 export interface UpcomingInterview {

@@ -1,7 +1,7 @@
 import { Transform, Type } from 'class-transformer';
 import {
-  ArrayMaxSize, ArrayMinSize, IsArray, IsBoolean, IsDateString, IsIn, IsInt, IsOptional,
-  IsString, IsUrl, Max, MaxLength, Min, MinLength, ValidateNested,
+  ArrayMaxSize, ArrayMinSize, IsArray, IsBoolean, IsDateString, IsIn, IsInt, IsObject,
+  IsOptional, IsString, IsUrl, Max, MaxLength, Min, MinLength, ValidateNested,
 } from 'class-validator';
 import {
   APPLICATION_STATUSES, ApplicationStatus, DEFAULT_PAGE_SIZE, JOB_SOURCES, JobSource,
@@ -199,7 +199,7 @@ export class CreateManualApplicationDto {
   application_status: ApplicationStatus;
 }
 
-/** A reviewed application returned by resume generation and explicitly saved by the extension. */
+/** Compatibility payload for older resume clients that save after generation. */
 export class CreateGeneratedApplicationDto {
   @IsString()
   workspace_id: string;
@@ -224,6 +224,37 @@ export class CreateGeneratedApplicationDto {
   @Transform(toBool)
   @IsBoolean()
   allow_similar_job?: boolean = false;
+
+  /** Final, user-reviewed ResumeData used by the PDF renderer. */
+  @IsOptional()
+  @IsObject()
+  generated_resume?: Record<string, unknown>;
+
+  @IsOptional()
+  @Transform(({ value }) => typeof value === 'string' ? value.trim() : value)
+  @IsString()
+  @MinLength(8)
+  @MaxLength(20000)
+  job_description?: string;
+
+  @IsOptional()
+  @IsString()
+  @MinLength(1)
+  @MaxLength(128)
+  conversation_id?: string;
+
+  @IsOptional()
+  @IsIn(['classic', 'modern', 'minimal', 'executive', 'academic', 'tech', 'elegant', 'bold', 'corporate'])
+  resume_template?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(50000)
+  cover_letter_text?: string;
+
+  @IsOptional()
+  @IsIn(['classic', 'modern', 'minimal'])
+  cover_letter_template?: string;
 }
 
 export class UpdatePipelineDto {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
@@ -33,7 +33,6 @@ import {
   Briefcase,
   Check,
   Pencil,
-  Plus,
 } from "lucide-react";
 import {
   type ResumeData,
@@ -42,7 +41,7 @@ import {
   type Certification,
   normalizeSkills,
 } from "@/lib/parse-resume";
-import type { AiProfile, GeneratedApplication } from "../../../shared/ai-profiles";
+import type { AiProfile } from "../../../shared/ai-profiles";
 import {
   generateCoverLetterPDF,
   DEFAULT_COVER_LETTER_TEMPLATE,
@@ -63,7 +62,6 @@ interface ProfileWorkspaceProps {
   onProfileUpdated: (updated: AiProfile) => void;
   onGeneratingChange: (profileId: string, generating: boolean) => void;
   onGenerationComplete: (profileId: string, companyName?: string) => void;
-  onApplicationAdded: (profileId: string) => void;
   triggerPreview: boolean;
   onPreviewTriggered: () => void;
   settingsOpen: boolean;
@@ -77,7 +75,6 @@ export function ProfileWorkspace({
   onProfileUpdated,
   onGeneratingChange,
   onGenerationComplete,
-  onApplicationAdded,
   triggerPreview,
   onPreviewTriggered,
   settingsOpen,
@@ -118,11 +115,8 @@ export function ProfileWorkspace({
   const [isGenerating, setIsGenerating] = useState(false);
   const [isGeneratingAnswers, setIsGeneratingAnswers] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
-  const [isAddingApplication, setIsAddingApplication] = useState(false);
   const [error, setError] = useState("");
   const [applicationError, setApplicationError] = useState("");
-  const [generatedApplication, setGeneratedApplication] = useState<GeneratedApplication | null>(null);
-  const addingApplicationRef = useRef(false);
 
   // UI state
   const [previewOpen, setPreviewOpen] = useState(false);
@@ -177,7 +171,6 @@ export function ProfileWorkspace({
       return;
     }
     setError("");
-    setGeneratedApplication(null);
     setConversationId(null);
     setCompanyName("");
     setIsGenerating(true);
@@ -203,31 +196,12 @@ export function ProfileWorkspace({
         const location = existing
           ? ` It already exists in ${existing.workspace_name} as application #${existing.number}.`
           : "";
-        if (
-          data.duplicateType === "job_fingerprint" &&
-          data.canOverride &&
-          data.application &&
-          data.tailored_resume
-        ) {
-          const proceed = window.confirm(
-            `A recent application has the same company and job title.${location}\n\n` +
-            "Choose OK only if this is a different position.",
-          );
-          if (!proceed) {
-            const reason = `This appears to be the same job advertised on another site.${location}`;
-            setError(reason);
-            if (isActive) toast({ title: "Possible duplicate job", description: reason });
-            return;
-          }
-          data.application.allowSimilarJob = true;
-        } else {
-          const reason = data.duplicateType === "job_fingerprint"
-            ? `A recent application has the same company and job title.${location}`
-            : `This job URL has already been added.${location}`;
-          setError(reason);
-          if (isActive) toast({ title: "Duplicate job", description: reason });
-          return;
-        }
+        const reason = data.duplicateType === "job_fingerprint"
+          ? `A recent application has the same company and job title.${location}`
+          : `This job URL has already been added.${location}`;
+        setError(reason);
+        if (isActive) toast({ title: "Duplicate job", description: reason });
+        return;
       }
       if (data.banned) {
         const reason = "This job URL is on the banned list and was not sent to OpenAI.";
@@ -255,19 +229,12 @@ export function ProfileWorkspace({
           !generatedCompanyName ? "company name" : null,
           !generatedJobTitle ? "job title" : null,
         ].filter(Boolean).join(" and ");
-        const msg = `Resume generation did not return a ${missing}. The application cannot be added.`;
-        setGeneratedApplication(null);
+        const msg = `Resume generation did not return a ${missing}. The application cannot be saved.`;
         setCompanyName("");
         setError(msg);
         toast({ title: "Application Details Missing", description: msg });
         return;
       }
-
-      const application: GeneratedApplication = {
-        ...data.application!,
-        job_title: generatedJobTitle,
-        company_name: generatedCompanyName,
-      };
 
       const parsed = parseGeneratedResume(generatedContent);
 
@@ -316,7 +283,6 @@ export function ProfileWorkspace({
         throw new Error("The server did not create an application-question conversation.");
       }
       setConversationId(data.conversationId);
-      setGeneratedApplication(application);
       setApplicationAnswers([]);
 
       if (shouldAutoDownload) {
@@ -342,74 +308,6 @@ export function ProfileWorkspace({
       toast({ title: "Generation Failed", description: msg });
     } finally {
       setIsGenerating(false);
-    }
-  };
-
-  const handleAddApplication = async () => {
-    if (!generatedApplication || !profile.workspaceId || addingApplicationRef.current) return;
-    const jobTitle = generatedApplication.job_title.trim();
-    const generatedCompanyName = generatedApplication.company_name.trim();
-    if (!jobTitle || !generatedCompanyName) {
-      const msg = "Company name and job title are required before adding the application.";
-      setError(msg);
-      if (isActive) toast({ title: "Application Not Added", description: msg });
-      return;
-    }
-    const application = {
-      ...generatedApplication,
-      job_title: jobTitle,
-      company_name: generatedCompanyName,
-    };
-    addingApplicationRef.current = true;
-    setError("");
-    setIsAddingApplication(true);
-    try {
-      let result = await window.aiProfiles.addGeneratedApplication(
-        profile.workspaceId,
-        application,
-      );
-      if (
-        result.duplicate &&
-        result.duplicateType === "job_fingerprint" &&
-        result.canOverride
-      ) {
-        const existing = result.existingApplication;
-        const location = existing
-          ? ` It already exists in ${existing.workspace_name} as application #${existing.number}.`
-          : "";
-        const proceed = window.confirm(
-          `A recent application has the same company and job title.${location}\n\n` +
-          "Choose OK only if this is a different position.",
-        );
-        if (proceed) {
-          result = await window.aiProfiles.addGeneratedApplication(
-            profile.workspaceId,
-            { ...application, allowSimilarJob: true },
-          );
-        }
-      }
-      if (result.duplicate) {
-        const existing = result.existingApplication;
-        const location = existing
-          ? ` It already exists in ${existing.workspace_name} as application #${existing.number}.`
-          : "";
-        throw new Error(`This application has already been added.${location}`);
-      }
-      if (!result.success) throw new Error("The application could not be added.");
-      setGeneratedApplication(null);
-      setCompanyName("");
-      onApplicationAdded(profile.id);
-      if (isActive) toast({
-        title: result.alreadyAdded ? "Application already added" : "Application added",
-        description: `${jobTitle} at ${generatedCompanyName}`,
-      });
-    } catch (err) {
-      const msg = getFriendlyErrorMessage(err, "Failed to add the application.");
-      setError(msg);
-      if (isActive) toast({ title: "Application Not Added", description: msg });
-    } finally {
-      addingApplicationRef.current = false;
-      setIsAddingApplication(false);
     }
   };
 
@@ -699,20 +597,6 @@ export function ProfileWorkspace({
           >
           Preview Resume
           </Button>
-          {generatedApplication && (
-            <Button
-              variant="outline"
-              onClick={() => void handleAddApplication()}
-              disabled={isAddingApplication || isGenerating}
-            >
-              {isAddingApplication ? (
-                <Spinner className="h-4 w-4 mr-2" />
-              ) : (
-                <Plus className="h-4 w-4 mr-2" />
-              )}
-              {isAddingApplication ? "Adding..." : "Add Application"}
-            </Button>
-          )}
         </div>
         </CardContent>
       </Card>
@@ -857,11 +741,7 @@ export function ProfileWorkspace({
             id={`company-${profile.id}`}
             value={companyName}
             onChange={(e) => {
-              const value = e.target.value;
-              setCompanyName(value);
-              setGeneratedApplication((current) => current
-                ? { ...current, company_name: value }
-                : current);
+              setCompanyName(e.target.value);
             }}
             placeholder="Company name"
             className="min-w-0"

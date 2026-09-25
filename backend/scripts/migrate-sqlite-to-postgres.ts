@@ -169,13 +169,8 @@ async function main() {
     console.log(`workspaces: ${workspaceRows.length}`);
     await tx.resumeProfile.createMany({ data: targetProfiles });
     console.log(`resume profiles: ${targetProfiles.length}`);
-    await copyInPages('job applications', source.jobApplication, tx.jobApplication, {
-      mapRows: (rows) => rows.map((row: any) => duplicateIds.has(row.id)
-        ? { ...row, application_status: 'Duplicated' }
-        : row),
-    });
-    await copyInPages('payment reports', source.paymentReport, tx.paymentReport);
-    await copyInPages('banned URL patterns', source.bannedUrlPattern, tx.bannedUrlPattern);
+    // Conversations must be copied before applications because generated applications may retain
+    // a nullable conversation foreign key.
     await copyInPages(
       'resume conversations',
       source.resumeConversation,
@@ -195,6 +190,13 @@ async function main() {
         }),
       },
     );
+    await copyInPages('job applications', source.jobApplication, tx.jobApplication, {
+      mapRows: (rows) => rows.map((row: any) => duplicateIds.has(row.id)
+        ? { ...row, application_status: 'Duplicated' }
+        : row),
+    });
+    await copyInPages('payment reports', source.paymentReport, tx.paymentReport);
+    await copyInPages('banned URL patterns', source.bannedUrlPattern, tx.bannedUrlPattern);
   }, { timeout: timeoutMinutes * 60_000, maxWait: 30_000 });
 
   console.log('SQLite to PostgreSQL migration completed successfully.');

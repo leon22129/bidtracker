@@ -25,6 +25,9 @@ interface Props {
   onToggleSelect: (id: string, shiftKey: boolean, rowIndex: number) => void;
   onSelectAllVisible: (ids: string[], selected: boolean) => void;
   onEditCell: (row: JobApplication, field: keyof JobApplication, value: unknown) => void;
+  onDownloadResume: (row: JobApplication) => void;
+  onDownloadJobDescription: (row: JobApplication) => void;
+  onDownloadCoverLetter: (row: JobApplication) => void;
 }
 
 /**
@@ -46,6 +49,7 @@ export function ApplicationsTable(props: Props) {
   const {
     user, total, loading, getRow, ensureRange, filters, onSortChange,
     selectedIds, onToggleSelect, onSelectAllVisible, onEditCell,
+    onDownloadResume, onDownloadJobDescription, onDownloadCoverLetter,
   } = props;
 
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -329,6 +333,9 @@ export function ApplicationsTable(props: Props) {
                         user={user}
                         boundary={col.key === 'date' ? (weekBoundary ? 'week' : dayStart ? 'day' : undefined) : undefined}
                         onCommit={(field, value) => onEditCell(row, field, value)}
+                        onDownloadResume={onDownloadResume}
+                        onDownloadJobDescription={onDownloadJobDescription}
+                        onDownloadCoverLetter={onDownloadCoverLetter}
                       />
                     </div>
                   ))}

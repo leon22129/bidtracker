@@ -61,6 +61,13 @@ creator, so reassignment cannot move earlier work to another bidder.
 | `interview_date` | DATETIME NULL | admin only |
 | `interview_note` | TEXT NULL | admin only |
 | `paid` | BOOL | admin only; locks the row |
+| `conversation_id` | TEXT NULL FK to ResumeConversation SET NULL | temporary follow-up context; cleared when retention deletes the conversation |
+| `job_description` | TEXT NULL | durable job-description download for generated applications |
+| `generated_resume_json` | TEXT NULL | durable, reviewed resume snapshot used for later PDF downloads |
+| `resume_template` | TEXT NULL | template captured with the snapshot |
+| `resume_generated_at` | DATETIME NULL | presence/timestamp exposed by list responses without returning the large snapshot |
+| `cover_letter_text` | TEXT NULL | durable generated/edited cover-letter snapshot |
+| `cover_letter_template` | TEXT NULL | cover-letter template and lightweight list marker |
 | `created_by_user_id` | TEXT FK→User RESTRICT | immutable bidder/payment subject; backfilled for legacy rows |
 | `created_at` / `updated_at` | DATETIME | |
 

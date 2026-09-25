@@ -2,7 +2,7 @@
 
 import type {
   AnalyticsOverview, ApplicationFilters, BannedUrlPattern, ImportPreview, ImportResult, JobApplication, Paginated,
-  PaymentReport, PaymentReportResult, Role, UpcomingInterview, User, Workspace,
+  PaymentReport, PaymentReportResult, ResumeArtifact, Role, UpcomingInterview, User, Workspace,
   WorkspaceSummary,
 } from './types';
 
@@ -210,6 +210,8 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ ids }),
     }),
+  getApplicationResume: (id: string) =>
+    request<ResumeArtifact>(`/applications/${id}/resume`),
   listBannedPatterns: () => request<BannedUrlPattern[]>('/applications/banned-patterns'),
   createBannedPattern: (pattern: string) =>
     request<BannedUrlPattern>('/applications/banned-patterns', {

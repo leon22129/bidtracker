@@ -320,17 +320,9 @@ function Cleanup {
     Write-Host ""
     Write-Host "==> stopping" -ForegroundColor Yellow
 
-    if ($ProcessJobCreated) {
-        try {
-            [BidTrackerProcessJob]::Close()
-            $script:ProcessJobCreated = $false
-            Start-Sleep -Milliseconds 250
-        }
-        catch {
-            # Fall through to explicit process-tree cleanup below.
-        }
-    }
-
+    # Stop each tracked tree while its wrapper process still exists. Closing the
+    # job first can make the wrappers exit before taskkill can discover escaped
+    # npm/Node descendants, leaving dev watchers alive after the launcher stops.
     foreach ($Process in $Processes) {
         if ($null -eq $Process) {
             continue
@@ -344,6 +336,17 @@ function Cleanup {
         }
         catch {
             # Already stopped.
+        }
+    }
+
+    if ($ProcessJobCreated) {
+        try {
+            [BidTrackerProcessJob]::Close()
+            $script:ProcessJobCreated = $false
+            Start-Sleep -Milliseconds 250
+        }
+        catch {
+            # Explicit process-tree cleanup above already made the best effort.
         }
     }
 
@@ -607,6 +610,24 @@ for ($i = 1; $i -le 60; $i++) {
 }
 
 if (!$LocalHealthy) {
+    Write-Host ""
+    Write-Host "Backend log:" -ForegroundColor Yellow
+    if (Test-Path $BackendOut) {
+        Get-Content $BackendOut -Tail 40
+    }
+    if (Test-Path $BackendErr) {
+        Get-Content $BackendErr -Tail 40
+    }
+
+    Write-Host ""
+    Write-Host "Frontend log:" -ForegroundColor Yellow
+    if (Test-Path $FrontendOut) {
+        Get-Content $FrontendOut -Tail 40
+    }
+    if (Test-Path $FrontendErr) {
+        Get-Content $FrontendErr -Tail 40
+    }
+
     Die "application did not become ready within 60 seconds."
 }
 

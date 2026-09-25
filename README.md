@@ -225,9 +225,13 @@ Requesting a workspace you can't see returns **404, not 403** — a 403 would co
 | PATCH  | `/applications/:id/pipeline` | 🛡      | `pipeline_status`, `interview_date`, `interview_note`     |
 | PATCH  | `/applications/bulk`         | 🔑 edit | `{ ids, patch }` — per-row policy, per-id failure reasons    |
 | POST   | `/applications/bulk-delete`  | 🛡      | `{ ids }`                                                     |
-| POST   | `/applications/generate`     | 🔑 edit | Generate an eligible resume candidate without writing an application |
-| POST   | `/applications/generated`    | 🔑 edit | Idempotently save `{ workspace_id, url, job_title, company_name }` by normalized URL |
+| POST   | `/applications/generate`     | 🔑 edit | Generate a resume and automatically save the Applied application |
+| POST   | `/applications/generated`    | 🔑 edit | Backward-compatible idempotent save endpoint for older resume clients |
 | GET/POST/DELETE | `/applications/banned-patterns` | 🛡 | Manage database-backed banned URL substrings |
+
+Additional generated-resume routes:
+
+- `GET /applications/:id/resume` returns the durable resume snapshot for frontend PDF download.
 
 **`GET /applications` query parameters**
 
@@ -714,12 +718,13 @@ Logs continue to appear in the terminal and are also stored as newline-delimited
 
 `GET /api/workspaces/profiles/assigned` returns the one-to-one profiles belonging to workspaces the authenticated user can access.
 `POST /api/applications/generate` accepts `{ workspace_id, url, job_description, profile_id?, questions? }`,
-checks the supplied job description, and generates the resume and optional application answers through OpenAI. It returns
-an application candidate without writing it, so a lost extension response cannot leave an inaccessible
-duplicate behind. The extension explicitly saves that candidate with `POST /api/applications/generated`
-after receiving the resume. Both `job_title` and `company_name` are required by the extension client,
-the request DTO, and the save service. `/api/resume/generate` remains available as a compatibility alias for older
-extension builds. Admins manage database-backed URL deny patterns from **Banned URLs** in the dashboard.
+checks the supplied job description, generates the resume and optional application answers through OpenAI, and
+automatically saves the application as Applied before returning success. The same write retains the resume snapshot,
+JD, template, optional cover letter, and local conversation id. BidTracker can therefore download `resume.pdf`, `jd.txt`, and (when generated)
+`cover letter.pdf` indefinitely
+after the provider conversation is removed by the 90-day retention job. Both `job_title` and `company_name` are required before
+the application is saved. `/api/applications/generated` and `/api/resume/generate` remain available as compatibility
+endpoints for older extension builds. Admins manage database-backed URL deny patterns from **Banned URLs** in the dashboard.
 Workspace profile details are edited through `PATCH /api/workspaces/:id`.
 
 ### Common tasks

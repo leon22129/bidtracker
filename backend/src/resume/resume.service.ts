@@ -1,4 +1,6 @@
-import { BadGatewayException, BadRequestException, Injectable, Logger } from '@nestjs/common';
+import {
+  BadGatewayException, BadRequestException, Injectable, Logger,
+} from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthUser } from '../common/decorators/current-user.decorator';
@@ -181,17 +183,29 @@ export class ApplicationGenerationService {
       );
     }
 
-    // Generation is intentionally read-only. The extension saves this candidate through
-    // POST /applications/generated only after it has safely received and rendered the resume.
-    const application = {
+    const coverLetterText = profile.generate_cover_letter && typeof resume.coverletter === 'string'
+      ? resume.coverletter
+      : undefined;
+    const saved = await this.applications.createGenerated(user, {
+      workspace_id: workspace.id,
       url: dto.url.trim(),
       job_title: jobTitle,
       company_name: companyName,
-    };
+      generated_resume: this.buildResumeSnapshot(profile, resume),
+      job_description: jobDescription,
+      conversation_id: conversation.id,
+      resume_template: profile.template || 'classic',
+      cover_letter_text: coverLetterText,
+      cover_letter_template: coverLetterText
+        ? profile.cover_letter_template || 'classic'
+        : undefined,
+    });
+    if (!saved.success) return saved;
+
     return {
       success: true,
       eligible: true,
-      application,
+      application: saved.application,
       resume,
       answers,
       conversation_id: conversation.id,
@@ -266,6 +280,63 @@ export class ApplicationGenerationService {
     if (!profile) return null;
     await this.access.assertCanEdit(user, profile.workspace_id);
     return profile;
+  }
+
+  private buildResumeSnapshot(profile: any, generated: Record<string, unknown>) {
+    const parseArray = (value: unknown) => {
+      try {
+        const parsed = typeof value === 'string' ? JSON.parse(value) : value;
+        return Array.isArray(parsed) ? parsed : [];
+      } catch {
+        return [];
+      }
+    };
+    const rawSkills = parseArray(generated.skills);
+    const skills = typeof rawSkills[0] === 'string'
+      ? [{
+          category: 'Technical Skills',
+          items: rawSkills
+            .filter((item) => typeof item === 'string' && item.trim())
+            .map((item) => item.trim()),
+        }]
+      : rawSkills.map((entry: any) => ({
+          category: typeof entry?.category === 'string' && entry.category.trim()
+            ? entry.category.trim()
+            : 'Technical Skills',
+          items: parseArray(entry?.items)
+            .filter((item) => typeof item === 'string' && item.trim())
+            .map((item) => item.trim()),
+        }));
+    const workexperience = parseArray(generated.workexperience).map((entry: any) => ({
+      role: profile.use_generated_role_titles !== false
+        ? String(entry?.role || entry?.original_role || '')
+        : String(entry?.original_role || entry?.role || ''),
+      ...(entry?.original_role ? { original_role: String(entry.original_role) } : {}),
+      companyname: String(entry?.companyname || ''),
+      duration: String(entry?.duration || ''),
+      experience: parseArray(entry?.experience).filter((item) => typeof item === 'string'),
+    }));
+
+    return {
+      personalInfo: {
+        fullName: profile.full_name || '',
+        title: profile.update_headline !== false && typeof generated.main_title === 'string'
+          ? generated.main_title
+          : profile.title || '',
+        email: profile.email || '',
+        phone: profile.phone || '',
+        location: profile.location || '',
+        linkedin: profile.linkedin || '',
+      },
+      education: parseArray(profile.education_json),
+      certifications: parseArray(profile.certifications_json),
+      summary: typeof generated.summary === 'string' ? generated.summary : '',
+      skills,
+      workexperience,
+      annualSalary: typeof generated.annual_salary === 'string' ? generated.annual_salary : '',
+      hourlyRate: typeof generated.hourly_rate === 'string' ? generated.hourly_rate : '',
+      rateInJd: typeof generated.rate_in_jd === 'boolean' ? generated.rate_in_jd : undefined,
+    };
   }
 
   private async createAnswerConversation(

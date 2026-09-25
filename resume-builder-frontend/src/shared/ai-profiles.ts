@@ -67,7 +67,6 @@ export type GenerateResumeResult = {
   banned?: boolean
   duplicate?: boolean
   duplicateType?: string | null
-  canOverride?: boolean
   application?: GeneratedApplication
   existingApplication?: {
     id: string
@@ -81,21 +80,11 @@ export type GenerateResumeResult = {
 }
 
 export type GeneratedApplication = {
+  id?: string
+  number?: number
   url: string
   job_title: string
   company_name: string
-  /** Set only after the user confirms a recent company/title match is a different opening. */
-  allowSimilarJob?: boolean
-}
-
-export type AddGeneratedApplicationResult = {
-  success: boolean
-  alreadyAdded?: boolean
-  duplicate?: boolean
-  duplicateType?: string | null
-  canOverride?: boolean
-  application?: GeneratedApplication & { id: string; number: number }
-  existingApplication?: GenerateResumeResult["existingApplication"]
 }
 
 export type AiProfilesApi = {
@@ -104,8 +93,4 @@ export type AiProfilesApi = {
   update: (input: UpdateAiProfileInput) => Promise<AiProfile>
   delete: (profileId: string) => Promise<void>
   generate: (input: GenerateResumeInput) => Promise<GenerateResumeResult>
-  addGeneratedApplication: (
-    workspaceId: string,
-    application: GeneratedApplication,
-  ) => Promise<AddGeneratedApplicationResult>
 }
