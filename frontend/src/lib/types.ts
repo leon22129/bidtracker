@@ -67,7 +67,18 @@ export interface ResumeProfile {
     email: string;
     phone: string;
     location: string;
+    country: string;
+    address1: string;
+    city: string;
+    county: string;
+    state: string;
+    zip: string;
     linkedin: string;
+    gender: string;
+    hispanicLatino: string;
+    ethnicity: string;
+    requiresSponsorship: string;
+    legallyAuthorizedUs: string;
   };
   education: Array<{ degree: string; school: string; year: string }>;
   certifications: Array<{ name: string; issuer: string; year: string }>;

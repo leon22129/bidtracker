@@ -46,13 +46,18 @@ export type UpdateAiProfileInput = CreateAiProfileInput & {
   id: string
 }
 
+export type ApplicationQuestionInput = {
+  question: string
+  options?: string[]
+}
+
 export type GenerateResumeInput = {
   profileId: string
   workspaceId?: string
   url?: string
   prompt?: string
   jobDescription?: string
-  questions?: string[]
+  questions?: ApplicationQuestionInput[]
   resume?: unknown
   conversationId?: string
   kind?: "resume" | "applicationAnswers" | "jobEligibility"
@@ -62,6 +67,7 @@ export type GenerateResumeResult = {
   tailored_resume?: string
   full_name?: string
   conversationId?: string
+  answers?: Array<{ question: string; answer: string }>
   eligible?: boolean
   reason?: string
   banned?: boolean

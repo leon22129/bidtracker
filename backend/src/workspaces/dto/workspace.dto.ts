@@ -56,7 +56,62 @@ export class UpdateWorkspaceDto {
 
   @IsOptional()
   @IsString()
+  @MaxLength(100)
+  country?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  address1?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  city?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  county?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  state?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(30)
+  zip?: string;
+
+  @IsOptional()
+  @IsString()
   linkedin?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  gender?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  hispanic_latino?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(150)
+  ethnicity?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(20)
+  requires_sponsorship?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(20)
+  legally_authorized_us?: string;
 
   @IsOptional()
   @IsBoolean()

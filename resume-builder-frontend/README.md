@@ -11,6 +11,12 @@ npm run dev
 
 Create an AI Profile, paste a job description, generate the resume, and download the PDF from the browser.
 
+## Job-page scanning and application answers
+
+When installed as the Chrome extension, Resume Builder scans the active tab for JobPosting metadata and common job-description containers. If nothing reliable is found, paste or edit the job description manually.
+
+The same scan collects visible application questions. Questions present during resume generation are sent with the resume request; later pages can be handled with **Scan Next Page** and the existing backend conversation. Review the generated answers, choose **Autofill Profile + Answers**, and verify the form before continuing. Contact and optional demographic fields use saved profile values rather than AI inference; veteran status uses the fixed non-veteran default. The extension never submits an application, and file uploads remain manual.
+
 ## Scripts
 
 | Command | Description |

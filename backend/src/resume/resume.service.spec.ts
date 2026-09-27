@@ -172,7 +172,7 @@ describe('ApplicationGenerationService application metadata eligibility', () => 
 
     await expect(service.answerQuestions(user, {
       conversation_id: 'conversation-1',
-      questions: ['Why this role?'],
+      questions: [{ question: 'Why this role?', options: [] }],
     })).resolves.toEqual({
       answers: [{ question: 'Why this role?', answer: 'It aligns with my experience.' }],
     });
@@ -183,6 +183,27 @@ describe('ApplicationGenerationService application metadata eligibility', () => 
       expect.objectContaining({ conversationId: 'conv_openai_1' }),
     );
     expect(openAi.mock.calls[0][0]).not.toContain(dto.job_description);
+  });
+
+  it('constrains select answers to an option supplied by the application page', async () => {
+    const { service, prisma } = setup();
+    prisma.resumeConversation.findUnique.mockResolvedValue({
+      id: 'conversation-1',
+      user_id: user.id,
+      workspace_id: dto.workspace_id,
+      openai_conversation_id: 'conv_openai_1',
+    });
+    const openAi = jest.spyOn(service as any, 'openAi').mockResolvedValue(JSON.stringify({
+      answers: [{ question: 'Do you have Kubernetes experience?', answer: 'yes' }],
+    }));
+
+    await expect(service.answerQuestions(user, {
+      conversation_id: 'conversation-1',
+      questions: [{ question: 'Do you have Kubernetes experience?', options: ['Yes', 'No'] }],
+    })).resolves.toEqual({
+      answers: [{ question: 'Do you have Kubernetes experience?', answer: 'Yes' }],
+    });
+    expect(openAi.mock.calls[0][0]).toContain('Allowed answers: ["Yes","No"]');
   });
 
   it('does not allow another user to use a conversation id', async () => {
@@ -197,7 +218,7 @@ describe('ApplicationGenerationService application metadata eligibility', () => 
 
     await expect(service.answerQuestions(user, {
       conversation_id: 'conversation-1',
-      questions: ['Why this role?'],
+      questions: [{ question: 'Why this role?', options: [] }],
     })).rejects.toThrow('Conversation not found');
     expect(openAi).not.toHaveBeenCalled();
   });

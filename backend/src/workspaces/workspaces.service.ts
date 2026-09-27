@@ -215,7 +215,11 @@ export class WorkspacesService {
     const data: Record<string, unknown> = {};
     for (const [dtoKey, dbKey] of [
       ['career_path', 'career_path'], ['full_name', 'full_name'], ['title', 'title'],
-      ['email', 'email'], ['phone', 'phone'], ['location', 'location'], ['linkedin', 'linkedin'],
+      ['email', 'email'], ['phone', 'phone'], ['location', 'location'], ['country', 'country'],
+      ['address1', 'address1'], ['city', 'city'], ['county', 'county'], ['state', 'state'], ['zip', 'zip'],
+      ['linkedin', 'linkedin'], ['gender', 'gender'], ['hispanic_latino', 'hispanic_latino'],
+      ['ethnicity', 'ethnicity'],
+      ['requires_sponsorship', 'requires_sponsorship'], ['legally_authorized_us', 'legally_authorized_us'],
       ['update_headline', 'update_headline'], ['use_generated_role_titles', 'use_generated_role_titles'],
       ['template', 'template'], ['save_in_folder', 'save_in_folder'], ['auto_download', 'auto_download'],
       ['download_jd_with_pdf', 'download_jd_with_pdf'], ['use_company_name', 'use_company_name'],
@@ -239,7 +243,13 @@ export class WorkspacesService {
       career_path: profile.career_path,
       personal_info: {
         fullName: profile.full_name, title: profile.title, email: profile.email,
-        phone: profile.phone, location: profile.location, linkedin: profile.linkedin,
+        phone: profile.phone, location: profile.location, country: profile.country,
+        address1: profile.address1, city: profile.city, county: profile.county,
+        state: profile.state, zip: profile.zip,
+        linkedin: profile.linkedin, gender: profile.gender,
+        hispanicLatino: profile.hispanic_latino, ethnicity: profile.ethnicity,
+        requiresSponsorship: profile.requires_sponsorship,
+        legallyAuthorizedUs: profile.legally_authorized_us,
       },
       update_headline: profile.update_headline,
       use_generated_role_titles: profile.use_generated_role_titles,

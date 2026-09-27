@@ -55,6 +55,37 @@ describe('WorkspacesService', () => {
     expect(prisma.resumeProfile.update).not.toHaveBeenCalled();
   });
 
+  it('stores application autofill preferences in the resume profile', async () => {
+    const service = new WorkspacesService(prisma as never, access as never, conversationCleanup as never);
+    prisma.resumeProfile.update.mockResolvedValue({ id: 'p-1' });
+    prisma.resumeProfile.findUnique
+      .mockResolvedValueOnce({ id: 'p-1', workspace_id: 'w-1' })
+      .mockResolvedValueOnce({
+        id: 'p-1', workspace_id: 'w-1', name: 'Profile', country: 'United States', county: 'King',
+        gender: 'Female', hispanic_latino: 'No', ethnicity: 'Asian',
+        requires_sponsorship: 'No', legally_authorized_us: 'Yes',
+      });
+
+    await expect(service.updateProfile('p-1', {
+      country: 'United States', county: 'King', gender: 'Female', hispanic_latino: 'No', ethnicity: 'Asian',
+      requires_sponsorship: 'No', legally_authorized_us: 'Yes',
+    }, { id: 'admin-1', username: 'admin', email: 'admin@example.com', role: 'admin' }))
+      .resolves.toMatchObject({
+        personal_info: {
+          country: 'United States', county: 'King', gender: 'Female', hispanicLatino: 'No', ethnicity: 'Asian',
+          requiresSponsorship: 'No', legallyAuthorizedUs: 'Yes',
+        },
+      });
+
+    expect(prisma.resumeProfile.update).toHaveBeenCalledWith({
+      where: { id: 'p-1' },
+      data: {
+        country: 'United States', county: 'King', gender: 'Female', hispanic_latino: 'No', ethnicity: 'Asian',
+        requires_sponsorship: 'No', legally_authorized_us: 'Yes',
+      },
+    });
+  });
+
   it('blocks non-admin users from changing workspace ownership', async () => {
     const service = new WorkspacesService(prisma as never, access as never, conversationCleanup as never);
     prisma.workspace.findUnique.mockResolvedValue({

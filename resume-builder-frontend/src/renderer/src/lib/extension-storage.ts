@@ -93,6 +93,163 @@ export async function getCurrentBrowserTabUrl(): Promise<string> {
   return url;
 }
 
+export type PageQuestion = {
+  question: string;
+  fieldType: string;
+  options: string[];
+  sensitive: boolean;
+};
+
+export type CurrentPageContext = {
+  url: string;
+  title: string;
+  jobTitle: string;
+  jobDescription: string;
+  jobDescriptionSource: string | null;
+  questions: PageQuestion[];
+};
+
+export type PageFillResult = {
+  filled: number;
+  skipped: number;
+  skippedQuestions: string[];
+};
+
+export type PageAutofillProfile = {
+  fullName: string;
+  email: string;
+  phone: string;
+  location: string;
+  country: string;
+  address1: string;
+  city: string;
+  county: string;
+  state: string;
+  zip: string;
+  linkedin: string;
+  gender: string;
+  hispanicLatino: string;
+  ethnicity: string;
+  requiresSponsorship: string;
+  legallyAuthorizedUs: string;
+};
+
+type ExtensionTabsApi = {
+  query: (queryInfo: { active: boolean; currentWindow: boolean }) => Promise<Array<{ id?: number; url?: string }>>;
+  sendMessage: (tabId: number, message: unknown, options?: { frameId?: number }) => Promise<unknown>;
+};
+
+type ExtensionWebNavigationApi = {
+  getAllFrames: (details: { tabId: number }) => Promise<Array<{ frameId: number; url: string }> | null>;
+};
+
+function extensionTabs(): ExtensionTabsApi | null {
+  return (globalThis as { chrome?: { tabs?: ExtensionTabsApi } }).chrome?.tabs ?? null;
+}
+
+function extensionWebNavigation(): ExtensionWebNavigationApi | null {
+  return (globalThis as { chrome?: { webNavigation?: ExtensionWebNavigationApi } }).chrome?.webNavigation ?? null;
+}
+
+type FrameMessageResponse<T> = {
+  frameId: number;
+  value: T;
+};
+
+async function sendToCurrentPageFrames<T>(message: unknown): Promise<{
+  tabUrl: string;
+  responses: Array<FrameMessageResponse<T>>;
+}> {
+  const tabsApi = extensionTabs();
+  if (!tabsApi?.sendMessage) {
+    throw new Error("Page scanning is available when Resume Builder is installed as a Chrome extension.");
+  }
+  const [tab] = await tabsApi.query({ active: true, currentWindow: true });
+  if (tab?.id === undefined || !tab.url || !/^https?:\/\//i.test(tab.url)) {
+    throw new Error("Open a job posting in the active browser tab first.");
+  }
+
+  let frameIds = [0];
+  try {
+    const frames = await extensionWebNavigation()?.getAllFrames({ tabId: tab.id });
+    if (frames?.length) frameIds = [...new Set(frames.map((frame) => frame.frameId))];
+  } catch {
+    // Fall back to the top frame when frame enumeration is unavailable.
+  }
+
+  const responses = (await Promise.all(frameIds.map(async (frameId) => {
+    try {
+      const value = await tabsApi.sendMessage(tab.id as number, message, { frameId }) as T;
+      return { frameId, value };
+    } catch {
+      return null;
+    }
+  }))).filter((response): response is FrameMessageResponse<T> => response !== null);
+
+  if (!responses.length) {
+    throw new Error("This page cannot be scanned. Reload the job page after updating the extension, or enter the content manually.");
+  }
+  return { tabUrl: tab.url, responses };
+}
+
+export function canScanCurrentPage(): boolean {
+  return Boolean(extensionTabs()?.sendMessage);
+}
+
+export async function getCurrentPageContext(): Promise<CurrentPageContext> {
+  const { tabUrl, responses } = await sendToCurrentPageFrames<CurrentPageContext>({ type: "RESUME_AI_EXTRACT_PAGE" });
+  const contexts = responses.filter(({ value }) => value && Array.isArray(value.questions));
+  if (!contexts.length) throw new Error("No readable job or application content was found on this page.");
+
+  const primary = contexts.find(({ frameId }) => frameId === 0)?.value ?? contexts[0].value;
+  const descriptionContext = contexts.reduce((best, current) =>
+    current.value.jobDescription.length > best.value.jobDescription.length ? current : best,
+  ).value;
+  const questions = new Map<string, PageQuestion>();
+  for (const { value } of contexts) {
+    for (const question of value.questions) {
+      const key = question.question.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+      const existing = questions.get(key);
+      if (!existing || question.options.length > existing.options.length) questions.set(key, question);
+    }
+  }
+
+  return {
+    ...primary,
+    url: tabUrl,
+    jobDescription: descriptionContext.jobDescription,
+    jobDescriptionSource: descriptionContext.jobDescriptionSource,
+    questions: [...questions.values()],
+  };
+}
+
+export async function fillCurrentPageAnswers(
+  answers: Array<{ question: string; answer: string }>,
+  profile: PageAutofillProfile,
+  coverLetterText?: string,
+): Promise<PageFillResult> {
+  type DetailedPageFillResult = PageFillResult & { filledQuestions?: string[] };
+  const { responses } = await sendToCurrentPageFrames<DetailedPageFillResult>({
+    type: "RESUME_AI_FILL_ANSWERS",
+    answers,
+    profile,
+    coverLetterText,
+  });
+  const results = responses.map(({ value }) => value).filter(Boolean);
+  const normalizeQuestion = (value: string) => value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  const filledQuestions = new Set(results.flatMap((result) => result.filledQuestions ?? []).map(normalizeQuestion));
+  const skippedQuestions = [...new Map(results
+    .flatMap((result) => result.skippedQuestions ?? [])
+    .filter((question) => !filledQuestions.has(normalizeQuestion(question)))
+    .map((question) => [normalizeQuestion(question), question])).values()];
+
+  return {
+    filled: results.reduce((total, result) => total + (result.filled || 0), 0),
+    skipped: skippedQuestions.length,
+    skippedQuestions,
+  };
+}
+
 function openDirectoryHandleDb(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(PROFILE_DIRECTORY_HANDLES_DB, 1);

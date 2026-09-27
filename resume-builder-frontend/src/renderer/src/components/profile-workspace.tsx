@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
@@ -33,6 +33,8 @@ import {
   Briefcase,
   Check,
   Pencil,
+  RefreshCw,
+  ClipboardCheck,
 } from "lucide-react";
 import {
   type ResumeData,
@@ -41,7 +43,7 @@ import {
   type Certification,
   normalizeSkills,
 } from "@/lib/parse-resume";
-import type { AiProfile } from "../../../shared/ai-profiles";
+import type { AiProfile, ApplicationQuestionInput } from "../../../shared/ai-profiles";
 import {
   generateCoverLetterPDF,
   DEFAULT_COVER_LETTER_TEMPLATE,
@@ -53,7 +55,15 @@ import {
   parseGeneratedResume,
   getResumeDetailsForProfile,
 } from "@/lib/profile-utils";
-import { chooseProfileDirectory, getCurrentBrowserTabUrl, getProfileDownloadPaths } from "@/lib/extension-storage";
+import {
+  canScanCurrentPage,
+  chooseProfileDirectory,
+  fillCurrentPageAnswers,
+  getCurrentBrowserTabUrl,
+  getCurrentPageContext,
+  getProfileDownloadPaths,
+  type PageQuestion,
+} from "@/lib/extension-storage";
 
 interface ProfileWorkspaceProps {
   profile: AiProfile;
@@ -98,7 +108,18 @@ export function ProfileWorkspace({
     email: "",
     phone: "",
     location: "",
+    country: "",
+    address1: "",
+    city: "",
+    county: "",
+    state: "",
+    zip: "",
     linkedin: "",
+    gender: "",
+    hispanicLatino: "",
+    ethnicity: "",
+    requiresSponsorship: "",
+    legallyAuthorizedUs: "",
   });
   const [education, setEducation] = useState<Education[]>([
     { degree: "", school: "", year: "" },
@@ -111,12 +132,18 @@ export function ProfileWorkspace({
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [coverLetterText, setCoverLetterText] = useState<string | null>(null);
   const [applicationQuestions, setApplicationQuestions] = useState("");
+  const [scannedQuestions, setScannedQuestions] = useState<PageQuestion[]>([]);
   const [applicationAnswers, setApplicationAnswers] = useState<Array<{ question: string; answer: string }>>([]);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isGeneratingAnswers, setIsGeneratingAnswers] = useState(false);
+  const [isScanningPage, setIsScanningPage] = useState(false);
+  const [isFillingPage, setIsFillingPage] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
   const [error, setError] = useState("");
   const [applicationError, setApplicationError] = useState("");
+  const [pageScanMessage, setPageScanMessage] = useState("");
+  const [pageFillMessage, setPageFillMessage] = useState("");
+  const automaticScanRunningRef = useRef(false);
 
   // UI state
   const [previewOpen, setPreviewOpen] = useState(false);
@@ -181,6 +208,15 @@ export function ProfileWorkspace({
     const shouldUseCompanyName = profile.useCompanyName ?? useCompanyName;
     const shouldAutoDownload = profile.autoDownload ?? autoDownload;
     const shouldSaveInFolder = profile.saveInFolder ?? saveInFolder;
+    const initialQuestionLines = applicationQuestions
+      .split("\n")
+      .map((question) => question.trim())
+      .filter(Boolean)
+      .slice(0, 50);
+    const initialQuestions: ApplicationQuestionInput[] = initialQuestionLines.map((question) => ({
+      question,
+      options: scannedQuestions.find((item) => item.question === question)?.options ?? [],
+    }));
 
     try {
       const tabUrl = await getCurrentBrowserTabUrl();
@@ -189,6 +225,7 @@ export function ProfileWorkspace({
         workspaceId: profile.workspaceId,
         url: tabUrl,
         jobDescription,
+        questions: initialQuestions.length ? initialQuestions : undefined,
         kind: "resume",
       });
       if (data.duplicate) {
@@ -283,7 +320,7 @@ export function ProfileWorkspace({
         throw new Error("The server did not create an application-question conversation.");
       }
       setConversationId(data.conversationId);
-      setApplicationAnswers([]);
+      setApplicationAnswers(data.answers ?? []);
 
       if (shouldAutoDownload) {
         await handleDownloadPDF(
@@ -311,20 +348,116 @@ export function ProfileWorkspace({
     }
   };
 
+  const handleScanPage = async (automatic = false) => {
+    if (!canScanCurrentPage()) {
+      if (!automatic) setPageScanMessage("Page scanning is available in the Chrome extension. You can paste the job description and questions manually.");
+      return;
+    }
+    setIsScanningPage(true);
+    if (!automatic) setPageScanMessage("");
+    try {
+      const context = await getCurrentPageContext();
+      const nonSensitiveQuestions = context.questions.filter((item) => !item.sensitive);
+      const safeQuestions = nonSensitiveQuestions.slice(0, 50);
+      const sensitiveCount = context.questions.length - nonSensitiveQuestions.length;
+      const omittedCount = nonSensitiveQuestions.length - safeQuestions.length;
+      const choiceCount = safeQuestions.filter((item) => item.options.length).length;
+
+      if (context.jobDescription.trim() && (!jobDescription.trim() || (!automatic && !resumeData))) {
+        setJobDescription(context.jobDescription.trim());
+        setError("");
+      }
+      setApplicationQuestions(safeQuestions.map((item) => item.question).join("\n"));
+      setScannedQuestions(safeQuestions);
+      setApplicationAnswers([]);
+      setApplicationError("");
+      setPageFillMessage("");
+
+      const parts = [
+        context.jobDescription.trim()
+          ? "Job description found"
+          : "No job description was identified; paste it manually",
+        safeQuestions.length
+          ? `${safeQuestions.length} application question${safeQuestions.length === 1 ? "" : "s"} found`
+          : "no application questions found on this page",
+      ];
+      if (sensitiveCount) parts.push(`${sensitiveCount} sensitive field${sensitiveCount === 1 ? " was" : "s were"} excluded from AI and will use saved profile values when available`);
+      if (choiceCount) parts.push(`allowed choices captured for ${choiceCount} question${choiceCount === 1 ? "" : "s"}`);
+      if (omittedCount) parts.push(`${omittedCount} extra field${omittedCount === 1 ? " was" : "s were"} omitted from the 50-question limit`);
+      setPageScanMessage(`${parts.join("; ")}.`);
+    } catch (err) {
+      if (!automatic) {
+        setPageScanMessage(getFriendlyErrorMessage(err, "This page could not be scanned. Enter the content manually."));
+      }
+    } finally {
+      setIsScanningPage(false);
+    }
+  };
+
+  const handleFillPage = async () => {
+    setIsFillingPage(true);
+    setPageFillMessage("");
+    try {
+      const result = await fillCurrentPageAnswers(applicationAnswers, personalInfo, coverLetterText ?? undefined);
+      const skipped = result.skipped
+        ? ` ${result.skipped} answer${result.skipped === 1 ? "" : "s"} could not be safely matched and must be entered manually.`
+        : "";
+      const skippedDetails = result.skippedQuestions.length
+        ? ` Skipped: ${result.skippedQuestions.slice(0, 5).join("; ")}.`
+        : "";
+      setPageFillMessage(`Filled ${result.filled} profile or answer field${result.filled === 1 ? "" : "s"}.${skipped}${skippedDetails} Review the page before continuing.`);
+    } catch (err) {
+      setPageFillMessage(getFriendlyErrorMessage(err, "The answers could not be filled on this page."));
+    } finally {
+      setIsFillingPage(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!isActive || !canScanCurrentPage() || applicationQuestions.trim()) return;
+
+    let stopped = false;
+    const scanForDynamicApplicationForm = async () => {
+      if (stopped || automaticScanRunningRef.current || applicationQuestions.trim()) return;
+      automaticScanRunningRef.current = true;
+      try {
+        await handleScanPage(true);
+      } finally {
+        automaticScanRunningRef.current = false;
+      }
+    };
+
+    // Company career pages often add the Workable application dialog without
+    // navigating. Keep looking until its application questions are mounted.
+    void scanForDynamicApplicationForm();
+    const interval = window.setInterval(() => {
+      void scanForDynamicApplicationForm();
+    }, 1500);
+
+    return () => {
+      stopped = true;
+      window.clearInterval(interval);
+    };
+  }, [isActive, applicationQuestions]);
+
   const handleGenerateAnswers = async () => {
     if (!resumeData || !conversationId) {
       setApplicationError("Generate a resume before answering application questions.");
       return;
     }
 
-    const questions = applicationQuestions
+    const questionLines = applicationQuestions
       .split("\n")
       .map((question) => question.trim())
       .filter(Boolean);
-    if (!questions.length) {
+    if (!questionLines.length) {
       setApplicationError("Enter at least one application question.");
       return;
     }
+    const questions: ApplicationQuestionInput[] = questionLines.map((question) => ({
+      question,
+      options: scannedQuestions.find((item) => item.question === question)?.options ?? [],
+    }));
 
     setApplicationError("");
     setIsGeneratingAnswers(true);
@@ -345,7 +478,7 @@ export function ProfileWorkspace({
       const answers = (parsed.answers ?? [])
         .filter((item) => typeof item.question === "string" && typeof item.answer === "string")
         .map((item) => ({ question: item.question as string, answer: item.answer as string }));
-      if (answers.length !== questions.length) {
+      if (answers.length !== questionLines.length) {
         throw new Error("The AI returned an incomplete set of application answers.");
       }
       setApplicationAnswers(answers);
@@ -525,7 +658,7 @@ export function ProfileWorkspace({
                 Job Description
               </CardTitle>
               <CardDescription className="mt-2">
-                Paste the job description below, then click Generate.
+                Scanned from the active job page when possible. You can always edit or paste it manually.
               </CardDescription>
             </div>
             <Tooltip>
@@ -579,6 +712,19 @@ export function ProfileWorkspace({
           }}
         />
 
+        <div className="flex items-center gap-3 flex-wrap">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => void handleScanPage(false)}
+            disabled={isScanningPage || isGenerating}
+          >
+            <RefreshCw className={`h-4 w-4 mr-2 ${isScanningPage ? "animate-spin" : ""}`} />
+            {isScanningPage ? "Scanning Page..." : "Scan Current Page"}
+          </Button>
+          {pageScanMessage && <p className="text-sm text-muted-foreground">{pageScanMessage}</p>}
+        </div>
+
         {error && (
           <Alert variant="destructive">
           <AlertCircle className="h-4 w-4" />
@@ -607,7 +753,7 @@ export function ProfileWorkspace({
         <CardHeader>
           <CardTitle>Application Questions</CardTitle>
           <CardDescription>
-            Enter one question per line. Answers use the generated resume and job description.
+            Questions are scanned from the current application page when possible. Edit them or enter one per line, then repeat this step on each page.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -618,7 +764,7 @@ export function ProfileWorkspace({
               setApplicationQuestions(event.target.value);
               setApplicationError("");
             }}
-            disabled={!resumeData || !conversationId || isGeneratingAnswers}
+            disabled={isGenerating || isGeneratingAnswers}
           />
           {applicationError && (
             <Alert variant="destructive">
@@ -626,19 +772,44 @@ export function ProfileWorkspace({
               <AlertDescription>{applicationError}</AlertDescription>
             </Alert>
           )}
-          <Button
-            variant="outline"
-            onClick={() => void handleGenerateAnswers()}
-            disabled={!resumeData || !conversationId || isGeneratingAnswers || isGenerating}
-          >
-            {isGeneratingAnswers ? "Writing Answers..." : "Generate Answers"}
-          </Button>
+          <div className="flex items-center gap-3 flex-wrap">
+            <Button
+              variant="outline"
+              onClick={() => void handleGenerateAnswers()}
+              disabled={!resumeData || !conversationId || isGeneratingAnswers || isGenerating}
+            >
+              {isGeneratingAnswers ? "Writing Answers..." : "Generate Answers"}
+            </Button>
+            <Button
+              type="button"
+              onClick={() => void handleFillPage()}
+              disabled={isFillingPage || isGeneratingAnswers}
+            >
+              <ClipboardCheck className="h-4 w-4 mr-2" />
+              {isFillingPage ? "Filling Page..." : "Autofill Profile + Answers"}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => void handleScanPage(false)}
+              disabled={isScanningPage || isGeneratingAnswers}
+            >
+              Scan Next Page
+            </Button>
+          </div>
+          {pageFillMessage && <p className="text-sm text-muted-foreground">{pageFillMessage}</p>}
           {applicationAnswers.length > 0 && (
             <div className="space-y-4">
               {applicationAnswers.map((item, index) => (
                 <div key={`${item.question}-${index}`} className="space-y-2">
                   <div className="font-medium">{item.question}</div>
-                  <Textarea value={item.answer} readOnly className="min-h-28" />
+                  <Textarea
+                    value={item.answer}
+                    className="min-h-28"
+                    onChange={(event) => setApplicationAnswers((current) => current.map((answer, answerIndex) =>
+                      answerIndex === index ? { ...answer, answer: event.target.value } : answer,
+                    ))}
+                  />
                 </div>
               ))}
             </div>

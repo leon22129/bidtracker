@@ -1,4 +1,4 @@
-import { Transform } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
   ArrayMaxSize,
   ArrayMinSize,
@@ -9,7 +9,22 @@ import {
   IsUrl,
   MaxLength,
   MinLength,
+  ValidateNested,
 } from 'class-validator';
+
+export class ApplicationQuestionDto {
+  @IsString()
+  @MinLength(1)
+  @MaxLength(2000)
+  question: string;
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(100)
+  @IsString({ each: true })
+  @MaxLength(500, { each: true })
+  options?: string[];
+}
 
 export class GenerateApplicationDto {
   @IsString()
@@ -24,8 +39,10 @@ export class GenerateApplicationDto {
 
   @IsOptional()
   @IsArray()
-  @IsString({ each: true })
-  questions?: string[];
+  @ArrayMaxSize(50)
+  @ValidateNested({ each: true })
+  @Type(() => ApplicationQuestionDto)
+  questions?: ApplicationQuestionDto[];
 
   @Transform(({ value }) => typeof value === 'string' ? value.trim() : value)
   @IsString()
@@ -50,8 +67,10 @@ export class GenerateProfilePromptDto {
 
   @IsOptional()
   @IsArray()
-  @IsString({ each: true })
-  questions?: string[];
+  @ArrayMaxSize(50)
+  @ValidateNested({ each: true })
+  @Type(() => ApplicationQuestionDto)
+  questions?: ApplicationQuestionDto[];
 
   @IsOptional()
   resume?: unknown;
@@ -66,8 +85,7 @@ export class AnswerApplicationQuestionsDto {
   @IsArray()
   @ArrayMinSize(1)
   @ArrayMaxSize(50)
-  @IsString({ each: true })
-  @MinLength(1, { each: true })
-  @MaxLength(2000, { each: true })
-  questions: string[];
+  @ValidateNested({ each: true })
+  @Type(() => ApplicationQuestionDto)
+  questions: ApplicationQuestionDto[];
 }

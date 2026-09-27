@@ -1,6 +1,6 @@
 {
   "name": "Resume-Builder",
-  "version": "0.2.1",
+  "version": "0.6.3",
   "private": true,
   "type": "module",
   "scripts": {

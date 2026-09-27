@@ -4,7 +4,18 @@ export type ResumePersonalInfo = {
   phone: string
   email: string
   location: string
+  country: string
+  address1: string
+  city: string
+  county: string
+  state: string
+  zip: string
   linkedin: string
+  gender: string
+  hispanicLatino: string
+  ethnicity: string
+  requiresSponsorship: string
+  legallyAuthorizedUs: string
 }
 
 export type ResumeEducation = {
@@ -25,7 +36,18 @@ export const DEFAULT_RESUME_PERSONAL_INFO: ResumePersonalInfo = {
   phone: "",
   email: "",
   location: "",
+  country: "",
+  address1: "",
+  city: "",
+  county: "",
+  state: "",
+  zip: "",
   linkedin: "",
+  gender: "",
+  hispanicLatino: "",
+  ethnicity: "",
+  requiresSponsorship: "",
+  legallyAuthorizedUs: "",
 }
 
 export const DEFAULT_RESUME_EDUCATION: ResumeEducation[] = [
@@ -52,7 +74,18 @@ export function normalizeResumePersonalInfo(value: unknown): ResumePersonalInfo 
     phone: readStringField(source, "phone"),
     email: readStringField(source, "email"),
     location: readStringField(source, "location"),
+    country: readStringField(source, "country"),
+    address1: readStringField(source, "address1"),
+    city: readStringField(source, "city"),
+    county: readStringField(source, "county"),
+    state: readStringField(source, "state"),
+    zip: readStringField(source, "zip"),
     linkedin: readStringField(source, "linkedin"),
+    gender: readStringField(source, "gender"),
+    hispanicLatino: readStringField(source, "hispanicLatino"),
+    ethnicity: readStringField(source, "ethnicity"),
+    requiresSponsorship: readStringField(source, "requiresSponsorship"),
+    legallyAuthorizedUs: readStringField(source, "legallyAuthorizedUs"),
   }
 }
 

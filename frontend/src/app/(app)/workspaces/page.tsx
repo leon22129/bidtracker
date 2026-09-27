@@ -250,7 +250,10 @@ function ProfileModal({
   const [name, setName] = useState(profile?.name ?? workspace.name);
   const [careerPath, setCareerPath] = useState(profile?.career_path ?? '');
   const [personal, setPersonal] = useState(profile?.personal_info ?? {
-    fullName: '', title: '', email: '', phone: '', location: '', linkedin: '',
+    fullName: '', title: '', email: '', phone: '', location: '', country: '', linkedin: '',
+    address1: '', city: '', county: '', state: '', zip: '',
+    gender: '', hispanicLatino: '', ethnicity: '',
+    requiresSponsorship: '', legallyAuthorizedUs: '',
   });
   const [education, setEducation] = useState(profile?.education ?? [{ degree: '', school: '', year: '' }]);
   const [certifications, setCertifications] = useState(profile?.certifications ?? []);
@@ -270,7 +273,18 @@ function ProfileModal({
         email: personal.email,
         phone: personal.phone,
         location: personal.location,
+        country: /^(?:US|USA|United States(?: of America)?)$/i.test(personal.country.trim()) ? 'United States' : personal.country,
+        address1: personal.address1,
+        city: personal.city,
+        county: personal.county,
+        state: personal.state,
+        zip: personal.zip,
         linkedin: personal.linkedin,
+        gender: personal.gender,
+        hispanic_latino: personal.hispanicLatino,
+        ethnicity: personal.ethnicity,
+        requires_sponsorship: personal.requiresSponsorship,
+        legally_authorized_us: personal.legallyAuthorizedUs,
         education,
         certifications,
         update_headline: updateHeadline,
@@ -297,8 +311,51 @@ function ProfileModal({
           <ProfileInput label="Email" type="email" value={personal.email} onChange={(v) => setPersonal({ ...personal, email: v })} />
           <ProfileInput label="Phone" value={personal.phone} onChange={(v) => setPersonal({ ...personal, phone: v })} />
           <ProfileInput label="Location" value={personal.location} onChange={(v) => setPersonal({ ...personal, location: v })} />
+          <ProfileInput label="Country" value={personal.country} onChange={(v) => setPersonal({ ...personal, country: v })} />
+          <ProfileInput label="Street address (Address 1)" value={personal.address1} onChange={(v) => setPersonal({ ...personal, address1: v })} />
+          <ProfileInput label="City" value={personal.city} onChange={(v) => setPersonal({ ...personal, city: v })} />
+          <ProfileInput label="County" value={personal.county} onChange={(v) => setPersonal({ ...personal, county: v })} />
+          <ProfileInput label="State / province" value={personal.state} onChange={(v) => setPersonal({ ...personal, state: v })} />
+          <ProfileInput label="ZIP / postal code" value={personal.zip} onChange={(v) => setPersonal({ ...personal, zip: v })} />
           <ProfileInput label="LinkedIn" value={personal.linkedin} onChange={(v) => setPersonal({ ...personal, linkedin: v })} />
+          <ProfileSelect
+            label="Require employment sponsorship now or later"
+            value={personal.requiresSponsorship}
+            options={['Yes', 'No']}
+            onChange={(v) => setPersonal({ ...personal, requiresSponsorship: v })}
+          />
+          <ProfileSelect
+            label="Legally authorized to work in the US"
+            value={personal.legallyAuthorizedUs}
+            options={['Yes', 'No']}
+            onChange={(v) => setPersonal({ ...personal, legallyAuthorizedUs: v })}
+          />
+          <ProfileSelect
+            label="Gender (application autofill)"
+            value={personal.gender}
+            options={['Male', 'Female', 'Non-binary', 'Decline To Self Identify']}
+            onChange={(v) => setPersonal({ ...personal, gender: v })}
+          />
+          <ProfileSelect
+            label="Hispanic/Latino (application autofill)"
+            value={personal.hispanicLatino}
+            options={['Yes', 'No', 'Decline To Self Identify']}
+            onChange={(v) => setPersonal({ ...personal, hispanicLatino: v })}
+          />
+          <ProfileSelect
+            label="Race / ethnicity (especially when Hispanic/Latino is No)"
+            value={personal.ethnicity}
+            options={[
+              'American Indian or Alaskan Native', 'Asian', 'Black or African American',
+              'Hispanic or Latino', 'White', 'Native Hawaiian or Other Pacific Islander',
+              'Two or More Races', 'Decline To Self Identify',
+            ]}
+            onChange={(v) => setPersonal({ ...personal, ethnicity: v })}
+          />
         </div>
+        <p className="mt-2 text-xs text-gray-500">
+          Application autofill always selects “I am not a protected veteran” for veteran status. Demographic values are optional and are never inferred by AI.
+        </p>
         <label className="label mt-4" htmlFor="career-path">Career path</label>
         <textarea id="career-path" className="input mt-1 min-h-32 font-mono text-xs" value={careerPath} onChange={(e) => setCareerPath(e.target.value)} />
         <div className="mt-3 space-y-2">
@@ -342,6 +399,18 @@ function ProfileModal({
 
 function ProfileInput({ label, value, onChange, type = 'text' }: { label: string; value: string; onChange: (value: string) => void; type?: string }) {
   return <label className="label">{label}<input type={type} className="input mt-1" value={value} onChange={(e) => onChange(e.target.value)} /></label>;
+}
+
+function ProfileSelect({ label, value, options, onChange }: { label: string; value: string; options: string[]; onChange: (value: string) => void }) {
+  return (
+    <label className="label">
+      {label}
+      <select className="input mt-1" value={value} onChange={(e) => onChange(e.target.value)}>
+        <option value="">Do not autofill</option>
+        {options.map((option) => <option key={option} value={option}>{option}</option>)}
+      </select>
+    </label>
+  );
 }
 
 function OwnerModal({

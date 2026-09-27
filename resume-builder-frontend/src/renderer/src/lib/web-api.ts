@@ -153,6 +153,17 @@ const webAiProfiles: AiProfilesApi = {
       return { tailored_resume: JSON.stringify({ answers: data.answers }) }
     }
     if (applicationGeneration) {
+      const answerPayload = data?.answers && typeof data.answers === "object"
+        ? (data.answers as { answers?: unknown }).answers
+        : data?.answers
+      const answers = Array.isArray(answerPayload)
+        ? answerPayload.filter((item): item is { question: string; answer: string } => Boolean(
+            item
+            && typeof item === "object"
+            && typeof (item as { question?: unknown }).question === "string"
+            && typeof (item as { answer?: unknown }).answer === "string",
+          ))
+        : undefined
       if (data?.duplicate) return {
         duplicate: true,
         duplicateType: data.duplicate_type,
@@ -164,7 +175,7 @@ const webAiProfiles: AiProfilesApi = {
       if (data?.banned) return { banned: true, tailored_resume: "" }
       if (data?.eligible === false) return { eligible: false, reason: data.reason, tailored_resume: "" }
       if (!data?.resume) throw new Error("The AI provider returned an empty response.")
-      return { eligible: true, tailored_resume: JSON.stringify(data.resume), full_name: data.full_name, conversationId: data.conversation_id, application: data.application }
+      return { eligible: true, tailored_resume: JSON.stringify(data.resume), full_name: data.full_name, conversationId: data.conversation_id, application: data.application, answers }
     }
     if (!data?.tailored_resume) throw new Error("The AI provider returned an empty response.")
     return { tailored_resume: data.tailored_resume, full_name: data.full_name, conversationId: data.conversation_id }

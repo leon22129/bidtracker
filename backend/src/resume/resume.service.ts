@@ -18,6 +18,7 @@ import {
   buildApplicationAnswersPrompt,
   buildApplicationQuestionsInput,
   buildJobEligibilityPrompt,
+  type ApplicationQuestionInput,
 } from './original-prompts';
 import { BannedUrlService } from '../applications/banned-url.service';
 import { ApplicationsService } from '../applications/applications.service';
@@ -382,7 +383,7 @@ ${JSON.stringify(resume)}`;
     }
   }
 
-  private async answerInConversation(openAiConversationId: string, questions: string[]) {
+  private async answerInConversation(openAiConversationId: string, questions: ApplicationQuestionInput[]) {
     const text = await this.openAi(buildApplicationQuestionsInput(questions), {
       conversationId: openAiConversationId,
       instructions: APPLICATION_ANSWERS_INSTRUCTIONS,
@@ -402,7 +403,21 @@ ${JSON.stringify(resume)}`;
     ) {
       throw new BadGatewayException('OpenAI returned an incomplete set of application answers');
     }
-    return parsed;
+    return {
+      answers: parsed.answers.map((answer: Record<string, unknown>, index: number) => {
+        const expected = questions[index];
+        const rawAnswer = String(answer.answer).trim();
+        if (!expected.options?.length) {
+          return { question: expected.question, answer: rawAnswer };
+        }
+        const normalizeChoice = (value: string) => value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+        const selected = expected.options.find((option) => normalizeChoice(option) === normalizeChoice(rawAnswer));
+        if (!selected) {
+          throw new BadGatewayException(`OpenAI did not select an allowed answer for: ${expected.question}`);
+        }
+        return { question: expected.question, answer: selected };
+      }),
+    };
   }
 
   private async openAi(prompt: string, options: OpenAiOptions = {}) {
