@@ -55,6 +55,9 @@ export class GenerateProfilePromptDto {
   @IsString()
   profile_id: string;
 
+  @IsUrl({ require_protocol: true })
+  url: string;
+
   @IsOptional()
   @IsString()
   @MinLength(8)

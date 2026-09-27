@@ -138,7 +138,7 @@ async function bootstrap() {
   const port = Number(process.env.PORT || 3001);
   await app.listen(port, '0.0.0.0');
   logger.log(`API listening on http://0.0.0.0:${port}/api`);
-  logger.log('Duplicate detection scope: global (database-enforced for active URLs)');
+  logger.log('Duplicate detection scope: workspace (database-enforced for active URLs)');
   logger.log(`Job fingerprint window: ${process.env.JOB_FINGERPRINT_WINDOW_DAYS || '90'} days`);
 }
 

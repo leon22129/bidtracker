@@ -131,15 +131,16 @@ export class DuplicateService {
     workspaceId: string,
     urls: string[],
     excludeId?: string,
-  ): Promise<Map<string, DuplicateReference>> {
+  ): Promise<Map<string, ExistingRef>> {
     const normalized = urls.map(normalizeUrl);
-    const byNormalized = new Map<string, DuplicateReference>();
+    const byNormalized = new Map<string, ExistingRef>();
 
     // Bounded chunks keep query payloads predictable for very large imports.
     const CHUNK = 400;
     for (let i = 0; i < normalized.length; i += CHUNK) {
       const rows = await this.prisma.jobApplication.findMany({
         where: {
+          workspace_id: workspaceId,
           ...(excludeId ? { id: { not: excludeId } } : {}),
           normalized_url: { in: normalized.slice(i, i + CHUNK) },
         },
@@ -157,16 +158,9 @@ export class DuplicateService {
       });
 
       for (const row of rows) {
-        const current = byNormalized.get(row.normalized_url);
-        // Prefer a reference from the caller's workspace when both local and cross-workspace rows
-        // exist. This preserves safe idempotent retries without exposing another workspace.
-        if (current?.same_workspace || (current && row.workspace_id !== workspaceId)) continue;
-        byNormalized.set(
-          row.normalized_url,
-          row.workspace_id === workspaceId
-            ? toExistingRef(row)
-            : { same_workspace: false },
-        );
+        if (!byNormalized.has(row.normalized_url)) {
+          byNormalized.set(row.normalized_url, toExistingRef(row));
+        }
       }
     }
 
@@ -228,20 +222,13 @@ export interface ExistingRef {
   number: number;
 }
 
-/** Deliberately contains no tenant or application metadata. */
-export interface CrossWorkspaceDuplicateRef {
-  same_workspace: false;
-}
-
-export type DuplicateReference = ExistingRef | CrossWorkspaceDuplicateRef;
-
 export interface DuplicateVerdict {
   url: string;
   normalized_url: string;
   is_duplicate: boolean;
   reason: 'existing' | 'within_batch' | null;
   duplicate_type: 'url' | 'job_fingerprint' | null;
-  existing?: DuplicateReference;
+  existing?: ExistingRef;
 }
 
 export interface JobIdentityVerdict {

@@ -1,4 +1,4 @@
-import { IsArray, IsBoolean, IsEmail, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
+import { IsArray, IsBoolean, IsEmail, IsIn, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
 
 export class CreateWorkspaceDto {
   @IsString()
@@ -37,6 +37,21 @@ export class UpdateWorkspaceDto {
   @IsOptional()
   @IsString()
   full_name?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  first_name?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  middle_name?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  last_name?: string;
 
   @IsOptional()
   @IsString()
@@ -112,6 +127,11 @@ export class UpdateWorkspaceDto {
   @IsString()
   @MaxLength(20)
   legally_authorized_us?: string;
+
+  @IsOptional()
+  @IsString()
+  @IsIn(['', 'US Citizen', 'Green Card', 'Other'])
+  us_work_status?: string;
 
   @IsOptional()
   @IsBoolean()

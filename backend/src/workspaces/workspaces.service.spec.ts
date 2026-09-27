@@ -62,26 +62,30 @@ describe('WorkspacesService', () => {
       .mockResolvedValueOnce({ id: 'p-1', workspace_id: 'w-1' })
       .mockResolvedValueOnce({
         id: 'p-1', workspace_id: 'w-1', name: 'Profile', country: 'United States', county: 'King',
+        full_name: 'Jane Marie Doe', first_name: 'Jane', middle_name: 'Marie', last_name: 'Doe',
         gender: 'Female', hispanic_latino: 'No', ethnicity: 'Asian',
-        requires_sponsorship: 'No', legally_authorized_us: 'Yes',
+        requires_sponsorship: 'No', legally_authorized_us: 'Yes', us_work_status: 'US Citizen',
       });
 
     await expect(service.updateProfile('p-1', {
+      first_name: 'Jane', middle_name: 'Marie', last_name: 'Doe',
       country: 'United States', county: 'King', gender: 'Female', hispanic_latino: 'No', ethnicity: 'Asian',
-      requires_sponsorship: 'No', legally_authorized_us: 'Yes',
+      requires_sponsorship: 'No', legally_authorized_us: 'Yes', us_work_status: 'US Citizen',
     }, { id: 'admin-1', username: 'admin', email: 'admin@example.com', role: 'admin' }))
       .resolves.toMatchObject({
         personal_info: {
+          firstName: 'Jane', middleName: 'Marie', lastName: 'Doe',
           country: 'United States', county: 'King', gender: 'Female', hispanicLatino: 'No', ethnicity: 'Asian',
-          requiresSponsorship: 'No', legallyAuthorizedUs: 'Yes',
+          requiresSponsorship: 'No', legallyAuthorizedUs: 'Yes', usWorkStatus: 'US Citizen',
         },
       });
 
     expect(prisma.resumeProfile.update).toHaveBeenCalledWith({
       where: { id: 'p-1' },
       data: {
+        first_name: 'Jane', middle_name: 'Marie', last_name: 'Doe',
         country: 'United States', county: 'King', gender: 'Female', hispanic_latino: 'No', ethnicity: 'Asian',
-        requires_sponsorship: 'No', legally_authorized_us: 'Yes',
+        requires_sponsorship: 'No', legally_authorized_us: 'Yes', us_work_status: 'US Citizen',
       },
     });
   });

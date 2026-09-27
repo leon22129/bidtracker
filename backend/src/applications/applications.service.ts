@@ -224,7 +224,7 @@ export class ApplicationsService {
           data.application_status = 'Duplicated';
         } else if (verdict.is_duplicate) {
           throw new BadRequestException(
-            'That URL already exists in the system. Editing a row into a duplicate is not allowed ' +
+            'That URL already exists in this workspace. Editing a row into a duplicate is not allowed ' +
               '(duplicates affect payment); ask an admin if this is intentional.',
           );
         }
@@ -530,7 +530,6 @@ export class ApplicationsService {
 
     if (verdict.is_duplicate) {
       // A retry is successful only when this exact URL already belongs to the requested workspace.
-      // Cross-workspace and company-only duplicates remain conflicts with no tenant metadata.
       if (
         verdict.duplicate_type === 'url' &&
         verdict.existing?.same_workspace &&
@@ -611,6 +610,7 @@ export class ApplicationsService {
 
       const winner = await this.prisma.jobApplication.findFirst({
         where: {
+          workspace_id: dto.workspace_id,
           normalized_url: normalizedUrl,
           application_status: { in: ['Pending', 'Applied'] },
         },
@@ -726,6 +726,7 @@ export class ApplicationsService {
           const conflicts = activeUrls.length
             ? await this.prisma.jobApplication.findMany({
                 where: {
+                  workspace_id: workspaceId,
                   normalized_url: { in: activeUrls },
                   application_status: { in: ['Pending', 'Applied'] },
                 },

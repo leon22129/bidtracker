@@ -133,11 +133,14 @@ export const api = {
     id: string,
     data: Partial<{
       name: string; owner_user_id: string; is_archived: boolean;
-      profile_name: string; career_path: string; full_name: string; title: string; email: string;
+      profile_name: string; career_path: string; full_name: string;
+      first_name: string; middle_name: string; last_name: string;
+      title: string; email: string;
       phone: string; location: string; country: string; linkedin: string;
       address1: string; city: string; county: string; state: string; zip: string;
       gender: string; hispanic_latino: string; ethnicity: string;
       requires_sponsorship: string; legally_authorized_us: string;
+      us_work_status: string;
       update_headline: boolean; use_generated_role_titles: boolean;
       template: string; save_in_folder: boolean; auto_download: boolean;
       download_jd_with_pdf: boolean; use_company_name: boolean;

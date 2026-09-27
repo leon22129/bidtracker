@@ -22,7 +22,7 @@ Stripped of the feature list, this is **an internal operations tool for a bid fa
 | Sorting/filtering/search on those rows | All filtering happens in SQL, backed by composite indexes. Client filters are a UI shell over query params. |
 | Multiple users editing one table | Optimistic cell edits with per-cell rollback + `updated_at` returned on every write. |
 | Number resets per date | Uniqueness is `(workspace_id, date, number)` enforced by a DB unique index, assigned inside a transaction. |
-| Duplicate detection across job boards | Exact URLs use indexed `normalized_url`; recent cross-site copies use a workspace-scoped company/title `job_fingerprint`. |
+| Duplicate detection across job boards | Exact URLs use workspace-scoped `(workspace_id, normalized_url)`; recent cross-site copies use a workspace-scoped company/title `job_fingerprint`. |
 | Bidders must not set `Duplicated` / edit paid rows | Enforced in a **backend field-level policy layer**, not in the UI. UI only mirrors it. |
 | Payment survives workspace reassignment | Aggregation uses immutable `JobApplication.created_by_user_id`; workspace ownership controls current assignment, not historical credit. |
 | Large Excel imports | Streamed parse (ExcelJS/CSV) → validate → chunked `createMany` in a transaction. Enrichment is bounded-concurrency and optional. |

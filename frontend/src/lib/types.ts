@@ -63,6 +63,9 @@ export interface ResumeProfile {
   career_path: string;
   personal_info: {
     fullName: string;
+    firstName: string;
+    middleName: string;
+    lastName: string;
     title: string;
     email: string;
     phone: string;
@@ -79,6 +82,7 @@ export interface ResumeProfile {
     ethnicity: string;
     requiresSponsorship: string;
     legallyAuthorizedUs: string;
+    usWorkStatus: string;
   };
   education: Array<{ degree: string; school: string; year: string }>;
   certifications: Array<{ name: string; issuer: string; year: string }>;

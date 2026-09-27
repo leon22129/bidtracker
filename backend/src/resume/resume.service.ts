@@ -119,7 +119,7 @@ export class ApplicationGenerationService {
     }
 
     const jobDescription = dto.job_description.trim();
-    const eligibility = await this.openAi(buildJobEligibilityPrompt(jobDescription), {
+    const eligibility = await this.openAi(buildJobEligibilityPrompt(jobDescription, dto.url), {
       operation: 'job_eligibility',
     });
     const eligibilityJson = this.parseEligibility(eligibility);
@@ -171,7 +171,7 @@ export class ApplicationGenerationService {
     }));
     const conversation = await this.createAnswerConversation(
       user,
-      profile.id,
+      profile,
       workspace.id,
       jobDescription,
       resume,
@@ -181,6 +181,7 @@ export class ApplicationGenerationService {
       answers = await this.answerInConversation(
         conversation.openai_conversation_id,
         dto.questions,
+        profile,
       );
     }
 
@@ -218,8 +219,9 @@ export class ApplicationGenerationService {
     const profile = await this.findAccessibleProfile(user, dto.profile_id);
     if (!profile) throw new BadRequestException('Profile is not assigned to your account');
     if (dto.job_description && dto.kind === 'jobEligibility') {
+      if (!dto.url) throw new BadRequestException('Job URL is required for eligibility research');
       return {
-        tailored_resume: await this.openAi(buildJobEligibilityPrompt(dto.job_description), {
+        tailored_resume: await this.openAi(buildJobEligibilityPrompt(dto.job_description, dto.url), {
           operation: 'job_eligibility',
         }),
         full_name: profile.full_name,
@@ -232,7 +234,7 @@ export class ApplicationGenerationService {
       const resume = this.parseJson(tailoredResume);
       const conversation = await this.createAnswerConversation(
         user,
-        profile.id,
+        profile,
         profile.workspace_id,
         dto.job_description,
         resume,
@@ -246,7 +248,12 @@ export class ApplicationGenerationService {
     if (dto.job_description && dto.kind === 'applicationAnswers' && dto.questions?.length) {
       return {
         tailored_resume: await this.openAi(
-          buildApplicationAnswersPrompt(dto.job_description, dto.resume ?? {}, dto.questions),
+          buildApplicationAnswersPrompt(
+            dto.job_description,
+            dto.resume ?? {},
+            dto.questions,
+            this.candidateInfoReference(profile),
+          ),
           { operation: 'application_answers' },
         ),
         full_name: profile.full_name,
@@ -268,6 +275,9 @@ export class ApplicationGenerationService {
     const answers = await this.answerInConversation(
       conversation.openai_conversation_id,
       dto.questions,
+      conversation.profile_id
+        ? await this.prisma.resumeProfile.findUnique({ where: { id: conversation.profile_id } })
+        : null,
     );
     await this.prisma.resumeConversation.update({
       where: { id: conversation.id },
@@ -321,6 +331,9 @@ export class ApplicationGenerationService {
     return {
       personalInfo: {
         fullName: profile.full_name || '',
+        firstName: profile.first_name || '',
+        middleName: profile.middle_name || '',
+        lastName: profile.last_name || '',
         title: profile.update_headline !== false && typeof generated.main_title === 'string'
           ? generated.main_title
           : profile.title || '',
@@ -342,7 +355,7 @@ export class ApplicationGenerationService {
 
   private async createAnswerConversation(
     user: AuthUser,
-    profileId: string,
+    profile: any,
     workspaceId: string | null,
     jobDescription: string,
     resume: Record<string, unknown>,
@@ -353,6 +366,9 @@ Job description:
 ---
 ${jobDescription}
 ---
+
+Candidate info:
+${this.candidateInfoReference(profile)}
 
 Final generated candidate resume:
 ${JSON.stringify(resume)}`;
@@ -368,7 +384,7 @@ ${JSON.stringify(resume)}`;
           openai_conversation_id: data.id,
           user_id: user.id,
           workspace_id: workspaceId,
-          profile_id: profileId,
+          profile_id: profile.id,
         },
       });
     } catch (error) {
@@ -383,7 +399,43 @@ ${JSON.stringify(resume)}`;
     }
   }
 
-  private async answerInConversation(openAiConversationId: string, questions: ApplicationQuestionInput[]) {
+  private candidateInfoReference(profile: any): string {
+    return [
+      ['US work status', profile.us_work_status],
+      ['Require employment sponsorship now or later', profile.requires_sponsorship],
+      ['Legally authorized to work in the US', profile.legally_authorized_us],
+      ['Gender', profile.gender],
+      ['Hispanic/Latino', profile.hispanic_latino],
+      ['Race', profile.ethnicity],
+    ]
+      .filter(([, value]) => typeof value === 'string' && value.trim())
+      .map(([label, value]) => `${label}: ${String(value).trim()}`)
+      .join('\n');
+  }
+
+  private profileWorkAuthorizationAnswer(question: string, profile: any): string {
+    if (!profile) return '';
+    const normalizedQuestion = question.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+    const sponsorship = String(profile.requires_sponsorship || '').trim();
+    const authorization = String(profile.legally_authorized_us || '').trim();
+    const asksSponsorship = /\bsponsor(?:ship|ed|ing)?\b/.test(normalizedQuestion);
+    const asksAuthorization = /\b(?:legally )?authorized to work\b|\bright to work\b|\bwork authorization\b|\beligible to work\b/.test(normalizedQuestion);
+    const asksWithoutSponsorship = /\bwithout\b.*\bsponsor(?:ship|ed|ing)?\b|\bnot require\b.*\bsponsor(?:ship|ed|ing)?\b/.test(normalizedQuestion);
+
+    if (asksAuthorization && asksSponsorship && asksWithoutSponsorship) {
+      if (!/^(?:yes|no)$/i.test(authorization) || !/^(?:yes|no)$/i.test(sponsorship)) return '';
+      return /^yes$/i.test(authorization) && /^no$/i.test(sponsorship) ? 'Yes' : 'No';
+    }
+    if (asksSponsorship && /^(?:yes|no)$/i.test(sponsorship)) return sponsorship;
+    if (asksAuthorization && /^(?:yes|no)$/i.test(authorization)) return authorization;
+    return '';
+  }
+
+  private async answerInConversation(
+    openAiConversationId: string,
+    questions: ApplicationQuestionInput[],
+    profile?: any,
+  ) {
     const text = await this.openAi(buildApplicationQuestionsInput(questions), {
       conversationId: openAiConversationId,
       instructions: APPLICATION_ANSWERS_INSTRUCTIONS,
@@ -406,7 +458,8 @@ ${JSON.stringify(resume)}`;
     return {
       answers: parsed.answers.map((answer: Record<string, unknown>, index: number) => {
         const expected = questions[index];
-        const rawAnswer = String(answer.answer).trim();
+        const profileAnswer = this.profileWorkAuthorizationAnswer(expected.question, profile);
+        const rawAnswer = profileAnswer || String(answer.answer).trim();
         if (!expected.options?.length) {
           return { question: expected.question, answer: rawAnswer };
         }
@@ -565,7 +618,8 @@ ${JSON.stringify(resume)}`;
       .replace(
         'Candidate Current Location (city and/or state):',
         `Candidate Current Location (city and/or state):\n${profile.location}`,
-      );
+      )
+      .replace('Candidate info:', `Candidate info:\n${this.candidateInfoReference(profile)}`);
   }
 }
 

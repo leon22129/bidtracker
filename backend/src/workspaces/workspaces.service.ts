@@ -214,12 +214,15 @@ export class WorkspacesService {
   private profileData(dto: UpdateWorkspaceDto): Record<string, unknown> {
     const data: Record<string, unknown> = {};
     for (const [dtoKey, dbKey] of [
-      ['career_path', 'career_path'], ['full_name', 'full_name'], ['title', 'title'],
+      ['career_path', 'career_path'], ['full_name', 'full_name'],
+      ['first_name', 'first_name'], ['middle_name', 'middle_name'], ['last_name', 'last_name'],
+      ['title', 'title'],
       ['email', 'email'], ['phone', 'phone'], ['location', 'location'], ['country', 'country'],
       ['address1', 'address1'], ['city', 'city'], ['county', 'county'], ['state', 'state'], ['zip', 'zip'],
       ['linkedin', 'linkedin'], ['gender', 'gender'], ['hispanic_latino', 'hispanic_latino'],
       ['ethnicity', 'ethnicity'],
       ['requires_sponsorship', 'requires_sponsorship'], ['legally_authorized_us', 'legally_authorized_us'],
+      ['us_work_status', 'us_work_status'],
       ['update_headline', 'update_headline'], ['use_generated_role_titles', 'use_generated_role_titles'],
       ['template', 'template'], ['save_in_folder', 'save_in_folder'], ['auto_download', 'auto_download'],
       ['download_jd_with_pdf', 'download_jd_with_pdf'], ['use_company_name', 'use_company_name'],
@@ -236,13 +239,21 @@ export class WorkspacesService {
     const parse = (value: string) => {
       try { return JSON.parse(value); } catch { return []; }
     };
+    const fullNameParts = String(profile.full_name || '').trim().split(/\s+/).filter(Boolean);
+    const fallbackFirstName = fullNameParts[0] || '';
+    const fallbackMiddleName = fullNameParts.length > 2 ? fullNameParts.slice(1, -1).join(' ') : '';
+    const fallbackLastName = fullNameParts.length > 1 ? fullNameParts.at(-1) || '' : '';
     return {
       id: profile.id,
       workspace_id: profile.workspace_id,
       name: profile.name,
       career_path: profile.career_path,
       personal_info: {
-        fullName: profile.full_name, title: profile.title, email: profile.email,
+        fullName: profile.full_name,
+        firstName: profile.first_name || fallbackFirstName,
+        middleName: profile.middle_name || fallbackMiddleName,
+        lastName: profile.last_name || fallbackLastName,
+        title: profile.title, email: profile.email,
         phone: profile.phone, location: profile.location, country: profile.country,
         address1: profile.address1, city: profile.city, county: profile.county,
         state: profile.state, zip: profile.zip,
@@ -250,6 +261,7 @@ export class WorkspacesService {
         hispanicLatino: profile.hispanic_latino, ethnicity: profile.ethnicity,
         requiresSponsorship: profile.requires_sponsorship,
         legallyAuthorizedUs: profile.legally_authorized_us,
+        usWorkStatus: profile.us_work_status,
       },
       update_headline: profile.update_headline,
       use_generated_role_titles: profile.use_generated_role_titles,

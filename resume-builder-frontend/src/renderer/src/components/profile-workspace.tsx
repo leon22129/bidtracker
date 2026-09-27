@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
@@ -78,6 +78,22 @@ interface ProfileWorkspaceProps {
   isActive: boolean;
 }
 
+function formatQuestionEditorLine(item: PageQuestion): string {
+  if (!item.options.length) return item.question;
+  const instruction = item.fieldType === "checkbox" ? "Choose one or more." : "Choose Only one.";
+  return `${item.question} ${instruction} ${item.options.join("/")}`;
+}
+
+function questionInputFromEditorLine(line: string, scannedQuestions: PageQuestion[]): ApplicationQuestionInput {
+  const scanned = scannedQuestions.find((item) =>
+    item.question === line || formatQuestionEditorLine(item) === line,
+  );
+  return {
+    question: scanned?.question ?? line,
+    options: scanned?.options ?? [],
+  };
+}
+
 export function ProfileWorkspace({
   profile,
   tabLabel,
@@ -104,6 +120,9 @@ export function ProfileWorkspace({
     useState<CoverLetterTemplateId>(DEFAULT_COVER_LETTER_TEMPLATE);
   const [personalInfo, setPersonalInfo] = useState<PersonalInfo>({
     fullName: "",
+    firstName: "",
+    middleName: "",
+    lastName: "",
     title: "",
     email: "",
     phone: "",
@@ -120,6 +139,7 @@ export function ProfileWorkspace({
     ethnicity: "",
     requiresSponsorship: "",
     legallyAuthorizedUs: "",
+    usWorkStatus: "",
   });
   const [education, setEducation] = useState<Education[]>([
     { degree: "", school: "", year: "" },
@@ -142,8 +162,8 @@ export function ProfileWorkspace({
   const [error, setError] = useState("");
   const [applicationError, setApplicationError] = useState("");
   const [pageScanMessage, setPageScanMessage] = useState("");
+  const [questionScanMessage, setQuestionScanMessage] = useState("");
   const [pageFillMessage, setPageFillMessage] = useState("");
-  const automaticScanRunningRef = useRef(false);
 
   // UI state
   const [previewOpen, setPreviewOpen] = useState(false);
@@ -213,10 +233,9 @@ export function ProfileWorkspace({
       .map((question) => question.trim())
       .filter(Boolean)
       .slice(0, 50);
-    const initialQuestions: ApplicationQuestionInput[] = initialQuestionLines.map((question) => ({
-      question,
-      options: scannedQuestions.find((item) => item.question === question)?.options ?? [],
-    }));
+    const initialQuestions = initialQuestionLines.map((question) =>
+      questionInputFromEditorLine(question, scannedQuestions),
+    );
 
     try {
       const tabUrl = await getCurrentBrowserTabUrl();
@@ -348,13 +367,17 @@ export function ProfileWorkspace({
     }
   };
 
-  const handleScanPage = async (automatic = false) => {
+  const handleScanPage = async (scope: "page" | "questions" = "page") => {
+    const questionsOnly = scope === "questions";
     if (!canScanCurrentPage()) {
-      if (!automatic) setPageScanMessage("Page scanning is available in the Chrome extension. You can paste the job description and questions manually.");
+      const message = "Page scanning is available in the Chrome extension. You can paste the content manually.";
+      if (questionsOnly) setQuestionScanMessage(message);
+      else setPageScanMessage(message);
       return;
     }
     setIsScanningPage(true);
-    if (!automatic) setPageScanMessage("");
+    if (questionsOnly) setQuestionScanMessage("");
+    else setPageScanMessage("");
     try {
       const context = await getCurrentPageContext();
       const nonSensitiveQuestions = context.questions.filter((item) => !item.sensitive);
@@ -363,20 +386,20 @@ export function ProfileWorkspace({
       const omittedCount = nonSensitiveQuestions.length - safeQuestions.length;
       const choiceCount = safeQuestions.filter((item) => item.options.length).length;
 
-      if (context.jobDescription.trim() && (!jobDescription.trim() || (!automatic && !resumeData))) {
+      if (!questionsOnly && context.jobDescription.trim()) {
         setJobDescription(context.jobDescription.trim());
         setError("");
       }
-      setApplicationQuestions(safeQuestions.map((item) => item.question).join("\n"));
+      setApplicationQuestions(safeQuestions.map(formatQuestionEditorLine).join("\n"));
       setScannedQuestions(safeQuestions);
       setApplicationAnswers([]);
       setApplicationError("");
       setPageFillMessage("");
 
       const parts = [
-        context.jobDescription.trim()
+        ...(!questionsOnly ? [context.jobDescription.trim()
           ? "Job description found"
-          : "No job description was identified; paste it manually",
+          : "No job description was identified; paste it manually"] : []),
         safeQuestions.length
           ? `${safeQuestions.length} application question${safeQuestions.length === 1 ? "" : "s"} found`
           : "no application questions found on this page",
@@ -384,11 +407,13 @@ export function ProfileWorkspace({
       if (sensitiveCount) parts.push(`${sensitiveCount} sensitive field${sensitiveCount === 1 ? " was" : "s were"} excluded from AI and will use saved profile values when available`);
       if (choiceCount) parts.push(`allowed choices captured for ${choiceCount} question${choiceCount === 1 ? "" : "s"}`);
       if (omittedCount) parts.push(`${omittedCount} extra field${omittedCount === 1 ? " was" : "s were"} omitted from the 50-question limit`);
-      setPageScanMessage(`${parts.join("; ")}.`);
+      const message = `${parts.join("; ")}.`;
+      if (questionsOnly) setQuestionScanMessage(message);
+      else setPageScanMessage(message);
     } catch (err) {
-      if (!automatic) {
-        setPageScanMessage(getFriendlyErrorMessage(err, "This page could not be scanned. Enter the content manually."));
-      }
+      const message = getFriendlyErrorMessage(err, "This page could not be scanned. Enter the content manually.");
+      if (questionsOnly) setQuestionScanMessage(message);
+      else setPageScanMessage(message);
     } finally {
       setIsScanningPage(false);
     }
@@ -413,33 +438,6 @@ export function ProfileWorkspace({
     }
   };
 
-  useEffect(() => {
-    if (!isActive || !canScanCurrentPage() || applicationQuestions.trim()) return;
-
-    let stopped = false;
-    const scanForDynamicApplicationForm = async () => {
-      if (stopped || automaticScanRunningRef.current || applicationQuestions.trim()) return;
-      automaticScanRunningRef.current = true;
-      try {
-        await handleScanPage(true);
-      } finally {
-        automaticScanRunningRef.current = false;
-      }
-    };
-
-    // Company career pages often add the Workable application dialog without
-    // navigating. Keep looking until its application questions are mounted.
-    void scanForDynamicApplicationForm();
-    const interval = window.setInterval(() => {
-      void scanForDynamicApplicationForm();
-    }, 1500);
-
-    return () => {
-      stopped = true;
-      window.clearInterval(interval);
-    };
-  }, [isActive, applicationQuestions]);
-
   const handleGenerateAnswers = async () => {
     if (!resumeData || !conversationId) {
       setApplicationError("Generate a resume before answering application questions.");
@@ -454,10 +452,9 @@ export function ProfileWorkspace({
       setApplicationError("Enter at least one application question.");
       return;
     }
-    const questions: ApplicationQuestionInput[] = questionLines.map((question) => ({
-      question,
-      options: scannedQuestions.find((item) => item.question === question)?.options ?? [],
-    }));
+    const questions = questionLines.map((question) =>
+      questionInputFromEditorLine(question, scannedQuestions),
+    );
 
     setApplicationError("");
     setIsGeneratingAnswers(true);
@@ -716,7 +713,7 @@ export function ProfileWorkspace({
           <Button
             type="button"
             variant="outline"
-            onClick={() => void handleScanPage(false)}
+            onClick={() => void handleScanPage("page")}
             disabled={isScanningPage || isGenerating}
           >
             <RefreshCw className={`h-4 w-4 mr-2 ${isScanningPage ? "animate-spin" : ""}`} />
@@ -753,7 +750,7 @@ export function ProfileWorkspace({
         <CardHeader>
           <CardTitle>Application Questions</CardTitle>
           <CardDescription>
-            Questions are scanned from the current application page when possible. Edit them or enter one per line, then repeat this step on each page.
+            Click Scan Questions on each application page, then edit the results or enter one question per line.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -774,9 +771,18 @@ export function ProfileWorkspace({
           )}
           <div className="flex items-center gap-3 flex-wrap">
             <Button
+              type="button"
+              variant="outline"
+              onClick={() => void handleScanPage("questions")}
+              disabled={isScanningPage || isGeneratingAnswers}
+            >
+              <RefreshCw className={`h-4 w-4 mr-2 ${isScanningPage ? "animate-spin" : ""}`} />
+              {isScanningPage ? "Scanning Questions..." : "Scan Questions"}
+            </Button>
+            <Button
               variant="outline"
               onClick={() => void handleGenerateAnswers()}
-              disabled={!resumeData || !conversationId || isGeneratingAnswers || isGenerating}
+              disabled={!resumeData || !conversationId || isGeneratingAnswers || isGenerating || isScanningPage}
             >
               {isGeneratingAnswers ? "Writing Answers..." : "Generate Answers"}
             </Button>
@@ -788,15 +794,8 @@ export function ProfileWorkspace({
               <ClipboardCheck className="h-4 w-4 mr-2" />
               {isFillingPage ? "Filling Page..." : "Autofill Profile + Answers"}
             </Button>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => void handleScanPage(false)}
-              disabled={isScanningPage || isGeneratingAnswers}
-            >
-              Scan Next Page
-            </Button>
           </div>
+          {questionScanMessage && <p className="text-sm text-muted-foreground">{questionScanMessage}</p>}
           {pageFillMessage && <p className="text-sm text-muted-foreground">{pageFillMessage}</p>}
           {applicationAnswers.length > 0 && (
             <div className="space-y-4">

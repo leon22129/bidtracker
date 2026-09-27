@@ -249,11 +249,13 @@ function ProfileModal({
   const profile = workspace.profile;
   const [name, setName] = useState(profile?.name ?? workspace.name);
   const [careerPath, setCareerPath] = useState(profile?.career_path ?? '');
-  const [personal, setPersonal] = useState(profile?.personal_info ?? {
-    fullName: '', title: '', email: '', phone: '', location: '', country: '', linkedin: '',
+  const [personal, setPersonal] = useState({
+    fullName: '', firstName: '', middleName: '', lastName: '',
+    title: '', email: '', phone: '', location: '', country: '', linkedin: '',
     address1: '', city: '', county: '', state: '', zip: '',
     gender: '', hispanicLatino: '', ethnicity: '',
-    requiresSponsorship: '', legallyAuthorizedUs: '',
+    requiresSponsorship: '', legallyAuthorizedUs: '', usWorkStatus: '',
+    ...(profile?.personal_info ?? {}),
   });
   const [education, setEducation] = useState(profile?.education ?? [{ degree: '', school: '', year: '' }]);
   const [certifications, setCertifications] = useState(profile?.certifications ?? []);
@@ -265,10 +267,17 @@ function ProfileModal({
     e.preventDefault();
     setBusy(true);
     try {
+      const composedFullName = [personal.firstName, personal.middleName, personal.lastName]
+        .map((value) => value.trim())
+        .filter(Boolean)
+        .join(' ');
       await api.updateWorkspace(workspace.id, {
         profile_name: name,
         career_path: careerPath,
-        full_name: personal.fullName,
+        full_name: personal.fullName.trim() || composedFullName,
+        first_name: personal.firstName,
+        middle_name: personal.middleName,
+        last_name: personal.lastName,
         title: personal.title,
         email: personal.email,
         phone: personal.phone,
@@ -285,6 +294,7 @@ function ProfileModal({
         ethnicity: personal.ethnicity,
         requires_sponsorship: personal.requiresSponsorship,
         legally_authorized_us: personal.legallyAuthorizedUs,
+        us_work_status: personal.usWorkStatus,
         education,
         certifications,
         update_headline: updateHeadline,
@@ -306,7 +316,23 @@ function ProfileModal({
         <h2 className="text-sm font-semibold">Edit resume profile</h2>
         <div className="mt-4 grid gap-3 sm:grid-cols-2">
           <ProfileInput label="Profile name" value={name} onChange={setName} />
-          <ProfileInput label="Full name" value={personal.fullName} onChange={(v) => setPersonal({ ...personal, fullName: v })} />
+          <ProfileInput
+            label="Full name"
+            value={personal.fullName}
+            onChange={(v) => {
+              const parts = v.trim().split(/\s+/).filter(Boolean);
+              setPersonal({
+                ...personal,
+                fullName: v,
+                firstName: parts[0] || '',
+                middleName: parts.length > 2 ? parts.slice(1, -1).join(' ') : '',
+                lastName: parts.length > 1 ? parts.at(-1) || '' : '',
+              });
+            }}
+          />
+          <ProfileInput label="First name (application autofill)" value={personal.firstName} onChange={(v) => setPersonal({ ...personal, firstName: v })} />
+          <ProfileInput label="Middle name (application autofill)" value={personal.middleName} onChange={(v) => setPersonal({ ...personal, middleName: v })} />
+          <ProfileInput label="Last name (application autofill)" value={personal.lastName} onChange={(v) => setPersonal({ ...personal, lastName: v })} />
           <ProfileInput label="Title" value={personal.title} onChange={(v) => setPersonal({ ...personal, title: v })} />
           <ProfileInput label="Email" type="email" value={personal.email} onChange={(v) => setPersonal({ ...personal, email: v })} />
           <ProfileInput label="Phone" value={personal.phone} onChange={(v) => setPersonal({ ...personal, phone: v })} />
@@ -318,6 +344,12 @@ function ProfileModal({
           <ProfileInput label="State / province" value={personal.state} onChange={(v) => setPersonal({ ...personal, state: v })} />
           <ProfileInput label="ZIP / postal code" value={personal.zip} onChange={(v) => setPersonal({ ...personal, zip: v })} />
           <ProfileInput label="LinkedIn" value={personal.linkedin} onChange={(v) => setPersonal({ ...personal, linkedin: v })} />
+          <ProfileSelect
+            label="U.S. work status (application autofill)"
+            value={personal.usWorkStatus}
+            options={['US Citizen', 'Green Card', 'Other']}
+            onChange={(v) => setPersonal({ ...personal, usWorkStatus: v })}
+          />
           <ProfileSelect
             label="Require employment sponsorship now or later"
             value={personal.requiresSponsorship}
@@ -353,6 +385,9 @@ function ProfileModal({
             onChange={(v) => setPersonal({ ...personal, ethnicity: v })}
           />
         </div>
+        <p className="mt-2 text-xs text-gray-500">
+          U.S. work status is optional, used only for application autofill, and is never inferred by AI.
+        </p>
         <p className="mt-2 text-xs text-gray-500">
           Application autofill always selects “I am not a protected veteran” for veteran status. Demographic values are optional and are never inferred by AI.
         </p>

@@ -74,23 +74,6 @@ describe('ApplicationsService generated-application duplicate-click protection',
     expect(numbering.withNextNumber).not.toHaveBeenCalled();
   });
 
-  it('does not treat a cross-workspace URL as a successful retry', async () => {
-    const { service, duplicates } = setup();
-    duplicates.classifyBatch.mockResolvedValue([{
-      normalized_url: existing.normalized_url,
-      is_duplicate: true,
-      duplicate_type: 'url',
-      existing: { same_workspace: false },
-    }]);
-
-    const result = await service.createGenerated(user, dto);
-    expect(result).toMatchObject({
-      success: false,
-      duplicate: true,
-    });
-    expect(result).not.toHaveProperty('existing_application');
-  });
-
   it('treats a database race won in the same workspace as a successful retry', async () => {
     const { service, prisma, duplicates } = setup();
     duplicates.classifyBatch.mockResolvedValue([{
@@ -102,7 +85,7 @@ describe('ApplicationsService generated-application duplicate-click protection',
       {
         code: 'P2002',
         clientVersion: '5.22.0',
-        meta: { target: ['normalized_url'] },
+        meta: { target: ['workspace_id', 'normalized_url'] },
       },
     ));
     prisma.jobApplication.findFirst.mockResolvedValue(existing);
@@ -112,6 +95,9 @@ describe('ApplicationsService generated-application duplicate-click protection',
       already_added: true,
       application: existing,
     });
+    expect(prisma.jobApplication.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ workspace_id: dto.workspace_id }),
+    }));
     expect(prisma.jobApplication.create).toHaveBeenCalledTimes(1);
   });
 

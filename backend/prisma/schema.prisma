@@ -73,6 +73,9 @@ model ResumeProfile {
   name                      String
   career_path               String   @default("")
   full_name                 String   @default("")
+  first_name                String   @default("")
+  middle_name               String   @default("")
+  last_name                 String   @default("")
   title                     String   @default("")
   email                     String   @default("")
   phone                     String   @default("")
@@ -89,6 +92,7 @@ model ResumeProfile {
   ethnicity                 String   @default("")
   requires_sponsorship      String   @default("")
   legally_authorized_us     String   @default("")
+  us_work_status            String   @default("")
   update_headline           Boolean  @default(true)
   use_generated_role_titles Boolean  @default(true)
   template                  String   @default("classic")
@@ -185,9 +189,9 @@ model JobApplication {
   @@index([workspace_id, pipeline_status])
   @@index([workspace_id, job_source])
   @@index([workspace_id, paid])
-  // PostgreSQL migration 20260924010000 also enforces a partial unique index on normalized_url for
-  // Pending/Applied rows. Prisma schema syntax cannot represent partial indexes, so keep it in SQL.
-  @@index([normalized_url])
+  // PostgreSQL enforces a partial unique index on (workspace_id, normalized_url) for Pending/Applied
+  // rows. Prisma schema syntax cannot represent partial indexes, so keep that invariant in SQL.
+  @@index([workspace_id, normalized_url])
   @@index([workspace_id, job_fingerprint, created_at])
   @@index([date])
   @@index([interview_date])

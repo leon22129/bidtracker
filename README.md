@@ -519,8 +519,9 @@ Every composite index leads with `workspace_id`, because no query in the applica
 workspaces without also filtering by one. Covered: `(workspace_id, date, number)` UNIQUE (the
 numbering guarantee *and* the default sort), plus `workspace_id` paired with `application_status`,
 `pipeline_status`, `job_source`, `paid`, `job_fingerprint`, and `created_at`; standalone indexes on
-`normalized_url` and `date` support global URL duplicate detection and cross-tab reporting. A partial
-unique index on `normalized_url` is the final concurrency-safe guarantee for `Pending`/`Applied` rows.
+`date` support cross-tab reporting. A composite `(workspace_id, normalized_url)` index supports
+workspace-local duplicate detection, and a partial unique index on the same columns is the final
+concurrency-safe guarantee for `Pending`/`Applied` rows within each workspace.
 
 Free-text search uses PostgreSQL `pg_trgm` GIN indexes on URL, company, title, and note, allowing the
 existing case-insensitive `%contains%` query to avoid a full table scan. The 115 ms figure in the

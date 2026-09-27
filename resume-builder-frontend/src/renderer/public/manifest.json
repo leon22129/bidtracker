@@ -27,6 +27,7 @@
     "sidePanel",
     "storage",
     "tabs",
+    "scripting",
     "webNavigation",
     "downloads"
   ],
@@ -41,10 +42,13 @@
       ],
       "run_at": "document_idle",
       "all_frames": true,
-      "match_about_blank": true
+      "match_about_blank": true,
+      "match_origin_as_fallback": true
     }
   ],
   "host_permissions": [
+    "http://*/*",
+    "https://*/*",
     "http://localhost/*",
     "http://127.0.0.1/*",
     "https://api.resume-ai.com/*",

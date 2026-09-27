@@ -22,25 +22,38 @@ const DESCRIPTION_SELECTORS = [
 
 const TITLE_SELECTORS = [
   '.job__title h1',
+  '.iCIMS_Header',
   '[data-automation-id="jobPostingHeader"]',
   '[data-testid="job-title"]',
+  '[data-ui="overview-title"]',
   '.posting-headline h2',
   'main h1',
   'h1',
 ];
 
+const COMPANY_SELECTORS = [
+  '[data-ui="overview-company"] a',
+  '[data-ui="overview-company"]',
+  '[data-testid="company-name"]',
+  '[data-ui="company-name"]',
+  '.posting-headline .company-name',
+];
+
 const LOCATION_SELECTORS = [
   '.job__location',
+  '.iCIMS_JobsTable .header.left > .field-label + span',
   '[data-automation-id="locations"]',
   '[data-testid="job-location"]',
   '[data-ui="job-location"]',
+  '[data-ui="overview-location"]',
   '.posting-categories .location',
 ];
 
 const JOB_ATTRIBUTE_SELECTORS = [
-  { label: 'Workplace', selectors: ['[data-ui="job-workplace"]', '[data-testid="job-workplace"]'] },
-  { label: 'Department', selectors: ['[data-ui="job-department"]', '[data-testid="job-department"]'] },
-  { label: 'Employment type', selectors: ['[data-ui="job-type"]', '[data-testid="job-type"]'] },
+  { key: 'workplace', label: 'Workplace', sectionLabels: ['Location Type', 'Workplace'], selectors: ['[data-ui="job-workplace"]', '[data-testid="job-workplace"]', '[data-ui="overview-workplace"]', '.posting-categories .workplaceTypes'] },
+  { key: 'department', label: 'Department', sectionLabels: ['Department'], selectors: ['[data-ui="job-department"]', '[data-testid="job-department"]', '[data-ui="overview-department"]', '.posting-categories .department'] },
+  { key: 'employmentType', label: 'Employment type', sectionLabels: ['Employment Type'], selectors: ['[data-ui="job-type"]', '[data-testid="job-type"]', '[data-ui="overview-employment-type"]', '.posting-categories .commitment'] },
+  { key: 'compensation', label: 'Compensation', sectionLabels: ['Compensation'], selectors: ['[data-ui="job-compensation"]', '[data-testid="job-compensation"]'] },
 ];
 
 const FIELD_SELECTOR = [
@@ -57,11 +70,13 @@ const FIELD_SELECTOR = [
   'input[type="radio"]',
   'input[type="checkbox"]',
   '[role="combobox"]',
+  '[role="radio"]',
   'button[aria-haspopup="listbox"]',
+  'button[class*="inputGroupEligible"]',
 ].join(',');
 
 const IDENTITY_FIELD = /^(?:(?:legal |preferred )?(?:first|given|preferred|middle|last|family|full) name(?: legal| preferred)?|e-?mail(?: address)?|phone(?: number)?|phone (?:device )?type|phone extension|mobile(?: phone| number)?|street address|address(?: line)? [12]|city|location(?: city)?|candidate location|state|state province|province|county|postal code|zip(?: postal)?(?: code)?|country(?: of residence)?|resume|upload resume|cover letter|linkedin(?: profile| url)?|website|portfolio(?: url)?|search|subscribe(?: to job alerts)?|.*notify me of new opportunities.*|.*text message updates.*|opt in text messaging)$/i;
-const SENSITIVE_FIELD = /\b(?:race|ethnicity|gender|sex|sexual orientation|hispanic|latino|veteran|disability|disabled|religion|marital|pregnancy|pregnant|medical|health|age|social security|ssn|national id|pronoun|pronouns|salary history|current salary|sponsorship)\b|date of birth|birth date|voluntary self.identification|legally authorized|authorized to work|work authorization/i;
+const SENSITIVE_FIELD = /\b(?:race|ethnicity|gender|sex|sexual orientation|hispanic|latino|veteran|disability|disabled|religion|marital|pregnancy|pregnant|medical|health|age|social security|ssn|national id|pronoun|pronouns|salary history|current salary|sponsorship|citizenship|citizen|green card|permanent resident|immigration status)\b|date of birth|birth date|voluntary self.identification|legally authorized|authorized to work|right to work|work authorization/i;
 
 function cleanText(value) {
   return String(value || '')
@@ -78,6 +93,7 @@ function cleanLabel(value) {
     .replace(/\s+/g, ' ')
     .replace(/\s*\*\s*(required)?\s*$/i, '')
     .replace(/\s*\(required\)\s*$/i, '')
+    .replace(/\s+is required\s*$/i, '')
     .replace(/^required\s*/i, '')
     .trim();
 }
@@ -101,14 +117,138 @@ function parseJobPostingJsonLd() {
         const type = entry?.['@type'];
         return type === 'JobPosting' || (Array.isArray(type) && type.includes('JobPosting'));
       });
-      if (!posting?.description) continue;
-      const parser = new DOMParser();
-      const parsed = parser.parseFromString(String(posting.description), 'text/html');
-      const description = cleanText(parsed.body.innerText || parsed.body.textContent);
-      if (description.length >= 120) return description.slice(0, 20000);
+      if (posting) return posting;
     } catch {
       // Ignore malformed metadata and continue with visible HTML.
     }
+  }
+  return null;
+}
+
+function structuredDescription(posting) {
+  if (!posting?.description) return '';
+  const parser = new DOMParser();
+  const parsed = parser.parseFromString(String(posting.description), 'text/html');
+  const description = cleanText(parsed.body.innerText || parsed.body.textContent);
+  return description.length >= 120 ? description.slice(0, 20000) : '';
+}
+
+function structuredName(value) {
+  return cleanText(typeof value === 'string' ? value : value?.name);
+}
+
+function structuredLocation(posting) {
+  const locations = Array.isArray(posting?.jobLocation) ? posting.jobLocation : [posting?.jobLocation];
+  for (const locationValue of locations) {
+    const address = locationValue?.address || locationValue;
+    const locationText = [
+      structuredName(address?.addressLocality),
+      structuredName(address?.addressRegion),
+      structuredName(address?.addressCountry),
+    ].filter(Boolean).join(', ');
+    if (locationText) return locationText;
+  }
+  return '';
+}
+
+function structuredWorkplace(posting) {
+  if (normalize(posting?.jobLocationType) !== 'telecommute') return '';
+  if (/\/(?:view\/[^/]+\/)?hybrid-/i.test(location.pathname)) return 'Hybrid';
+  return 'Remote';
+}
+
+function structuredEmploymentType(posting) {
+  const rawValue = Array.isArray(posting?.employmentType) ? posting.employmentType[0] : posting?.employmentType;
+  const normalized = normalize(rawValue).replace(/ /g, '_');
+  const labels = {
+    full_time: 'Full-time',
+    part_time: 'Part-time',
+    contractor: 'Contract',
+    temporary: 'Temporary',
+    intern: 'Internship',
+    volunteer: 'Volunteer',
+    per_diem: 'Per diem',
+    other: 'Other',
+  };
+  return labels[normalized] || cleanText(rawValue);
+}
+
+function structuredCompensation(posting) {
+  const salary = Array.isArray(posting?.baseSalary) ? posting.baseSalary[0] : posting?.baseSalary;
+  const value = salary?.value;
+  if (!value) return '';
+  const currency = cleanText(salary.currency || value.currency || 'USD').toUpperCase();
+  const formatAmount = (amount) => {
+    const numericAmount = Number(amount);
+    if (!Number.isFinite(numericAmount)) return '';
+    try {
+      return new Intl.NumberFormat('en-US', {
+        style: 'currency',
+        currency,
+        maximumFractionDigits: 0,
+      }).format(numericAmount);
+    } catch {
+      return `${currency} ${numericAmount.toLocaleString('en-US')}`;
+    }
+  };
+  const minimum = formatAmount(value.minValue);
+  const maximum = formatAmount(value.maxValue);
+  const exact = formatAmount(value.value);
+  const amount = minimum && maximum ? `${minimum} – ${maximum}` : minimum || maximum || exact;
+  const period = cleanText(value.unitText).toLowerCase();
+  return amount ? `${amount}${period ? ` per ${period}` : ''}` : '';
+}
+
+function iCimsHeaderValue(label) {
+  const expectedLabel = normalize(label);
+  for (const item of document.querySelectorAll('.iCIMS_JobHeaderTag')) {
+    const itemLabel = normalize(item.querySelector('.iCIMS_JobHeaderField')?.textContent);
+    if (itemLabel !== expectedLabel) continue;
+    return cleanText(item.querySelector('.iCIMS_JobHeaderData')?.innerText
+      || item.querySelector('.iCIMS_JobHeaderData')?.textContent);
+  }
+  return '';
+}
+
+function extractICimsJobDescription() {
+  const sections = [];
+  for (const heading of document.querySelectorAll('.iCIMS_JobContent h2.iCIMS_InfoField_Job')) {
+    if (!isVisible(heading)) continue;
+    let content = heading.nextElementSibling;
+    while (content && !content.matches('.iCIMS_InfoMsg_Job')) {
+      if (content.matches('h2.iCIMS_InfoField_Job')) break;
+      content = content.nextElementSibling;
+    }
+    if (!(content instanceof HTMLElement) || !isVisible(content)) continue;
+    const headingText = cleanText(heading.innerText || heading.textContent);
+    const contentText = cleanText(content.innerText || content.textContent);
+    if (headingText && contentText) sections.push(`${headingText}\n${contentText}`);
+  }
+  const description = sections.join('\n\n');
+  return description.length >= 120 ? description.slice(0, 20000) : '';
+}
+
+function labeledJobSections() {
+  const sections = new Map();
+  for (const container of document.querySelectorAll('.ashby-job-posting-left-pane')) {
+    for (const heading of container.querySelectorAll('h2')) {
+      const section = heading.parentElement;
+      if (!(section instanceof HTMLElement)) continue;
+      const label = normalize(heading.textContent);
+      const value = cleanText(Array.from(section.children)
+        .filter((element) => element !== heading)
+        .map((element) => element.innerText || element.textContent)
+        .join('\n'));
+      if (label && value && !sections.has(label)) sections.set(label, value);
+    }
+  }
+  return sections;
+}
+
+function labeledSectionValue(sections, labels) {
+  for (const label of labels) {
+    const value = sections.get(normalize(label));
+    if (value) return value;
   }
   return '';
 }
@@ -131,8 +271,11 @@ function descriptionScore(element, text, selectorIndex) {
   return score;
 }
 
-function extractJobDescription() {
-  const structured = parseJobPostingJsonLd();
+function extractJobDescription(posting) {
+  const iCimsDescription = extractICimsJobDescription();
+  if (iCimsDescription) return { text: iCimsDescription, source: 'iCIMS job sections' };
+
+  const structured = structuredDescription(posting);
   if (structured) return { text: structured, source: 'JobPosting metadata' };
 
   const candidates = [];
@@ -166,14 +309,29 @@ function firstVisibleText(selectors, maximumLength = 300) {
   return '';
 }
 
-function extractJobHeader() {
-  const attributes = JOB_ATTRIBUTE_SELECTORS.flatMap(({ label, selectors }) => {
-    const value = firstVisibleText(selectors);
+function extractJobHeader(posting) {
+  const labeledSections = labeledJobSections();
+  const structuredAttributes = {
+    workplace: structuredWorkplace(posting),
+    department: structuredName(posting?.department),
+    employmentType: structuredEmploymentType(posting),
+    compensation: structuredCompensation(posting),
+  };
+  const attributes = JOB_ATTRIBUTE_SELECTORS.flatMap(({ key, label, sectionLabels, selectors }) => {
+    const value = (firstVisibleText(selectors)
+      || labeledSectionValue(labeledSections, sectionLabels)
+      || structuredAttributes[key]).replace(/\s*\/\s*$/, '');
     return value ? [{ label, value }] : [];
   });
+  const company = firstVisibleText(COMPANY_SELECTORS)
+    || iCimsHeaderValue('Brand')
+    || structuredName(posting?.hiringOrganization);
   return {
-    title: firstVisibleText(TITLE_SELECTORS),
-    location: firstVisibleText(LOCATION_SELECTORS),
+    title: firstVisibleText(TITLE_SELECTORS) || cleanText(posting?.title),
+    company: company.replace(/^at\s+/i, ''),
+    location: firstVisibleText(LOCATION_SELECTORS)
+      || labeledSectionValue(labeledSections, ['Location'])
+      || structuredLocation(posting),
     attributes,
   };
 }
@@ -189,6 +347,30 @@ function textFromIds(ids) {
 }
 
 function fieldLabel(field) {
+  // Lever wraps each control, all of its select options, and sometimes long EEO
+  // descriptions in one <label>. Read the dedicated question caption first so
+  // fields such as Gender and Race are not represented by that entire wrapper.
+  const leverQuestion = field.closest('.application-question')?.querySelector('.application-label');
+  const leverQuestionText = cleanLabel(leverQuestion?.innerText || leverQuestion?.textContent);
+  if (leverQuestionText) return leverQuestionText;
+
+  // Rippling custom questions place their caption in a sibling block above the
+  // combobox, whose own aria-label is only the generic word "Select".
+  if (/(?:^|\.)ats\.rippling\.com$/i.test(location.hostname)) {
+    const ripplingRadioGroup = field.closest('[role="radiogroup"]');
+    const ripplingRadioQuestion = ripplingRadioGroup
+      ?.closest('.paddingX--16')
+      ?.querySelector(':scope > p');
+    const ripplingRadioQuestionText = cleanLabel(
+      ripplingRadioQuestion?.innerText || ripplingRadioQuestion?.textContent,
+    );
+    if (ripplingRadioQuestionText) return ripplingRadioQuestionText;
+
+    const ripplingQuestion = field.closest('.marginY--36')?.querySelector('.paddingX--16 p');
+    const ripplingQuestionText = cleanLabel(ripplingQuestion?.innerText || ripplingQuestion?.textContent);
+    if (ripplingQuestionText) return ripplingQuestionText;
+  }
+
   if (field instanceof HTMLInputElement && (field.type === 'radio' || field.type === 'checkbox')) {
     const namedQuestionLabel = field.name ? document.getElementById(`${field.name}_label`) : null;
     const namedQuestionText = cleanLabel(namedQuestionLabel?.innerText || namedQuestionLabel?.textContent);
@@ -248,6 +430,7 @@ function fieldLabel(field) {
       ':scope > [data-testid*="label"]',
       // Gem application fields are unlabelled inputs. Their visible caption is
       // either a direct sibling or one wrapper below the field container.
+      ':scope > [class*="bodyImportant"]',
       ':scope > span[class*="bodyImportant"]',
       ':scope > div > span[class*="bodyImportant"]',
     ].join(', '));
@@ -262,10 +445,15 @@ function optionLabel(field) {
   const explicit = field.labels?.[0];
   const explicitText = cleanLabel(explicit?.innerText || explicit?.textContent);
   if (explicitText) return explicitText;
+  const labelledBy = field.getAttribute('aria-labelledby');
+  if (labelledBy) {
+    const labelledText = cleanLabel(textFromIds(labelledBy));
+    if (labelledText) return labelledText;
+  }
   const parentLabel = field.closest('label');
   const parentText = cleanLabel(parentLabel?.innerText || parentLabel?.textContent);
   if (parentText) return parentText;
-  return cleanLabel(field.getAttribute('aria-label') || field.value);
+  return cleanLabel(field.getAttribute('aria-label') || field.textContent || field.value);
 }
 
 function fieldOptions(field) {
@@ -401,9 +589,13 @@ function isDayforceUnitedStatesSelected(field) {
 
 async function typeComboboxSearch(field, value) {
   field.focus();
+  field.select?.();
   const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
   if (!setter) return;
 
+  field.dispatchEvent(new InputEvent('beforeinput', {
+    bubbles: true, composed: true, inputType: 'deleteContentBackward', data: null,
+  }));
   setter.call(field, '');
   field.dispatchEvent(new InputEvent('input', {
     bubbles: true, composed: true, inputType: 'deleteContentBackward', data: null,
@@ -415,6 +607,9 @@ async function typeComboboxSearch(field, value) {
     field.dispatchEvent(new KeyboardEvent('keydown', {
       key: character, code: `Key${character.toUpperCase()}`, keyCode, which: keyCode,
       bubbles: true, cancelable: true,
+    }));
+    field.dispatchEvent(new InputEvent('beforeinput', {
+      bubbles: true, composed: true, inputType: 'insertText', data: character,
     }));
     typed += character;
     setter.call(field, typed);
@@ -561,8 +756,9 @@ async function fillDayforceAddressCombobox(field, answer) {
 }
 
 async function extractPage() {
-  const description = extractJobDescription();
-  const header = extractJobHeader();
+  const posting = parseJobPostingJsonLd();
+  const description = extractJobDescription(posting);
+  const header = extractJobHeader(posting);
   const fields = extractFields();
   for (const record of fields) {
     if (!record.sensitive && record.field instanceof HTMLInputElement && record.field.getAttribute('role') === 'combobox') {
@@ -572,10 +768,13 @@ async function extractPage() {
   }
   const descriptionParts = [];
   if (header.title && !normalize(description.text).startsWith(normalize(header.title))) descriptionParts.push(header.title);
-  if (header.location && !normalize(description.text).includes(normalize(header.location))) descriptionParts.push(header.location);
+  const headerDetails = [];
+  if (header.company) headerDetails.push(`Company: ${header.company}`);
+  if (header.location) headerDetails.push(`Location: ${header.location}`);
   if (header.attributes.length) {
-    descriptionParts.push(header.attributes.map(({ label, value }) => `${label}: ${value}`).join('\n'));
+    headerDetails.push(...header.attributes.map(({ label, value }) => `${label}: ${value}`));
   }
+  if (headerDetails.length) descriptionParts.push(headerDetails.join('\n'));
   if (description.text) descriptionParts.push(description.text);
   return {
     url: location.href,
@@ -593,12 +792,23 @@ async function extractPage() {
 }
 
 function setNativeValue(field, value, blur = true) {
-  const prototype = field instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+  const prototype = field instanceof HTMLTextAreaElement
+    ? HTMLTextAreaElement.prototype
+    : field instanceof HTMLSelectElement
+      ? HTMLSelectElement.prototype
+      : HTMLInputElement.prototype;
   const setter = Object.getOwnPropertyDescriptor(prototype, 'value')?.set;
+  field.focus?.({ preventScroll: true });
   if (setter) setter.call(field, value);
   else field.value = value;
-  field.dispatchEvent(new Event('input', { bubbles: true }));
-  field.dispatchEvent(new Event('change', { bubbles: true }));
+  const InputEventConstructor = typeof InputEvent === 'function' ? InputEvent : Event;
+  field.dispatchEvent(new InputEventConstructor('input', {
+    bubbles: true,
+    composed: true,
+    inputType: 'insertText',
+    data: String(value),
+  }));
+  field.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
   if (blur) field.dispatchEvent(new Event('blur', { bubbles: true }));
 }
 
@@ -620,6 +830,7 @@ async function fillCombobox(field, answer) {
     return fillDayforceAddressCombobox(field, answer);
   }
   field.focus();
+  if (!(field instanceof HTMLInputElement)) field.click();
   const visibleOptions = () => Array.from(document.querySelectorAll('[role="option"]')).filter(isVisible);
   const matchingOption = (options = visibleOptions()) => {
     const optionText = bestOption(options.map((option) => cleanText(option.textContent)), answer);
@@ -631,7 +842,7 @@ async function fillCombobox(field, answer) {
       if (String(countryCode || '').toUpperCase() === 'US') return true;
     }
     const control = field.closest('.ant-select, .select__control, .Select-control, [class*="-control"]') || field.parentElement;
-    const selected = control?.querySelector('.ant-select-selection-item, .select__single-value, .Select-value-label, [class*="singleValue"]');
+    const selected = control?.querySelector('.ant-select-selection-item, .select__single-value, .Select-value-label, [class*="singleValue"], .vdl-dropdown-list__input');
     const selectedValue = normalize(selected?.textContent);
     const expectedValue = normalize(answer);
     if (!selectedValue || !expectedValue) return false;
@@ -691,6 +902,11 @@ async function fillCombobox(field, answer) {
   if (option instanceof HTMLElement) return chooseOption();
 
   // Filter long lists such as country. Do not dispatch blur until an option is selected.
+  if (!(field instanceof HTMLInputElement)) {
+    dispatchKey(field, 'Escape', 'Escape', 27);
+    field.blur();
+    return false;
+  }
   setNativeValue(field, answer, false);
 
   for (let attempt = 0; attempt < 20; attempt += 1) {
@@ -728,8 +944,142 @@ async function fillInternationalPhoneCountry(field, answer) {
     || expectedCountry.includes(selectedCountry);
 }
 
+function isICimsDropdown(field) {
+  return /(?:^|\.)icims\.com$/i.test(location.hostname)
+    && field.matches('a.dropdown-select[role="combobox"][id$="_icimsDropdown"]');
+}
+
+function isRipplingDropdown(field) {
+  return /(?:^|\.)ats\.rippling\.com$/i.test(location.hostname)
+    && field.getAttribute('role') === 'combobox'
+    && Boolean(field.closest('[data-testid="select-controller"]'))
+    && !field.closest('[data-testid="phone_number-code"]');
+}
+
+function ripplingSelectedValues(field) {
+  const controller = field.closest('[data-testid="select-controller"]');
+  return [
+    field instanceof HTMLInputElement ? field.value : '',
+    field.textContent,
+    ...Array.from(controller?.querySelectorAll('p, [data-testid*="selected"]') || [])
+      .map((element) => element.textContent),
+  ].map(normalize).filter((value) => value && !/^select$/.test(value));
+}
+
+async function fillRipplingDropdown(field, answer) {
+  const expected = normalize(answer);
+  if (!expected) return false;
+  if (ripplingSelectedValues(field).includes(expected)) return true;
+
+  field.focus();
+  field.click();
+  dispatchKey(field, 'ArrowDown', 'ArrowDown', 40);
+
+  for (let attempt = 0; attempt < 25; attempt += 1) {
+    await sleep(100);
+    const options = Array.from(document.querySelectorAll('[role="option"]')).filter(isVisible);
+    const labels = options.map((option) => cleanLabel(
+      option.getAttribute('aria-label') || option.getAttribute('title') || option.textContent,
+    ));
+    const optionText = bestOption(labels, answer);
+    const option = options.find((_item, index) => labels[index] === optionText);
+    if (!(option instanceof HTMLElement)) continue;
+
+    clickComboboxOption(option);
+    await sleep(300);
+    field.blur();
+    return true;
+  }
+
+  dispatchKey(field, 'Escape', 'Escape', 27);
+  field.blur();
+  return false;
+}
+
+function iCimsDropdownContainer(field) {
+  const container = document.getElementById(`${field.id}_ctnr`);
+  return container instanceof HTMLElement ? container : null;
+}
+
+function iCimsSelectedValue(field) {
+  return cleanLabel(field.querySelector('.dropdown-text')?.textContent);
+}
+
+async function fillICimsDropdown(field, answer) {
+  const expected = normalize(answer);
+  if (!expected) return false;
+  const selectedMatches = () => normalize(iCimsSelectedValue(field)) === expected;
+  if (selectedMatches()) return true;
+
+  field.focus();
+  field.click();
+  await sleep(150);
+
+  const matchingOption = () => {
+    const options = Array.from(iCimsDropdownContainer(field)
+      ?.querySelectorAll('[role="option"].result-selectable') || []);
+    const labels = options.map((option) => cleanLabel(
+      option.getAttribute('aria-label') || option.getAttribute('title') || option.textContent,
+    ));
+    const optionText = bestOption(labels, answer);
+    return options.find((option, index) => labels[index] === optionText) || null;
+  };
+
+  let searchStarted = false;
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    const option = matchingOption();
+    if (option instanceof HTMLElement) {
+      clickComboboxOption(option);
+      await sleep(300);
+      if (selectedMatches()) {
+        field.blur();
+        return true;
+      }
+    }
+
+    const search = iCimsDropdownContainer(field)?.querySelector('input.dropdown-search:not([aria-hidden="true"])');
+    if (!searchStarted && attempt >= 2 && search instanceof HTMLInputElement) {
+      searchStarted = true;
+      await typeComboboxSearch(search, answer);
+    }
+    await sleep(100);
+  }
+
+  dispatchKey(field, 'Escape', 'Escape', 27);
+  field.blur();
+  return false;
+}
+
 function isWorkdayPage() {
   return /(?:^|\.)(?:myworkdayjobs\.com|myworkdaysite\.com|workday\.com)$/i.test(location.hostname);
+}
+
+function isGemDropdownButton(field) {
+  return /(?:^|\.)jobs\.gem\.com$/i.test(location.hostname)
+    && field instanceof HTMLButtonElement
+    && field.matches('button[class*="inputGroupEligible"]');
+}
+
+async function fillGemDropdownButton(field, answer) {
+  field.focus();
+  field.click();
+
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    await sleep(100);
+    const options = Array.from(document.querySelectorAll('[role="menuitem"]'))
+      .filter((option) => isVisible(option) && option.getAttribute('aria-disabled') !== 'true');
+    const optionText = bestOption(options.map((option) => cleanText(option.textContent)), answer);
+    const option = options.find((item) => cleanText(item.textContent) === optionText);
+    if (!(option instanceof HTMLElement) || !optionText) continue;
+
+    clickComboboxOption(option);
+    await sleep(250);
+    if (normalize(field.textContent) === normalize(optionText)) return true;
+  }
+
+  dispatchKey(field, 'Escape', 'Escape', 27);
+  field.blur();
+  return false;
 }
 
 async function fillWorkdayListboxButton(field, answer) {
@@ -762,16 +1112,29 @@ function bestOption(options, answer) {
   const normalizedAnswer = normalize(answer);
   const usableOptions = options.filter((option) => normalize(option));
   return usableOptions.find((option) => normalize(option) === normalizedAnswer)
-    || usableOptions.find((option) => normalizedAnswer.includes(normalize(option)) || normalize(option).includes(normalizedAnswer));
+    || usableOptions.find((option) => {
+      const normalizedOption = normalize(option);
+      return ` ${normalizedAnswer} `.includes(` ${normalizedOption} `)
+        || ` ${normalizedOption} `.includes(` ${normalizedAnswer} `);
+    });
 }
 
 async function fillField(record, answer) {
   const { field } = record;
-  if (field instanceof HTMLInputElement && field.getAttribute('role') === 'combobox') {
+  if (isRipplingDropdown(field)) {
+    return fillRipplingDropdown(field, answer);
+  }
+  if (isICimsDropdown(field)) {
+    return fillICimsDropdown(field, answer);
+  }
+  if (field.getAttribute('role') === 'combobox' && field.matches?.('.iti__selected-flag')) {
+    return fillInternationalPhoneCountry(field, answer);
+  }
+  if (field.getAttribute('role') === 'combobox') {
     return fillCombobox(field, answer);
   }
-  if (field.getAttribute('role') === 'combobox' && field.matches('.iti__selected-flag')) {
-    return fillInternationalPhoneCountry(field, answer);
+  if (isGemDropdownButton(field)) {
+    return fillGemDropdownButton(field, answer);
   }
   if (field.matches('button[aria-haspopup="listbox"]')) {
     return isWorkdayPage() ? fillWorkdayListboxButton(field, answer) : false;
@@ -781,9 +1144,16 @@ async function fillField(record, answer) {
     const optionText = bestOption(enabledOptions.map((option) => option.textContent || ''), answer);
     const option = enabledOptions.find((item) => item.textContent === optionText);
     if (!option) return false;
-    field.value = option.value;
-    field.dispatchEvent(new Event('input', { bubbles: true }));
-    field.dispatchEvent(new Event('change', { bubbles: true }));
+    setNativeValue(field, option.value);
+    return true;
+  }
+  if (field.getAttribute('role') === 'radio') {
+    const group = field.closest('[role="radiogroup"]');
+    const candidates = Array.from(group?.querySelectorAll('[role="radio"]') || [field]);
+    const optionText = bestOption(candidates.map(optionLabel), answer);
+    const candidate = candidates.find((item) => optionLabel(item) === optionText);
+    if (!(candidate instanceof HTMLElement)) return false;
+    candidate.click();
     return true;
   }
   if (field instanceof HTMLInputElement && field.type === 'radio') {
@@ -822,7 +1192,10 @@ async function fillField(record, answer) {
   if (field instanceof HTMLInputElement && field.type === 'date') return false;
   if (field instanceof HTMLInputElement || field instanceof HTMLTextAreaElement) {
     setNativeValue(field, answer);
-    return true;
+    await sleep(75);
+    const actual = normalize(field.value);
+    const expected = normalize(answer);
+    return Boolean(actual && expected && (actual === expected || actual.includes(expected) || expected.includes(actual)));
   }
   return false;
 }
@@ -831,7 +1204,8 @@ function splitFullName(fullName) {
   const parts = cleanText(fullName).split(/\s+/).filter(Boolean);
   return {
     firstName: parts[0] || '',
-    lastName: parts.slice(1).join(' '),
+    middleName: parts.length > 2 ? parts.slice(1, -1).join(' ') : '',
+    lastName: parts.length > 1 ? parts.at(-1) || '' : '',
   };
 }
 
@@ -839,6 +1213,21 @@ function phoneValueForField(phone, country, field) {
   const value = cleanText(phone);
   if (!value) return value;
   const digits = value.replace(/\D/g, '');
+  const ripplingPhoneGroup = /(?:^|\.)ats\.rippling\.com$/i.test(location.hostname)
+    ? field?.closest('[data-testid="field"]')
+    : null;
+  const ripplingDialCodeField = ripplingPhoneGroup
+    ?.querySelector('[data-testid="phone_number-code"] input[role="combobox"]');
+  const ripplingDialCode = cleanText(ripplingDialCodeField?.value).match(/^\+(\d+)/)?.[1] || '';
+  if (ripplingDialCode) {
+    if (value.trim().startsWith(`+${ripplingDialCode}`)) {
+      return value.trim().slice(ripplingDialCode.length + 1).replace(/^[\s.-]+/, '').trim();
+    }
+    if (digits.startsWith(ripplingDialCode) && digits.length > 10) {
+      return digits.slice(ripplingDialCode.length);
+    }
+    return value;
+  }
   const workdayPhoneGroup = isWorkdayPage()
     ? field?.closest('[data-fkit-id="phoneNumber--null"]')
     : null;
@@ -911,7 +1300,7 @@ function canonicalUsState(value) {
 
 function combinedWorkAuthorizationValue(identity, profile) {
   const asksWithoutSponsorship = /without(?:\s+\w+){0,4}\s+sponsorship|(?:do|will|would) not require(?:\s+\w+){0,4}\s+sponsorship|no(?:\s+\w+){0,3}\s+sponsorship/.test(identity);
-  const asksAbilityToWork = /authorized to work|legally authorized|able to work|eligible to work|work in the (?:us|united states)/.test(identity);
+  const asksAbilityToWork = /authorized to work|legally authorized|right to work|able to work|eligible to work|work in the (?:us|united states)/.test(identity);
   if (!asksWithoutSponsorship || !asksAbilityToWork) return '';
 
   const sponsorship = normalize(profile?.requiresSponsorship);
@@ -924,30 +1313,78 @@ function combinedWorkAuthorizationValue(identity, profile) {
   return sponsorship === 'no' && authorization === 'yes' && locatedInUs ? 'Yes' : 'No';
 }
 
+function usWorkStatusValue(field, identity, profile) {
+  const status = normalize(profile?.usWorkStatus);
+  if (!['us citizen', 'green card', 'other'].includes(status)) return '';
+
+  const asksCitizen = /\b(?:us|u s|united states) citizen(?:ship)?\b|\bcitizenship\b/.test(identity);
+  const asksGreenCard = /\bgreen card\b|\bpermanent resident\b/.test(identity);
+  if (!asksCitizen && !asksGreenCard) return '';
+
+  const options = fieldOptions(field);
+  const optionMatching = (predicate) => options.find((option) => predicate(normalize(option)));
+  const hasCompoundOptions = options.some((option) => /\bcitizen\b/.test(normalize(option)))
+    && options.some((option) => /\bgreen card\b|\bpermanent resident\b/.test(normalize(option)));
+
+  if (hasCompoundOptions) {
+    if (status === 'us citizen') {
+      return optionMatching((option) => /\bcitizen\b/.test(option)) || 'I am a US Citizen';
+    }
+    if (status === 'green card') {
+      return optionMatching((option) => (
+        /\bgreen card\b|\bpermanent resident\b/.test(option)
+        && !/^(?:no|not)\b|\bdo not\b/.test(option)
+      )) || 'Yes, I have a Green Card';
+    }
+    return optionMatching((option) => (
+      /\bgreen card\b|\bpermanent resident\b/.test(option)
+      && (/^(?:no|not)\b/.test(option) || /\bdo not\b/.test(option))
+    )) || 'No, I do not have a Green Card';
+  }
+
+  if (asksCitizen && asksGreenCard) return ['us citizen', 'green card'].includes(status) ? 'Yes' : 'No';
+  if (asksCitizen) return status === 'us citizen' ? 'Yes' : 'No';
+  return status === 'green card' ? 'Yes' : 'No';
+}
+
 function profileValueForField(field, profile) {
   const label = normalize(fieldLabel(field));
-  const identity = normalize([
+  const identifier = normalize([
     field.id,
     field.getAttribute('name'),
     field.getAttribute('autocomplete'),
-    label,
   ].filter(Boolean).join(' '));
+  const identity = normalize([identifier, label].filter(Boolean).join(' '));
   const names = splitFullName(profile?.fullName);
+  const firstName = cleanText(profile?.firstName) || names.firstName;
+  const middleName = cleanText(profile?.middleName) || names.middleName;
+  const lastName = cleanText(profile?.lastName) || names.lastName;
+  const fullName = cleanText(profile?.fullName) || [firstName, middleName, lastName].filter(Boolean).join(' ');
   const workableLocation = workableLocationValue(identity, profile);
   const combinedWorkAuthorization = combinedWorkAuthorizationValue(identity, profile);
+  const usWorkStatus = usWorkStatusValue(field, identity, profile);
 
-  if (/\b(first|given) name\b|\bgiven name\b|\bgiven name$/.test(identity) || field.autocomplete === 'given-name') return names.firstName;
-  if (/\b(last|family|surname) name\b|\bfamily name\b/.test(identity) || field.autocomplete === 'family-name') return names.lastName;
-  if (/\bfull name\b|\blegal name\b|\bsystemfield name\b/.test(identity) || label === 'name' || field.autocomplete === 'name') return profile?.fullName;
+  if (/\b(first|given) name\b|\bgiven name\b|\bgiven name$/.test(identity) || field.autocomplete === 'given-name') return firstName;
+  if (/\bmiddle (?:name|initial)\b|\bmiddleinitial\b/.test(identity) || field.autocomplete === 'additional-name') {
+    return /\bmiddle initial\b|\bmiddleinitial\b/.test(identity) ? middleName.charAt(0) : middleName;
+  }
+  if (/\b(last|family|surname) name\b|\bfamily name\b|\bsurname\b/.test(identity) || field.autocomplete === 'family-name') return lastName;
+  if (/\bfull name\b|\blegal name\b|\bsystemfield name\b/.test(identity) || label === 'name' || field.autocomplete === 'name') return fullName;
   if (/\be ?mail\b/.test(identity) || field.autocomplete === 'email') return profile?.email;
   if (/\bphone (?:device )?type\b|\bphonetype\b/.test(identity)) return 'Mobile';
   if (/\bphone extension\b|\bextension\b/.test(identity)) return '';
   if (/phone.*country|telephone country code/.test(identity)) return canonicalCountry(profile?.country);
   if (/\b(phone|mobile|tel)\b/.test(identity) || field.autocomplete === 'tel') return phoneValueForField(profile?.phone, profile?.country, field);
   if (/\blinkedin\b/.test(identity)) return profile?.linkedin;
+  if (usWorkStatus) return usWorkStatus;
   if (combinedWorkAuthorization) return combinedWorkAuthorization;
+  // Authorization and sponsorship questions can mention the country where the
+  // job is located. Resolve their intent before the generic country field.
+  if (/legally authorized|authorized to work|right to work|work authorization/.test(identity)) return profile?.legallyAuthorizedUs;
+  if (/sponsorship/.test(identity)) return profile?.requiresSponsorship;
   // Compound ATS identifiers often contain an address index before the actual
   // component, such as `work-history-address-1-zip`. Match components first.
+  if (/\baddress ?type\b/.test(identity)) return 'Home';
   if (/\b(zip|postal code|postcode)\b/.test(identity)) return profile?.zip;
   if (/\b(city|town)\b/.test(identity)) return profile?.city;
   if (/\bcounty\b/.test(identity)) return profile?.county;
@@ -956,32 +1393,182 @@ function profileValueForField(field, profile) {
   if (workableLocation) return workableLocation;
   if (/\b(country|country code)\b/.test(identity) || field.autocomplete === 'country') return canonicalCountry(profile?.country);
   if (/candidate location|location city|\blocation\b/.test(identity)) return profile?.location;
-  if (/sponsorship/.test(identity)) return profile?.requiresSponsorship;
-  if (/legally authorized|authorized to work|work authorization/.test(identity)) return profile?.legallyAuthorizedUs;
-  if (/hispanic|latino/.test(identity)) return profile?.hispanicLatino;
+  // Prefer explicit identifiers before labels. Greenhouse calls its Yes/No field
+  // `hispanic_ethnicity`, while some other ATS labels include all race option text.
+  if (/\brace\b/.test(identifier)) return profile?.ethnicity;
+  if (/hispanic|latino/.test(identifier)) return profile?.hispanicLatino;
+  if (/\brace\b/.test(label)) return profile?.ethnicity;
+  if (/hispanic|latino/.test(label)) return profile?.hispanicLatino;
+  if (/\bethnicity\b/.test(identity)) return profile?.ethnicity;
   if (/\b(gender|sex)\b/.test(identity)) return profile?.gender;
-  if (/\b(race|ethnicity)\b/.test(identity)) return profile?.ethnicity;
-  if (isWorkdayPage() && /\b(disability|disabled)\b/.test(identity)) {
+  if (/\b(disability|disabled)\b/.test(identity)) {
     return 'No, I do not have a disability and have not had one in the past';
   }
   if (/\bveteran\b/.test(identity)) {
-    return isWorkdayPage() ? 'I am not a veteran' : 'I am not a protected veteran';
+    const negativeOption = fieldOptions(field).find((option) => {
+      const normalizedOption = normalize(option);
+      return /\bnot\b.*\bveteran\b/.test(normalizedOption)
+        && !/decline|prefer not|do not wish/.test(normalizedOption);
+    });
+    return negativeOption || (isWorkdayPage() ? 'I am not a veteran' : 'I am not a protected veteran');
   }
+  if (
+    /consent.*receive.*text messages?.*application status/.test(identity)
+    || (/text messages?.*(?:job )?application/.test(identity) && /agree|agreement|consent|updates/.test(identity))
+  ) return 'Yes';
   if (/subscribe|contact preference|text message|job alert|new opportunities/.test(identity)) return 'No';
   return '';
 }
 
-async function fillProfileFields(profile) {
-  let filled = 0;
+function adpProfileField(id) {
+  const field = document.getElementById(id);
+  return field instanceof HTMLInputElement ? field : null;
+}
+
+function adpFullAddress(profile) {
+  const address = cleanText(profile?.address1);
+  if (!address) return '';
+  const normalizedAddress = normalize(address);
+  const parts = [address];
+  for (const value of [profile?.city, profile?.state, profile?.zip]) {
+    const cleaned = cleanText(value);
+    if (cleaned && !normalizedAddress.includes(normalize(cleaned))) parts.push(cleaned);
+  }
+  return parts.join(', ');
+}
+
+async function fillAdpControlledInput(field, value, blur = true) {
+  if (!(field instanceof HTMLInputElement) || !cleanText(value)) return false;
+  field.focus();
+  field.select?.();
+  try {
+    const inserted = typeof document.execCommand === 'function'
+      && document.execCommand('insertText', false, String(value));
+    if (inserted) {
+      field.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
+      if (blur) field.blur();
+      await sleep(150);
+      if (normalize(field.value) === normalize(value)) return true;
+    }
+  } catch {
+    // Fall through to the explicit keyboard/input event sequence.
+  }
+  await typeComboboxSearch(field, value);
+  if (blur) field.blur();
+  await sleep(150);
+  return normalize(field.value) === normalize(value);
+}
+
+function adpAddressSuggestions(address) {
+  const selectors = [
+    '.pac-container .pac-item',
+    '[class*="address"][class*="suggest"]',
+    '[class*="location"][class*="suggest"]',
+    '[role="listbox"] [role="option"]',
+  ];
+  const candidates = [...new Set(Array.from(document.querySelectorAll(selectors.join(', '))))]
+    .filter(isVisible);
+  const addressWords = normalize(address).split(' ').filter((word) => word.length > 2 || /^\d+$/.test(word));
+  const streetNumber = addressWords.find((word) => /^\d+$/.test(word));
+  const scored = candidates.map((candidate, index) => {
+    const text = normalize(candidate.textContent);
+    const matchingWords = addressWords.filter((word) => text.includes(word)).length;
+    const numberMatches = !streetNumber || text.includes(streetNumber);
+    const isGooglePlacesSuggestion = Boolean(candidate.matches?.('.pac-item'));
+    return { candidate, index, score: matchingWords + (numberMatches ? 5 : 0) + (isGooglePlacesSuggestion ? 2 : 0) };
+  }).filter(({ candidate, score }) => candidate instanceof HTMLElement && score > 2);
+  scored.sort((left, right) => right.score - left.score || left.index - right.index);
+  return scored.map(({ candidate }) => candidate);
+}
+
+async function fillAdpAddress(profile) {
+  const addressField = adpProfileField('PersonalAddress_address_line1');
+  const fullAddress = adpFullAddress(profile);
+  if (!addressField || !fullAddress) return false;
+
+  const addressWasPopulated = () => {
+    const city = cleanText(adpProfileField('PersonalAddress_city')?.value);
+    const zip = cleanText(adpProfileField('PersonalAddress_postalCode')?.value);
+    const stateControl = document.getElementById('PersonalAddress_state');
+    const state = cleanText(stateControl?.querySelector('.vdl-dropdown-list__input')?.textContent
+      || stateControl?.textContent);
+    return Boolean(city && zip && state);
+  };
+  const waitForPopulatedAddress = async () => {
+    for (let attempt = 0; attempt < 30; attempt += 1) {
+      await sleep(100);
+      if (addressWasPopulated()) return true;
+    }
+    return false;
+  };
+
+  await fillAdpControlledInput(addressField, fullAddress, false);
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const suggestion = adpAddressSuggestions(fullAddress)[0];
+    if (suggestion instanceof HTMLElement) {
+      clickComboboxOption(suggestion);
+      if (await waitForPopulatedAddress()) return true;
+      // The suggestion was selected even if ADP has not finished exposing every
+      // derived field. Do not replace the validated address with raw text values.
+      return true;
+    }
+    await sleep(100);
+  }
+  // ADP can render its location menu in a portal that is not queryable from the
+  // extension's isolated world. The focused input still accepts keyboard choice.
+  addressField.focus();
+  dispatchKey(addressField, 'ArrowDown', 'ArrowDown', 40);
+  await sleep(200);
+  dispatchKey(addressField, 'Enter', 'Enter', 13);
+  if (await waitForPopulatedAddress()) return true;
+  addressField.blur();
+  return false;
+}
+
+async function fillAdpProfileFields(profile) {
+  const handled = new Set();
   const filledQuestions = [];
+  const nameFields = [
+    ['personalInfomationFirstName', cleanText(profile?.firstName) || splitFullName(profile?.fullName).firstName],
+    ['personalInfomationMiddleName', cleanText(profile?.middleName) || splitFullName(profile?.fullName).middleName],
+    ['personalInfomationLastName', cleanText(profile?.lastName) || splitFullName(profile?.fullName).lastName],
+  ];
+  for (const [id, value] of nameFields) {
+    const field = adpProfileField(id);
+    if (!field || !value) continue;
+    if (await fillAdpControlledInput(field, value)) {
+      handled.add(field);
+      filledQuestions.push(fieldLabel(field) || id);
+    }
+  }
+
+  if (await fillAdpAddress(profile)) {
+    for (const id of [
+      'PersonalAddress_address_line1',
+      'PersonalAddress_city',
+      'PersonalAddress_state',
+      'PersonalAddress_postalCode',
+      'PersonalAddress_county',
+    ]) {
+      const field = document.getElementById(id);
+      if (field) handled.add(field);
+    }
+    filledQuestions.push('Validated address');
+  }
+  return { handled, filledQuestions };
+}
+
+async function fillProfileFields(profile) {
+  const adpResult = await fillAdpProfileFields(profile);
+  let filled = adpResult.handled.size;
+  const filledQuestions = [...adpResult.filledQuestions];
   const skippedQuestions = [];
-  const seen = new Set();
+  const seen = new Set(adpResult.handled);
   // Greenhouse reveals dependent fields after earlier answers (for example, Race after
   // Hispanic/Latino = No). Rescan between passes so those newly mounted controls are included.
   for (let pass = 0; pass < 4; pass += 1) {
     for (const field of document.querySelectorAll(FIELD_SELECTOR)) {
       if (!isVisible(field) || field.disabled || field.readOnly || seen.has(field)) continue;
-      seen.add(field);
       const value = cleanText(profileValueForField(field, profile));
       const question = fieldLabel(field) || field.id || field.getAttribute('name') || 'Profile field';
       const identity = normalize([field.id, field.getAttribute('name'), question].filter(Boolean).join(' '));
@@ -992,17 +1579,20 @@ async function fillProfileFields(profile) {
           && field.value
         ) {
           setNativeValue(field, '');
+          seen.add(field);
           filled += 1;
           filledQuestions.push(question);
         }
+        else seen.add(field);
         continue;
       }
       const record = { field, question, normalized: normalize(question), sensitive: SENSITIVE_FIELD.test(question) };
       if (await fillField(record, value)) {
+        seen.add(field);
         filled += 1;
         filledQuestions.push(question);
       }
-      else skippedQuestions.push(question);
+      else if (pass === 3) skippedQuestions.push(question);
       await sleep(100);
     }
     if (pass < 3) await sleep(250);

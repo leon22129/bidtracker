@@ -19,6 +19,12 @@ describe('ApplicationGenerationService application metadata eligibility', () => 
     career_path: '',
     location: 'Chicago, IL',
     full_name: 'Candidate',
+    us_work_status: 'US Citizen',
+    requires_sponsorship: 'No',
+    legally_authorized_us: 'Yes',
+    gender: 'Male',
+    hispanic_latino: 'No',
+    ethnicity: 'White',
   };
 
   function setup() {
@@ -185,6 +191,53 @@ describe('ApplicationGenerationService application metadata eligibility', () => 
     expect(openAi.mock.calls[0][0]).not.toContain(dto.job_description);
   });
 
+  it('seeds answer conversations with real candidate profile values', async () => {
+    const { service, prisma } = setup();
+    (service as any).createAnswerConversation.mockRestore();
+    prisma.resumeConversation.create.mockResolvedValue({
+      id: 'conversation-1',
+      openai_conversation_id: 'conv_openai_1',
+    });
+    const request = jest.spyOn(service as any, 'openAiRequest').mockResolvedValue({
+      id: 'conv_openai_1',
+    });
+
+    await (service as any).createAnswerConversation(
+      user,
+      profile,
+      dto.workspace_id,
+      dto.job_description,
+      { summary: 'Tailored summary' },
+    );
+
+    const body = request.mock.calls[0][1] as any;
+    const context = body.items[0].content as string;
+    expect(context).toContain('Candidate info:');
+    expect(context).toContain('US work status: US Citizen');
+    expect(context).toContain('Require employment sponsorship now or later: No');
+    expect(context).toContain('Legally authorized to work in the US: Yes');
+    expect(context).toContain('Gender: Male');
+    expect(context).toContain('Hispanic/Latino: No');
+    expect(context).toContain('Race: White');
+    expect(prisma.resumeConversation.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ profile_id: profile.id }),
+    });
+  });
+
+  it('replaces resume prompt placeholders with real candidate information', () => {
+    const { service } = setup();
+    const prompt = (service as any).resumePrompt(profile, dto.job_description) as string;
+
+    expect(prompt).toContain(`JD:\n${dto.job_description}`);
+    expect(prompt).toContain(`Candidate Current Location (city and/or state):\n${profile.location}`);
+    expect(prompt).toContain('Candidate info:\nUS work status: US Citizen');
+    expect(prompt).toContain('Require employment sponsorship now or later: No');
+    expect(prompt).toContain('Legally authorized to work in the US: Yes');
+    expect(prompt).toContain('Gender: Male');
+    expect(prompt).toContain('Hispanic/Latino: No');
+    expect(prompt).toContain('Race: White');
+  });
+
   it('constrains select answers to an option supplied by the application page', async () => {
     const { service, prisma } = setup();
     prisma.resumeConversation.findUnique.mockResolvedValue({
@@ -204,6 +257,49 @@ describe('ApplicationGenerationService application metadata eligibility', () => 
       answers: [{ question: 'Do you have Kubernetes experience?', answer: 'Yes' }],
     });
     expect(openAi.mock.calls[0][0]).toContain('Allowed answers: ["Yes","No"]');
+  });
+
+  it('uses saved profile values for sponsorship and work authorization answers', async () => {
+    const { service, prisma } = setup();
+    prisma.resumeConversation.findUnique.mockResolvedValue({
+      id: 'conversation-1',
+      user_id: user.id,
+      workspace_id: dto.workspace_id,
+      profile_id: profile.id,
+      openai_conversation_id: 'conv_openai_1',
+    });
+    const openAi = jest.spyOn(service as any, 'openAi').mockResolvedValue(JSON.stringify({
+      answers: [
+        { question: 'Will you now or or in the future require employment sponsorship?', answer: 'Yes' },
+        { question: 'Are you legally authorized to work for any employer in the country where the position is located?', answer: 'No' },
+        { question: 'Do you have the right to work in the country for which you are applying?', answer: 'No' },
+      ],
+    }));
+
+    await expect(service.answerQuestions(user, {
+      conversation_id: 'conversation-1',
+      questions: [
+        {
+          question: 'Will you now or or in the future require employment sponsorship?',
+          options: ['Yes', 'No'],
+        },
+        {
+          question: 'Are you legally authorized to work for any employer in the country where the position is located?',
+          options: ['Yes', 'No'],
+        },
+        {
+          question: 'Do you have the right to work in the country for which you are applying?',
+          options: ['Yes', 'No'],
+        },
+      ],
+    })).resolves.toEqual({
+      answers: [
+        { question: 'Will you now or or in the future require employment sponsorship?', answer: 'No' },
+        { question: 'Are you legally authorized to work for any employer in the country where the position is located?', answer: 'Yes' },
+        { question: 'Do you have the right to work in the country for which you are applying?', answer: 'Yes' },
+      ],
+    });
+    expect(prisma.resumeProfile.findUnique).toHaveBeenCalledWith({ where: { id: profile.id } });
   });
 
   it('does not allow another user to use a conversation id', async () => {

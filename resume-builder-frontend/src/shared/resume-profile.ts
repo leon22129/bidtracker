@@ -1,5 +1,8 @@
 export type ResumePersonalInfo = {
   fullName: string
+  firstName: string
+  middleName: string
+  lastName: string
   title: string
   phone: string
   email: string
@@ -16,6 +19,7 @@ export type ResumePersonalInfo = {
   ethnicity: string
   requiresSponsorship: string
   legallyAuthorizedUs: string
+  usWorkStatus: string
 }
 
 export type ResumeEducation = {
@@ -32,6 +36,9 @@ export type ResumeCertification = {
 
 export const DEFAULT_RESUME_PERSONAL_INFO: ResumePersonalInfo = {
   fullName: "",
+  firstName: "",
+  middleName: "",
+  lastName: "",
   title: "",
   phone: "",
   email: "",
@@ -48,6 +55,7 @@ export const DEFAULT_RESUME_PERSONAL_INFO: ResumePersonalInfo = {
   ethnicity: "",
   requiresSponsorship: "",
   legallyAuthorizedUs: "",
+  usWorkStatus: "",
 }
 
 export const DEFAULT_RESUME_EDUCATION: ResumeEducation[] = [
@@ -67,9 +75,14 @@ function readStringField(source: Record<string, unknown>, key: string): string {
 
 export function normalizeResumePersonalInfo(value: unknown): ResumePersonalInfo {
   const source = value && typeof value === "object" ? value as Record<string, unknown> : {}
+  const fullName = readStringField(source, "fullName")
+  const fullNameParts = fullName.trim().split(/\s+/).filter(Boolean)
 
   return {
-    fullName: readStringField(source, "fullName"),
+    fullName,
+    firstName: readStringField(source, "firstName") || fullNameParts[0] || "",
+    middleName: readStringField(source, "middleName") || (fullNameParts.length > 2 ? fullNameParts.slice(1, -1).join(" ") : ""),
+    lastName: readStringField(source, "lastName") || (fullNameParts.length > 1 ? fullNameParts.at(-1) || "" : ""),
     title: readStringField(source, "title"),
     phone: readStringField(source, "phone"),
     email: readStringField(source, "email"),
@@ -86,6 +99,7 @@ export function normalizeResumePersonalInfo(value: unknown): ResumePersonalInfo 
     ethnicity: readStringField(source, "ethnicity"),
     requiresSponsorship: readStringField(source, "requiresSponsorship"),
     legallyAuthorizedUs: readStringField(source, "legallyAuthorizedUs"),
+    usWorkStatus: readStringField(source, "usWorkStatus"),
   }
 }
 

@@ -5,7 +5,9 @@ describe('DuplicateService URL-only detection', () => {
   function serviceWith(rows: any[] = []) {
     const prisma = {
       jobApplication: {
-        findMany: jest.fn().mockResolvedValue(rows),
+        findMany: jest.fn().mockImplementation(({ where }: any) => Promise.resolve(
+          rows.filter((row) => !where?.workspace_id || row.workspace_id === where.workspace_id),
+        )),
         findFirst: jest.fn().mockResolvedValue(null),
       },
     };
@@ -33,8 +35,8 @@ describe('DuplicateService URL-only detection', () => {
     expect(verdict.existing).toMatchObject({ same_workspace: true, id: 'app-1' });
   });
 
-  it('does not expose metadata for a duplicate in another workspace', async () => {
-    const { service } = serviceWith([{
+  it('does not classify the same URL in another workspace as a duplicate', async () => {
+    const { service, prisma } = serviceWith([{
       id: 'secret-app',
       url: 'https://example.com/jobs/123',
       normalized_url: 'example.com/jobs/123',
@@ -50,8 +52,11 @@ describe('DuplicateService URL-only detection', () => {
       ['https://example.com/jobs/123'],
     );
 
-    expect(verdict).toMatchObject({ is_duplicate: true, existing: { same_workspace: false } });
-    expect(verdict.existing).toEqual({ same_workspace: false });
+    expect(verdict).toMatchObject({ is_duplicate: false });
+    expect(verdict).not.toHaveProperty('existing');
+    expect(prisma.jobApplication.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ workspace_id: 'workspace-1' }),
+    }));
   });
 
   it('detects repeated normalized URLs within one batch', async () => {

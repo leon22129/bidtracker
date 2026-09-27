@@ -41,6 +41,7 @@ creator, so reassignment cannot move earlier work to another bidder.
 | `id` | TEXT PK | stable profile identifier used by the resume client |
 | `workspace_id` | TEXT UNIQUE FK→Workspace ON DELETE CASCADE | exactly one owning workspace; profiles cannot be shared |
 | `name` and resume fields | TEXT/BOOL | identity, resume content, template, and download settings |
+| `us_work_status` | TEXT | optional application-autofill status: `US Citizen`, `Green Card`, or `Other` |
 
 ### JobApplication
 | Column | Type | Notes |
@@ -52,7 +53,7 @@ creator, so reassignment cannot move earlier work to another bidder.
 | `job_title` | TEXT NULL | required for generated/manual creation; nullable for imports and banned rows |
 | `company_name` | TEXT NULL | required for generated/manual creation; nullable for imports and banned rows |
 | `url` | TEXT | as pasted |
-| `normalized_url` | TEXT | canonical form — the duplicate key |
+| `normalized_url` | TEXT | canonical form — duplicate key within a workspace |
 | `job_fingerprint` | TEXT NULL | 128-bit company/title hash for recent cross-site duplicate warnings |
 | `job_source` | TEXT | detected platform, default `Other` |
 | `application_status` | TEXT | `Pending`\|`Applied`\|`Rejected`\|`Duplicated` |
@@ -102,7 +103,7 @@ Every index below exists to serve a *named* query, not speculatively.
 | `JobApplication(workspace_id, paid)` | payment sweep / locked-row shading |
 | `JobApplication(application_status, paid, date, created_by_user_id, workspace_id)` | creator-attributed live payment report and atomic settlement filter |
 | `JobApplication(workspace_id, date DESC, number ASC)` | default paginated workspace ordering without a temporary sort |
-| `JobApplication(normalized_url)` | global duplicate probe; a partial UNIQUE index additionally permits only one `Pending`/`Applied` row per normalized URL |
+| `JobApplication(workspace_id, normalized_url)` | workspace-local duplicate probe; a partial UNIQUE index additionally permits only one `Pending`/`Applied` row per URL in each workspace |
 | Trigram GIN on `JobApplication(job_title/company_name/url/note)` | case-insensitive leading-wildcard free-text search |
 | `JobApplication(workspace_id, job_fingerprint, created_at)` | recent cross-site company/title duplicate probe |
 | `JobApplication(date)` | cross-workspace weekly aggregation |
