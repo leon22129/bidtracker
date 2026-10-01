@@ -15,6 +15,87 @@ describe('WorkspacesService', () => {
 
   beforeEach(() => jest.clearAllMocks());
 
+  it('returns today applied counts grouped by workspace and submitting user', async () => {
+    const localPrisma = {
+      workspace: {
+        findMany: jest.fn().mockResolvedValue([
+          {
+            id: 'lucky', name: 'Lucky', owner_user_id: 'owner-1', created_by_user_id: 'admin-1',
+            owner: { id: 'owner-1', username: 'Owner', email: 'owner@example.com' },
+            is_archived: false, created_at: new Date(), updated_at: new Date(),
+            resumeProfile: null, _count: { applications: 70 },
+          },
+        ]),
+      },
+      jobApplication: {
+        groupBy: jest.fn().mockResolvedValue([
+          { workspace_id: 'lucky', created_by_user_id: 'michael', _count: { _all: 20 } },
+          { workspace_id: 'lucky', created_by_user_id: 'kevin', _count: { _all: 50 } },
+        ]),
+      },
+      user: {
+        findMany: jest.fn().mockResolvedValue([
+          { id: 'michael', username: 'Michael' },
+          { id: 'kevin', username: 'Kevin' },
+        ]),
+      },
+    };
+    access.visibleWorkspaceIds.mockResolvedValue(null);
+    const service = new WorkspacesService(
+      localPrisma as never, access as never, conversationCleanup as never,
+    );
+
+    await expect(service.findAllForUser({
+      id: 'admin-1', username: 'admin', email: 'admin@example.com', role: 'admin',
+    }, true)).resolves.toMatchObject([
+      {
+        id: 'lucky',
+        applied_today_by_user: [
+          { user_id: 'kevin', username: 'Kevin', count: 50 },
+          { user_id: 'michael', username: 'Michael', count: 20 },
+        ],
+      },
+    ]);
+
+    expect(localPrisma.jobApplication.groupBy).toHaveBeenCalledWith(expect.objectContaining({
+      by: ['workspace_id', 'created_by_user_id'],
+      where: expect.objectContaining({
+        workspace_id: { in: ['lucky'] },
+        application_status: 'Applied',
+        date: expect.any(Date),
+      }),
+    }));
+  });
+
+  it('does not expose bidder counts to non-admin users', async () => {
+    const localPrisma = {
+      workspace: {
+        findMany: jest.fn().mockResolvedValue([
+          {
+            id: 'lucky', name: 'Lucky', owner_user_id: 'bidder-1', created_by_user_id: 'admin-1',
+            owner: { id: 'bidder-1', username: 'Bidder', email: 'bidder@example.com' },
+            is_archived: false, created_at: new Date(), updated_at: new Date(),
+            resumeProfile: null, _count: { applications: 50 },
+          },
+        ]),
+      },
+      jobApplication: { groupBy: jest.fn() },
+      user: { findMany: jest.fn() },
+    };
+    access.visibleWorkspaceIds.mockResolvedValue(['lucky']);
+    const service = new WorkspacesService(
+      localPrisma as never, access as never, conversationCleanup as never,
+    );
+
+    await expect(service.findAllForUser({
+      id: 'bidder-1', username: 'Bidder', email: 'bidder@example.com', role: 'bidder',
+    }, false)).resolves.toMatchObject([
+      { id: 'lucky', applied_today_by_user: [] },
+    ]);
+    expect(localPrisma.jobApplication.groupBy).not.toHaveBeenCalled();
+    expect(localPrisma.user.findMany).not.toHaveBeenCalled();
+  });
+
   it('allows bidder managers to edit export and template settings', async () => {
     const service = new WorkspacesService(prisma as never, access as never, conversationCleanup as never);
     prisma.resumeProfile.update.mockResolvedValue({ id: 'p-1' });

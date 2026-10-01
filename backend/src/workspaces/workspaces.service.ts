@@ -7,6 +7,7 @@ import { WorkspaceAccessService } from './workspace-access.service';
 import { CreateWorkspaceDto, UpdateWorkspaceDto } from './dto/workspace.dto';
 import { isAdmin } from '../common/policies/application.policy';
 import { ConversationCleanupService } from '../resume/conversation-cleanup.service';
+import { todayUtc } from '../common/utils/date.util';
 
 @Injectable()
 export class WorkspacesService {
@@ -33,6 +34,27 @@ export class WorkspacesService {
       orderBy: { name: 'asc' },
     });
 
+    const workspaceIds = workspaces.map((workspace) => workspace.id);
+    const todayGroups = isAdmin(user.role) && workspaceIds.length
+      ? await this.prisma.jobApplication.groupBy({
+        by: ['workspace_id', 'created_by_user_id'],
+        where: {
+          workspace_id: { in: workspaceIds },
+          date: todayUtc(),
+          application_status: 'Applied',
+        },
+        _count: { _all: true },
+      })
+      : [];
+    const submitterIds = [...new Set(todayGroups.map((group) => group.created_by_user_id))];
+    const submitters = submitterIds.length
+      ? await this.prisma.user.findMany({
+        where: { id: { in: submitterIds } },
+        select: { id: true, username: true },
+      })
+      : [];
+    const usernameById = new Map(submitters.map((submitter) => [submitter.id, submitter.username]));
+
     return workspaces.map((w) => ({
       id: w.id,
       name: w.name,
@@ -44,6 +66,14 @@ export class WorkspacesService {
       updated_at: w.updated_at,
       profile: w.resumeProfile ? this.toProfile(w.resumeProfile) : null,
       application_count: w._count.applications,
+      applied_today_by_user: todayGroups
+        .filter((group) => group.workspace_id === w.id)
+        .map((group) => ({
+          user_id: group.created_by_user_id,
+          username: usernameById.get(group.created_by_user_id) ?? 'Unknown user',
+          count: group._count._all,
+        }))
+        .sort((a, b) => a.username.localeCompare(b.username)),
     }));
   }
 

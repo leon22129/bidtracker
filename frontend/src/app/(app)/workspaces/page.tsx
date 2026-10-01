@@ -1,12 +1,14 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 import { canManageWorkspaces } from '@/lib/permissions';
 import type { User, Workspace } from '@/lib/types';
 import { useToast } from '@/components/ui/toast';
+
+type WorkspaceFilter = 'active' | 'archived' | 'all';
 
 export default function WorkspacesPage() {
   const { user } = useAuth();
@@ -22,6 +24,63 @@ export default function WorkspacesPage() {
   const [newOwner, setNewOwner] = useState('');
   const [reassigning, setReassigning] = useState<Workspace | null>(null);
   const [editingProfile, setEditingProfile] = useState<Workspace | null>(null);
+  const [workspaceFilter, setWorkspaceFilter] = useState<WorkspaceFilter>('active');
+  const [selectedBidderId, setSelectedBidderId] = useState('all');
+
+  const workspaceCounts = useMemo(() => ({
+    all: workspaces.length,
+    active: workspaces.filter((workspace) => !workspace.is_archived).length,
+    archived: workspaces.filter((workspace) => workspace.is_archived).length,
+  }), [workspaces]);
+  const filteredWorkspaces = useMemo(
+    () => workspaces.filter((workspace) => (
+      workspaceFilter === 'all'
+      || (workspaceFilter === 'archived' ? workspace.is_archived : !workspace.is_archived)
+    )),
+    [workspaceFilter, workspaces],
+  );
+  const activeWorkspaceActivity = useMemo(
+    () => workspaces.filter((workspace) => !workspace.is_archived),
+    [workspaces],
+  );
+  const bidderActivity = useMemo(() => {
+    const bidders = new Map<string, {
+      id: string;
+      username: string;
+      total: number;
+      profiles: Array<{ id: string; name: string; count: number }>;
+    }>();
+
+    for (const workspace of activeWorkspaceActivity) {
+      for (const item of workspace.applied_today_by_user) {
+        const bidder = bidders.get(item.user_id) ?? {
+          id: item.user_id,
+          username: item.username,
+          total: 0,
+          profiles: [],
+        };
+        bidder.total += item.count;
+        bidder.profiles.push({
+          id: workspace.id,
+          name: workspace.profile?.name || workspace.name,
+          count: item.count,
+        });
+        bidders.set(item.user_id, bidder);
+      }
+    }
+
+    return [...bidders.values()].sort((a, b) => a.username.localeCompare(b.username));
+  }, [activeWorkspaceActivity]);
+  const displayedBidderActivity = useMemo(
+    () => bidderActivity.filter((bidder) => (
+      selectedBidderId === 'all' || bidder.id === selectedBidderId
+    )),
+    [bidderActivity, selectedBidderId],
+  );
+  const appliedTodayTotal = useMemo(
+    () => displayedBidderActivity.reduce((total, bidder) => total + bidder.total, 0),
+    [displayedBidderActivity],
+  );
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -86,13 +145,65 @@ export default function WorkspacesPage() {
     <main className="mx-auto max-w-6xl px-4 py-6">
       <div className="mb-6 flex items-baseline justify-between">
         <div>
-          <h1 className="text-lg font-semibold">Workspaces</h1>
+          <h1 className="text-lg font-semibold">Dashboard</h1>
           <p className="mt-0.5 text-xs text-gray-500">
             Each workspace (tab) belongs to one bidder — that owner receives the payment credit for its
             applied rows, regardless of who entered them.
           </p>
         </div>
       </div>
+
+      {admin && !loading && workspaces.length > 0 && (
+        <section className="card mb-6 p-4" aria-labelledby="today-applied-heading">
+          <div className="flex flex-wrap items-end justify-between gap-4">
+            <div>
+              <h2 id="today-applied-heading" className="text-sm font-semibold">
+                Today&apos;s applied applications
+              </h2>
+              <p className="mt-0.5 text-2xs text-gray-500">Select a bidder to see their profile counts</p>
+            </div>
+            <label className="label min-w-52">
+              Bidder
+              <select
+                className="input mt-1"
+                value={selectedBidderId}
+                onChange={(event) => setSelectedBidderId(event.target.value)}
+              >
+                <option value="all">All bidders ({bidderActivity.reduce((sum, bidder) => sum + bidder.total, 0)})</option>
+                {bidderActivity.map((bidder) => (
+                  <option key={bidder.id} value={bidder.id}>
+                    {bidder.username} ({bidder.total})
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div className="text-right">
+              <p className="text-2xl font-semibold tabular-nums">{appliedTodayTotal.toLocaleString()}</p>
+              <p className="text-2xs text-gray-500">total today</p>
+            </div>
+          </div>
+
+          <div className="mt-4 space-y-4">
+            {displayedBidderActivity.map((bidder) => (
+              <div key={bidder.id}>
+                <p className="text-sm font-medium">
+                  {bidder.username}: total {bidder.total.toLocaleString()}
+                </p>
+                <div className="mt-1 flex flex-wrap gap-x-2 gap-y-1 text-sm text-gray-700">
+                  {bidder.profiles.map((profile) => (
+                    <span key={profile.id}>
+                      {profile.name}-{profile.count.toLocaleString()}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            ))}
+            {displayedBidderActivity.length === 0 && (
+              <p className="text-sm text-gray-500">No applications today for this bidder.</p>
+            )}
+          </div>
+        </section>
+      )}
 
       {admin && (
         <form onSubmit={createWorkspace} className="card mb-6 flex flex-wrap items-end gap-3 p-4">
@@ -134,6 +245,22 @@ export default function WorkspacesPage() {
         </form>
       )}
 
+      {!loading && workspaces.length > 0 && (
+        <div className="mb-4 flex flex-wrap gap-1.5" role="group" aria-label="Filter workspaces by status">
+          {(['active', 'archived', 'all'] as const).map((filter) => (
+            <button
+              key={filter}
+              type="button"
+              className={workspaceFilter === filter ? 'btn-primary btn-xs' : 'btn-secondary btn-xs'}
+              onClick={() => setWorkspaceFilter(filter)}
+              aria-pressed={workspaceFilter === filter}
+            >
+              {filter[0].toUpperCase() + filter.slice(1)} ({workspaceCounts[filter]})
+            </button>
+          ))}
+        </div>
+      )}
+
       {loading ? (
         <p className="text-sm text-gray-500">Loading…</p>
       ) : workspaces.length === 0 ? (
@@ -144,9 +271,13 @@ export default function WorkspacesPage() {
               : 'No workspaces have been assigned to you yet. Ask an admin for access.'}
           </p>
         </div>
+      ) : filteredWorkspaces.length === 0 ? (
+        <div className="card p-8 text-center">
+          <p className="text-sm text-gray-600">No {workspaceFilter} workspaces.</p>
+        </div>
       ) : (
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {workspaces.map((w) => (
+          {filteredWorkspaces.map((w) => (
             <div
               key={w.id}
               className={`card flex flex-col p-4 ${w.is_archived ? 'opacity-60' : ''}`}
@@ -170,6 +301,19 @@ export default function WorkspacesPage() {
                 {w.application_count.toLocaleString()}
               </p>
               <p className="text-2xs text-gray-500">applications</p>
+
+              {admin && (
+                <div className="mt-3 border-t border-gray-100 pt-3">
+                  <p className="text-2xs font-medium uppercase tracking-wide text-gray-500">Applied today</p>
+                  <p className="mt-1 text-xs text-gray-700">
+                    {w.applied_today_by_user.length > 0
+                      ? w.applied_today_by_user
+                        .map((item) => `${item.username}(${item.count.toLocaleString()})`)
+                        .join(' ')
+                      : 'None'}
+                  </p>
+                </div>
+              )}
 
               <div className="mt-4 flex flex-wrap gap-1.5">
                 <Link href={`/workspaces/${w.id}`} className="btn-secondary btn-xs">

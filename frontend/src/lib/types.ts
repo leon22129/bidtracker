@@ -52,6 +52,7 @@ export interface Workspace {
   owner: { id: string; username: string; email: string };
   is_archived: boolean;
   application_count: number;
+  applied_today_by_user: Array<{ user_id: string; username: string; count: number }>;
   created_at: string;
   updated_at: string;
   profile: ResumeProfile | null;
