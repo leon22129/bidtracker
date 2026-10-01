@@ -32,7 +32,5 @@ resume-builder-frontend/config.json
 resume-builder-frontend/dist-web/
 backend/tsconfig.build.tsbuildinfo
 backend/prisma/generated/
-resume-builder-frontend/dist-web/index.html
-resume-builder-frontend/dist-web/index.html
 frontend/.next-dev/
 frontend/tsconfig.tsbuildinfo
