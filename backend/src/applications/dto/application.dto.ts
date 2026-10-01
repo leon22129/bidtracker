@@ -1,11 +1,11 @@
 import { Transform, Type } from 'class-transformer';
 import {
-  ArrayMaxSize, ArrayMinSize, IsArray, IsBoolean, IsDateString, IsIn, IsInt, IsOptional,
-  IsString, Max, MaxLength, Min, ValidateNested,
+  ArrayMaxSize, ArrayMinSize, IsArray, IsBoolean, IsDateString, IsIn, IsInt, IsObject,
+  IsOptional, IsString, IsUrl, Max, MaxLength, Min, MinLength, ValidateNested,
 } from 'class-validator';
 import {
   APPLICATION_STATUSES, ApplicationStatus, DEFAULT_PAGE_SIZE, JOB_SOURCES, JobSource,
-  MAX_PAGE_SIZE, MAX_ROWS_PER_INGEST, PIPELINE_STATUSES, PipelineStatus,
+  MAX_PAGE_SIZE, PIPELINE_STATUSES, PipelineStatus,
 } from '../../common/constants';
 
 const toBool = ({ value }: { value: any }) =>
@@ -68,7 +68,7 @@ export class QueryApplicationsDto {
   @IsOptional()
   @IsIn([
     'date', 'number', 'job_title', 'company_name', 'job_source',
-    'application_status', 'pipeline_status', 'paid', 'created_at',
+    'application_status', 'pipeline_status', 'paid', 'interview_date', 'created_at',
   ])
   sort_by?: string = 'date';
 
@@ -117,13 +117,44 @@ export class UpdateApplicationDto {
   @IsOptional()
   @IsBoolean()
   paid?: boolean;
+}
+
+export class BulkUpdatePatchDto {
+  @IsOptional()
+  @IsIn(APPLICATION_STATUSES)
+  application_status?: ApplicationStatus;
+
+  @IsOptional()
+  @IsIn(PIPELINE_STATUSES)
+  pipeline_status?: PipelineStatus;
+
+  @IsOptional()
+  @IsIn(JOB_SOURCES)
+  job_source?: JobSource;
 
   @IsOptional()
   @IsString()
-  @MaxLength(2000)
-  resume_link?: string | null;
+  @MaxLength(5000)
+  note?: string | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(300)
+  job_title?: string | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  company_name?: string | null;
+
+  @IsOptional()
+  @IsBoolean()
+  paid?: boolean;
 }
 
+// Keep this declaration after BulkUpdatePatchDto. Decorator metadata emits a runtime
+// reference to the patch class, so placing it first causes a temporal-dead-zone error
+// when Node loads the compiled CommonJS module.
 export class BulkUpdateApplicationsDto {
   @IsArray()
   @ArrayMinSize(1)
@@ -132,8 +163,8 @@ export class BulkUpdateApplicationsDto {
   ids: string[];
 
   @ValidateNested()
-  @Type(() => UpdateApplicationDto)
-  patch: UpdateApplicationDto;
+  @Type(() => BulkUpdatePatchDto)
+  patch: BulkUpdatePatchDto;
 }
 
 export class BulkIdsDto {
@@ -144,28 +175,86 @@ export class BulkIdsDto {
   ids: string[];
 }
 
-export class BulkPaidDto extends BulkIdsDto {
-  @IsBoolean()
-  paid: boolean;
-}
-
-/** Manual URL paste: one textarea, one date, N lines -> N applications. */
-export class CreateFromUrlsDto {
+/** A complete application entered directly from the workspace UI. */
+export class CreateManualApplicationDto {
   @IsString()
   workspace_id: string;
 
-  @IsDateString()
-  date: string;
+  @IsUrl({ require_protocol: true })
+  url: string;
 
+  @Transform(({ value }) => typeof value === 'string' ? value.trim() : value)
   @IsString()
-  @MaxLength(MAX_ROWS_PER_INGEST * 500)
-  urls: string;
+  @MinLength(1)
+  @MaxLength(300)
+  job_title: string;
 
-  /** Set false to skip network enrichment (faster, leaves title/company blank). */
+  @Transform(({ value }) => typeof value === 'string' ? value.trim() : value)
+  @IsString()
+  @MinLength(1)
+  @MaxLength(200)
+  company_name: string;
+
+  @IsIn(APPLICATION_STATUSES)
+  application_status: ApplicationStatus;
+}
+
+/** Compatibility payload for older resume clients that save after generation. */
+export class CreateGeneratedApplicationDto {
+  @IsString()
+  workspace_id: string;
+
+  @IsUrl({ require_protocol: true })
+  url: string;
+
+  @Transform(({ value }) => typeof value === 'string' ? value.trim() : value)
+  @IsString()
+  @MinLength(1)
+  @MaxLength(300)
+  job_title: string;
+
+  @Transform(({ value }) => typeof value === 'string' ? value.trim() : value)
+  @IsString()
+  @MinLength(1)
+  @MaxLength(200)
+  company_name: string;
+
+  /** User-confirmed override for a recent company/title match. Exact URL matches are never overridden. */
   @IsOptional()
   @Transform(toBool)
   @IsBoolean()
-  enrich?: boolean = true;
+  allow_similar_job?: boolean = false;
+
+  /** Final, user-reviewed ResumeData used by the PDF renderer. */
+  @IsOptional()
+  @IsObject()
+  generated_resume?: Record<string, unknown>;
+
+  @IsOptional()
+  @Transform(({ value }) => typeof value === 'string' ? value.trim() : value)
+  @IsString()
+  @MinLength(8)
+  @MaxLength(20000)
+  job_description?: string;
+
+  @IsOptional()
+  @IsString()
+  @MinLength(1)
+  @MaxLength(128)
+  conversation_id?: string;
+
+  @IsOptional()
+  @IsIn(['classic', 'modern', 'minimal', 'executive', 'academic', 'tech', 'elegant', 'bold', 'corporate'])
+  resume_template?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(50000)
+  cover_letter_text?: string;
+
+  @IsOptional()
+  @IsIn(['classic', 'modern', 'minimal'])
+  cover_letter_template?: string;
 }
 
 export class UpdatePipelineDto {
@@ -173,4 +262,12 @@ export class UpdatePipelineDto {
   @IsIn(PIPELINE_STATUSES)
   pipeline_status?: PipelineStatus;
 
+  @IsOptional()
+  @IsDateString()
+  interview_date?: string | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(5000)
+  interview_note?: string | null;
 }

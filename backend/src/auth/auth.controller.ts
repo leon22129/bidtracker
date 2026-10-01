@@ -1,8 +1,10 @@
-import { Body, Controller, Get, HttpCode, Post } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Patch, Post, UseGuards } from '@nestjs/common';
 import { AuthService } from './auth.service';
-import { ChangePasswordDto, LoginDto } from './dto/auth.dto';
+import { ChangePasswordDto, LoginDto, UpdateSlackSettingsDto } from './dto/auth.dto';
 import { Public } from '../common/decorators/public.decorator';
 import { AuthUser, CurrentUser } from '../common/decorators/current-user.decorator';
+import { Roles } from '../common/decorators/roles.decorator';
+import { RolesGuard } from '../common/guards/roles.guard';
 
 @Controller('auth')
 export class AuthController {
@@ -24,5 +26,22 @@ export class AuthController {
   @HttpCode(200)
   changePassword(@CurrentUser() user: AuthUser, @Body() dto: ChangePasswordDto) {
     return this.auth.changeOwnPassword(user.id, dto);
+  }
+
+  @Get('slack-settings')
+  @UseGuards(RolesGuard)
+  @Roles('admin', 'super_admin')
+  slackSettings(@CurrentUser() user: AuthUser) {
+    return this.auth.slackSettings(user.id);
+  }
+
+  @Patch('slack-settings')
+  @UseGuards(RolesGuard)
+  @Roles('admin', 'super_admin')
+  updateSlackSettings(
+    @CurrentUser() user: AuthUser,
+    @Body() dto: UpdateSlackSettingsDto,
+  ) {
+    return this.auth.updateSlackSettings(user.id, dto);
   }
 }

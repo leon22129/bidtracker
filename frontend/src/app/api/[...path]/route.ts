@@ -2,16 +2,12 @@
  * Same-origin API proxy.
  *
  * The browser always calls `/api/*` on its own origin and this handler forwards to the backend
- * container. That gives us: no CORS in production, no CSP exception for a second host, and a
- * Cloudflare Tunnel that only needs to expose ONE hostname — the deployment target in the spec.
+ * process. That keeps production same-origin and lets a reverse proxy expose one hostname.
  *
  * Why a route handler instead of the obvious `rewrites()` entry in next.config:
  * `next.config` rewrites are evaluated at BUILD time and serialised into `.next/routes-manifest.json`.
- * `BACKEND_INTERNAL_URL` is not known while the image is being built, so the manifest baked in the
- * `http://localhost:3001` fallback and every `/api/*` request in the container failed with
- * ECONNREFUSED even though the variable was correctly set at runtime. Pinning `runtime = 'nodejs'`
- * and reading `process.env` per request is what makes the same image redeployable against a different
- * backend host without a rebuild.
+ * Reading `BACKEND_URL` per request lets the frontend server target a different backend without a
+ * rebuild. The local default matches the backend's normal development port.
  */
 import { NextRequest } from 'next/server';
 
@@ -21,7 +17,7 @@ export const runtime = 'nodejs';
 // into a static optimisation.
 export const dynamic = 'force-dynamic';
 
-const backendUrl = () => process.env.BACKEND_INTERNAL_URL || 'http://127.0.0.1:3001';
+const backendUrl = () => process.env.BACKEND_URL || 'http://127.0.0.1:3001';
 
 /**
  * Headers that describe a single hop rather than the payload. Forwarding them corrupts the proxied

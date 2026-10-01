@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
@@ -33,6 +33,8 @@ import {
   Briefcase,
   Check,
   Pencil,
+  RefreshCw,
+  ClipboardCheck,
 } from "lucide-react";
 import {
   type ResumeData,
@@ -41,7 +43,7 @@ import {
   type Certification,
   normalizeSkills,
 } from "@/lib/parse-resume";
-import type { AiProfile } from "../../../shared/ai-profiles";
+import type { AiProfile, ApplicationQuestionInput } from "../../../shared/ai-profiles";
 import {
   generateCoverLetterPDF,
   DEFAULT_COVER_LETTER_TEMPLATE,
@@ -50,10 +52,18 @@ import {
 import { DEFAULT_TEMPLATE, type TemplateId } from "@/lib/pdf-templates";
 import {
   getFriendlyErrorMessage,
-  parseJobEligibility,
   parseGeneratedResume,
   getResumeDetailsForProfile,
 } from "@/lib/profile-utils";
+import {
+  canScanCurrentPage,
+  chooseProfileDirectory,
+  fillCurrentPageAnswers,
+  getCurrentBrowserTabUrl,
+  getCurrentPageContext,
+  getProfileDownloadPaths,
+  type PageQuestion,
+} from "@/lib/extension-storage";
 
 interface ProfileWorkspaceProps {
   profile: AiProfile;
@@ -65,6 +75,23 @@ interface ProfileWorkspaceProps {
   triggerPreview: boolean;
   onPreviewTriggered: () => void;
   settingsOpen: boolean;
+  isActive: boolean;
+}
+
+function formatQuestionEditorLine(item: PageQuestion): string {
+  if (!item.options.length) return item.question;
+  const instruction = item.fieldType === "checkbox" ? "Choose one or more." : "Choose Only one.";
+  return `${item.question} ${instruction} ${item.options.join("/")}`;
+}
+
+function questionInputFromEditorLine(line: string, scannedQuestions: PageQuestion[]): ApplicationQuestionInput {
+  const scanned = scannedQuestions.find((item) =>
+    item.question === line || formatQuestionEditorLine(item) === line,
+  );
+  return {
+    question: scanned?.question ?? line,
+    options: scanned?.options ?? [],
+  };
 }
 
 export function ProfileWorkspace({
@@ -77,6 +104,7 @@ export function ProfileWorkspace({
   triggerPreview,
   onPreviewTriggered,
   settingsOpen,
+  isActive,
 }: ProfileWorkspaceProps) {
   // Operational settings synced from profile
   const [selectedTemplate, setSelectedTemplate] =
@@ -92,11 +120,26 @@ export function ProfileWorkspace({
     useState<CoverLetterTemplateId>(DEFAULT_COVER_LETTER_TEMPLATE);
   const [personalInfo, setPersonalInfo] = useState<PersonalInfo>({
     fullName: "",
+    firstName: "",
+    middleName: "",
+    lastName: "",
     title: "",
     email: "",
     phone: "",
     location: "",
+    country: "",
+    address1: "",
+    city: "",
+    county: "",
+    state: "",
+    zip: "",
     linkedin: "",
+    gender: "",
+    hispanicLatino: "",
+    ethnicity: "",
+    requiresSponsorship: "",
+    legallyAuthorizedUs: "",
+    usWorkStatus: "",
   });
   const [education, setEducation] = useState<Education[]>([
     { degree: "", school: "", year: "" },
@@ -106,18 +149,26 @@ export function ProfileWorkspace({
   // Per-generation data
   const [jobDescription, setJobDescription] = useState("");
   const [resumeData, setResumeData] = useState<ResumeData | null>(null);
+  const [conversationId, setConversationId] = useState<string | null>(null);
   const [coverLetterText, setCoverLetterText] = useState<string | null>(null);
   const [applicationQuestions, setApplicationQuestions] = useState("");
+  const [scannedQuestions, setScannedQuestions] = useState<PageQuestion[]>([]);
   const [applicationAnswers, setApplicationAnswers] = useState<Array<{ question: string; answer: string }>>([]);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isGeneratingAnswers, setIsGeneratingAnswers] = useState(false);
+  const [isScanningPage, setIsScanningPage] = useState(false);
+  const [isFillingPage, setIsFillingPage] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
   const [error, setError] = useState("");
   const [applicationError, setApplicationError] = useState("");
+  const [pageScanMessage, setPageScanMessage] = useState("");
+  const [questionScanMessage, setQuestionScanMessage] = useState("");
+  const [pageFillMessage, setPageFillMessage] = useState("");
 
   // UI state
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewEditable, setPreviewEditable] = useState(false);
+  const [downloadLocationPromptOpen, setDownloadLocationPromptOpen] = useState(false);
 
   const syncFromProfile = (p: AiProfile) => {
     setSelectedTemplate(
@@ -167,6 +218,8 @@ export function ProfileWorkspace({
       return;
     }
     setError("");
+    setConversationId(null);
+    setCompanyName("");
     setIsGenerating(true);
 
     const shouldGenerateCoverLetter = profile.generateCoverLetter ?? generateCoverLetter;
@@ -175,37 +228,49 @@ export function ProfileWorkspace({
     const shouldUseCompanyName = profile.useCompanyName ?? useCompanyName;
     const shouldAutoDownload = profile.autoDownload ?? autoDownload;
     const shouldSaveInFolder = profile.saveInFolder ?? saveInFolder;
+    const initialQuestionLines = applicationQuestions
+      .split("\n")
+      .map((question) => question.trim())
+      .filter(Boolean)
+      .slice(0, 50);
+    const initialQuestions = initialQuestionLines.map((question) =>
+      questionInputFromEditorLine(question, scannedQuestions),
+    );
 
     try {
-      const eligibilityResponse = await window.aiProfiles.generate({
-        profileId: profile.id,
-        jobDescription,
-        kind: "jobEligibility",
-      });
-      const eligibility = parseJobEligibility(eligibilityResponse.tailored_resume);
-      const rejectionReasons: string[] = [];
-
-      if (eligibility.requires_clearance) rejectionReasons.push("requires security clearance");
-      if (eligibility.requires_public_trust) {
-        rejectionReasons.push("requires public trust");
-      }
-      if (!eligibility.is_us_job) rejectionReasons.push("is not clearly a US job");
-      if (!eligibility.work_arrangement_is_remote_only) rejectionReasons.push("is not explicitly fully remote");
-      if (eligibility.requires_in_person_interview) rejectionReasons.push("requires an in-person interview");
-      if (eligibility.requires_onsite_onboarding) rejectionReasons.push("requires onsite onboarding");
-
-      if (rejectionReasons.length > 0) {
-        const reason = `This position was skipped because it ${rejectionReasons.join(", ")}.`;
-        setError(reason);
-        toast({ title: "Position skipped", description: eligibility.reason || reason });
-        return;
-      }
-
+      const tabUrl = await getCurrentBrowserTabUrl();
       const data = await window.aiProfiles.generate({
         profileId: profile.id,
+        workspaceId: profile.workspaceId,
+        url: tabUrl,
         jobDescription,
+        questions: initialQuestions.length ? initialQuestions : undefined,
         kind: "resume",
       });
+      if (data.duplicate) {
+        const existing = data.existingApplication;
+        const location = existing
+          ? ` It already exists in ${existing.workspace_name} as application #${existing.number}.`
+          : "";
+        const reason = data.duplicateType === "job_fingerprint"
+          ? `A recent application has the same company and job title.${location}`
+          : `This job URL has already been added.${location}`;
+        setError(reason);
+        if (isActive) toast({ title: "Duplicate job", description: reason });
+        return;
+      }
+      if (data.banned) {
+        const reason = "This job URL is on the banned list and was not sent to OpenAI.";
+        setError(reason);
+        if (isActive) toast({ title: "Banned job", description: reason });
+        return;
+      }
+      if (data.eligible === false) {
+        const reason = data.reason || "This position did not pass the eligibility check.";
+        setError(reason);
+        if (isActive) toast({ title: "Position skipped", description: reason });
+        return;
+      }
       const generatedContent = data.tailored_resume || "";
 
       console.log(generatedContent);
@@ -213,19 +278,31 @@ export function ProfileWorkspace({
       if (!generatedContent)
         throw new Error("No response received from the selected profile");
 
+      const generatedJobTitle = data.application?.job_title?.trim() ?? "";
+      const generatedCompanyName = data.application?.company_name?.trim() ?? "";
+      if (!generatedJobTitle || !generatedCompanyName) {
+        const missing = [
+          !generatedCompanyName ? "company name" : null,
+          !generatedJobTitle ? "job title" : null,
+        ].filter(Boolean).join(" and ");
+        const msg = `Resume generation did not return a ${missing}. The application cannot be saved.`;
+        setCompanyName("");
+        setError(msg);
+        toast({ title: "Application Details Missing", description: msg });
+        return;
+      }
+
       const parsed = parseGeneratedResume(generatedContent);
 
       if (parsed.error) {
         const msg = String(parsed.error).trim();
-        toast({ title: "Generation skipped", description: msg });
+        if (isActive) toast({ title: "Generation skipped", description: msg });
         setError(msg);
         return;
       }
 
-      const effectiveCompanyName = (parsed.target_company ?? companyName ?? "").trim();
-      if (effectiveCompanyName) {
-        setCompanyName(effectiveCompanyName);
-      }
+      const effectiveCompanyName = generatedCompanyName;
+      setCompanyName(effectiveCompanyName);
 
       const generatedPersonalInfo = {
         ...personalInfo,
@@ -258,7 +335,11 @@ export function ProfileWorkspace({
       };
 
       setResumeData(nextResumeData);
-      setApplicationAnswers([]);
+      if (!data.conversationId) {
+        throw new Error("The server did not create an application-question conversation.");
+      }
+      setConversationId(data.conversationId);
+      setApplicationAnswers(data.answers ?? []);
 
       if (shouldAutoDownload) {
         await handleDownloadPDF(
@@ -286,20 +367,94 @@ export function ProfileWorkspace({
     }
   };
 
+  const handleScanPage = async (scope: "page" | "questions" = "page") => {
+    const questionsOnly = scope === "questions";
+    if (!canScanCurrentPage()) {
+      const message = "Page scanning is available in the Chrome extension. You can paste the content manually.";
+      if (questionsOnly) setQuestionScanMessage(message);
+      else setPageScanMessage(message);
+      return;
+    }
+    setIsScanningPage(true);
+    if (questionsOnly) setQuestionScanMessage("");
+    else setPageScanMessage("");
+    try {
+      const context = await getCurrentPageContext();
+      const nonSensitiveQuestions = context.questions.filter((item) => !item.sensitive);
+      const safeQuestions = nonSensitiveQuestions.slice(0, 50);
+      const sensitiveCount = context.questions.length - nonSensitiveQuestions.length;
+      const omittedCount = nonSensitiveQuestions.length - safeQuestions.length;
+      const choiceCount = safeQuestions.filter((item) => item.options.length).length;
+
+      if (!questionsOnly && context.jobDescription.trim()) {
+        setJobDescription(context.jobDescription.trim());
+        setError("");
+      }
+      setApplicationQuestions(safeQuestions.map(formatQuestionEditorLine).join("\n"));
+      setScannedQuestions(safeQuestions);
+      setApplicationAnswers([]);
+      setApplicationError("");
+      setPageFillMessage("");
+
+      const parts = [
+        ...(!questionsOnly ? [context.jobDescription.trim()
+          ? "Job description found"
+          : "No job description was identified; paste it manually"] : []),
+        safeQuestions.length
+          ? `${safeQuestions.length} application question${safeQuestions.length === 1 ? "" : "s"} found`
+          : "no application questions found on this page",
+      ];
+      if (sensitiveCount) parts.push(`${sensitiveCount} sensitive field${sensitiveCount === 1 ? " was" : "s were"} excluded from AI and will use saved profile values when available`);
+      if (choiceCount) parts.push(`allowed choices captured for ${choiceCount} question${choiceCount === 1 ? "" : "s"}`);
+      if (omittedCount) parts.push(`${omittedCount} extra field${omittedCount === 1 ? " was" : "s were"} omitted from the 50-question limit`);
+      const message = `${parts.join("; ")}.`;
+      if (questionsOnly) setQuestionScanMessage(message);
+      else setPageScanMessage(message);
+    } catch (err) {
+      const message = getFriendlyErrorMessage(err, "This page could not be scanned. Enter the content manually.");
+      if (questionsOnly) setQuestionScanMessage(message);
+      else setPageScanMessage(message);
+    } finally {
+      setIsScanningPage(false);
+    }
+  };
+
+  const handleFillPage = async () => {
+    setIsFillingPage(true);
+    setPageFillMessage("");
+    try {
+      const result = await fillCurrentPageAnswers(applicationAnswers, personalInfo, coverLetterText ?? undefined);
+      const skipped = result.skipped
+        ? ` ${result.skipped} answer${result.skipped === 1 ? "" : "s"} could not be safely matched and must be entered manually.`
+        : "";
+      const skippedDetails = result.skippedQuestions.length
+        ? ` Skipped: ${result.skippedQuestions.slice(0, 5).join("; ")}.`
+        : "";
+      setPageFillMessage(`Filled ${result.filled} profile or answer field${result.filled === 1 ? "" : "s"}.${skipped}${skippedDetails} Review the page before continuing.`);
+    } catch (err) {
+      setPageFillMessage(getFriendlyErrorMessage(err, "The answers could not be filled on this page."));
+    } finally {
+      setIsFillingPage(false);
+    }
+  };
+
   const handleGenerateAnswers = async () => {
-    if (!resumeData) {
+    if (!resumeData || !conversationId) {
       setApplicationError("Generate a resume before answering application questions.");
       return;
     }
 
-    const questions = applicationQuestions
+    const questionLines = applicationQuestions
       .split("\n")
       .map((question) => question.trim())
       .filter(Boolean);
-    if (!questions.length) {
+    if (!questionLines.length) {
       setApplicationError("Enter at least one application question.");
       return;
     }
+    const questions = questionLines.map((question) =>
+      questionInputFromEditorLine(question, scannedQuestions),
+    );
 
     setApplicationError("");
     setIsGeneratingAnswers(true);
@@ -307,11 +462,10 @@ export function ProfileWorkspace({
       const data = await window.aiProfiles.generate({
         profileId: profile.id,
         kind: "applicationAnswers",
-        jobDescription,
+        conversationId,
         questions,
-        resume: resumeData,
       });
-      const responseText = data.tailored_resume
+      const responseText = (data.tailored_resume || "")
         .trim()
         .replace(/^```(?:json)?\s*/i, "")
         .replace(/\s*```$/, "");
@@ -321,14 +475,14 @@ export function ProfileWorkspace({
       const answers = (parsed.answers ?? [])
         .filter((item) => typeof item.question === "string" && typeof item.answer === "string")
         .map((item) => ({ question: item.question as string, answer: item.answer as string }));
-      if (answers.length !== questions.length) {
+      if (answers.length !== questionLines.length) {
         throw new Error("The AI returned an incomplete set of application answers.");
       }
       setApplicationAnswers(answers);
     } catch (err) {
       const msg = getFriendlyErrorMessage(err, "Failed to generate application answers.");
       setApplicationError(msg);
-      toast({ title: "Answer Generation Failed", description: msg });
+      if (isActive) toast({ title: "Answer Generation Failed", description: msg });
     } finally {
       setIsGeneratingAnswers(false);
     }
@@ -345,6 +499,7 @@ export function ProfileWorkspace({
   ) => {
     const targetResumeData = overrideData ?? resumeData;
     if (!targetResumeData || isDownloading) return;
+    setError("");
     setIsDownloading(true);
 
     try {
@@ -382,7 +537,18 @@ export function ProfileWorkspace({
       let folderPath: string | undefined;
       const shouldSaveInFolder = effectiveSaveInFolder || autoDownload;
 
+      let downloadPath: string | undefined;
       if (shouldSaveInFolder) {
+        const paths = await getProfileDownloadPaths();
+        downloadPath = paths[profile.id];
+        if (!downloadPath) {
+          if (isGenerating) {
+            throw new Error("Choose a download location in Settings before enabling automatic download.");
+          }
+          setIsDownloading(false);
+          setDownloadLocationPromptOpen(true);
+          return;
+        }
         const r = await generateResumePDF(
           targetResumeData,
           `${safeFullName}.pdf`,
@@ -391,6 +557,7 @@ export function ProfileWorkspace({
           safeFolder,
           savedJobDescription,
           profile.id,
+          downloadPath,
         );
         folderPath = r.folderPath;
         if (effectiveGenerateCoverLetter && targetCoverLetterText) {
@@ -405,6 +572,7 @@ export function ProfileWorkspace({
             effectiveCoverLetterTemplate,
             safeFolder,
             profile.id,
+            downloadPath,
           );
         }
       } else {
@@ -414,6 +582,7 @@ export function ProfileWorkspace({
           filename,
           false,
           selectedTemplate,
+          undefined,
         );
         folderPath = r.folderPath;
         if (effectiveGenerateCoverLetter && targetCoverLetterText) {
@@ -427,17 +596,21 @@ export function ProfileWorkspace({
             clFilename,
             false,
             effectiveCoverLetterTemplate,
+            undefined,
           );
         }
       }
 
       const hasCoverLetter = effectiveGenerateCoverLetter && !!targetCoverLetterText;
-      toast({
+      setError("");
+      if (isActive) toast({
         title: hasCoverLetter
           ? "Resume + Cover Letter Downloaded"
           : "Resume Downloaded",
-        description: folderPath || undefined,
-        action: (
+        description: folderPath || (shouldSaveInFolder && downloadPath
+          ? `Saved under ${downloadPath}`
+          : "Saved to Chrome Downloads"),
+        action: folderPath ? (
           <ToastAction
             altText="Open downloaded folder"
             onClick={() => {
@@ -449,7 +622,7 @@ export function ProfileWorkspace({
                 return;
               }
 
-              toast({
+              if (isActive) toast({
                 title: "Folder location unavailable",
                 description:
                   "Your browser saved the file but does not expose its local path to open Windows Explorer.",
@@ -458,11 +631,11 @@ export function ProfileWorkspace({
           >
             Open folder
           </ToastAction>
-        ),
+        ) : undefined,
       });
     } catch (err) {
       console.error("PDF generation error:", err);
-      setError("Failed to generate PDF. Please try again.");
+      setError(getFriendlyErrorMessage(err, "Failed to download the PDF. Please try again."));
     } finally {
       setIsDownloading(false);
     }
@@ -482,7 +655,7 @@ export function ProfileWorkspace({
                 Job Description
               </CardTitle>
               <CardDescription className="mt-2">
-                Paste the job description below, then click Generate.
+                Scanned from the active job page when possible. You can always edit or paste it manually.
               </CardDescription>
             </div>
             <Tooltip>
@@ -536,6 +709,19 @@ export function ProfileWorkspace({
           }}
         />
 
+        <div className="flex items-center gap-3 flex-wrap">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => void handleScanPage("page")}
+            disabled={isScanningPage || isGenerating}
+          >
+            <RefreshCw className={`h-4 w-4 mr-2 ${isScanningPage ? "animate-spin" : ""}`} />
+            {isScanningPage ? "Scanning Page..." : "Scan Current Page"}
+          </Button>
+          {pageScanMessage && <p className="text-sm text-muted-foreground">{pageScanMessage}</p>}
+        </div>
+
         {error && (
           <Alert variant="destructive">
           <AlertCircle className="h-4 w-4" />
@@ -564,7 +750,7 @@ export function ProfileWorkspace({
         <CardHeader>
           <CardTitle>Application Questions</CardTitle>
           <CardDescription>
-            Enter one question per line. Answers use the generated resume and job description.
+            Click Scan Questions on each application page, then edit the results or enter one question per line.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -575,7 +761,7 @@ export function ProfileWorkspace({
               setApplicationQuestions(event.target.value);
               setApplicationError("");
             }}
-            disabled={!resumeData || isGeneratingAnswers}
+            disabled={isGenerating || isGeneratingAnswers}
           />
           {applicationError && (
             <Alert variant="destructive">
@@ -583,19 +769,46 @@ export function ProfileWorkspace({
               <AlertDescription>{applicationError}</AlertDescription>
             </Alert>
           )}
-          <Button
-            variant="outline"
-            onClick={() => void handleGenerateAnswers()}
-            disabled={!resumeData || isGeneratingAnswers || isGenerating}
-          >
-            {isGeneratingAnswers ? "Writing Answers..." : "Generate Answers"}
-          </Button>
+          <div className="flex items-center gap-3 flex-wrap">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => void handleScanPage("questions")}
+              disabled={isScanningPage || isGeneratingAnswers}
+            >
+              <RefreshCw className={`h-4 w-4 mr-2 ${isScanningPage ? "animate-spin" : ""}`} />
+              {isScanningPage ? "Scanning Questions..." : "Scan Questions"}
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => void handleGenerateAnswers()}
+              disabled={!resumeData || !conversationId || isGeneratingAnswers || isGenerating || isScanningPage}
+            >
+              {isGeneratingAnswers ? "Writing Answers..." : "Generate Answers"}
+            </Button>
+            <Button
+              type="button"
+              onClick={() => void handleFillPage()}
+              disabled={isFillingPage || isGeneratingAnswers}
+            >
+              <ClipboardCheck className="h-4 w-4 mr-2" />
+              {isFillingPage ? "Filling Page..." : "Autofill Profile + Answers"}
+            </Button>
+          </div>
+          {questionScanMessage && <p className="text-sm text-muted-foreground">{questionScanMessage}</p>}
+          {pageFillMessage && <p className="text-sm text-muted-foreground">{pageFillMessage}</p>}
           {applicationAnswers.length > 0 && (
             <div className="space-y-4">
               {applicationAnswers.map((item, index) => (
                 <div key={`${item.question}-${index}`} className="space-y-2">
                   <div className="font-medium">{item.question}</div>
-                  <Textarea value={item.answer} readOnly className="min-h-28" />
+                  <Textarea
+                    value={item.answer}
+                    className="min-h-28"
+                    onChange={(event) => setApplicationAnswers((current) => current.map((answer, answerIndex) =>
+                      answerIndex === index ? { ...answer, answer: event.target.value } : answer,
+                    ))}
+                  />
                 </div>
               ))}
             </div>
@@ -697,7 +910,9 @@ export function ProfileWorkspace({
           <Input
             id={`company-${profile.id}`}
             value={companyName}
-            onChange={(e) => setCompanyName(e.target.value)}
+            onChange={(e) => {
+              setCompanyName(e.target.value);
+            }}
             placeholder="Company name"
             className="min-w-0"
           />
@@ -718,6 +933,34 @@ export function ProfileWorkspace({
         </Button>
         </DialogFooter>
       </DialogContent>
+      </Dialog>
+
+      <Dialog open={downloadLocationPromptOpen} onOpenChange={setDownloadLocationPromptOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Choose a download folder</DialogTitle>
+            <DialogDescription>
+              Select a folder for {profile.name || "this profile"}. Resume AI will remember it for future downloads.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDownloadLocationPromptOpen(false)}>Cancel</Button>
+            <Button
+              onClick={() => {
+                void chooseProfileDirectory(profile.id).then((selectedPath) => {
+                  if (!selectedPath) return;
+                  setDownloadLocationPromptOpen(false);
+                  void handleDownloadPDF();
+                }).catch((err) => {
+                  if ((err as DOMException)?.name === "AbortError") return;
+                  setError(getFriendlyErrorMessage(err, "Unable to choose a download folder."));
+                });
+              }}
+            >
+              Choose folder
+            </Button>
+          </DialogFooter>
+        </DialogContent>
       </Dialog>
     </div>
   );

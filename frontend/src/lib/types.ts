@@ -25,9 +25,6 @@ export const JOB_SOURCES = [
 ] as const;
 export type JobSource = (typeof JOB_SOURCES)[number];
 
-export type PermissionType = 'view' | 'edit';
-export type AccessLevel = 'none' | 'view' | 'edit';
-
 export interface User {
   id: string;
   username: string;
@@ -37,15 +34,14 @@ export interface User {
   created_at: string;
   updated_at: string;
   owned_workspace_count?: number;
-  granted_workspace_count?: number;
 }
 
-export interface WorkspacePermissionRow {
+export interface BannedUrlPattern {
   id: string;
-  user_id: string;
-  username: string;
-  role: Role;
-  permission_type: PermissionType;
+  pattern: string;
+  created_at: string;
+  created_by_user_id?: string | null;
+  createdByUser?: { username: string } | null;
 }
 
 export interface Workspace {
@@ -56,11 +52,9 @@ export interface Workspace {
   owner: { id: string; username: string; email: string };
   is_archived: boolean;
   application_count: number;
-  my_access: AccessLevel;
-  permissions?: WorkspacePermissionRow[];
+  applied_today_by_user: Array<{ user_id: string; username: string; count: number }>;
   created_at: string;
   updated_at: string;
-  resume_profile_id?: string | null;
   profile: ResumeProfile | null;
 }
 
@@ -70,11 +64,26 @@ export interface ResumeProfile {
   career_path: string;
   personal_info: {
     fullName: string;
+    firstName: string;
+    middleName: string;
+    lastName: string;
     title: string;
     email: string;
     phone: string;
     location: string;
+    country: string;
+    address1: string;
+    city: string;
+    county: string;
+    state: string;
+    zip: string;
     linkedin: string;
+    gender: string;
+    hispanicLatino: string;
+    ethnicity: string;
+    requiresSponsorship: string;
+    legallyAuthorizedUs: string;
+    usWorkStatus: string;
   };
   education: Array<{ degree: string; school: string; year: string }>;
   certifications: Array<{ name: string; issuer: string; year: string }>;
@@ -101,9 +110,12 @@ export interface JobApplication {
   job_source: JobSource;
   application_status: ApplicationStatus;
   pipeline_status: PipelineStatus;
+  interview_date: string | null;
+  interview_note: string | null;
   note: string | null;
   paid: boolean;
-  resume_link: string | null;
+  resume_generated_at: string | null;
+  cover_letter_template: string | null;
   created_by_user_id: string | null;
   created_at: string;
   updated_at: string;
@@ -191,22 +203,53 @@ export interface AnalyticsOverview {
   daily_volume: Array<{ date: string; applied: number }>;
 }
 
-export interface UrlPreviewResult {
-  total_lines: number;
-  valid: number;
-  invalid: string[];
-  duplicates: number;
-  duplicate_scope: 'global' | 'workspace';
-  rows: Array<{
-    url: string;
-    normalized_url: string;
-    job_source: JobSource;
-    existing_url: string | null;
-    existing_job_title: string | null;
-    existing_date: string | null;
-    is_duplicate: boolean;
-    existing_in: string | null;
+export interface ResumeData {
+  personalInfo: {
+    fullName: string;
+    title: string;
+    email: string;
+    phone: string;
+    location: string;
+    linkedin: string;
+  };
+  education: Array<{ degree: string; school: string; year: string }>;
+  certifications: Array<{ name: string; issuer: string; year: string }>;
+  summary: string;
+  skills: Array<{ category: string; items: string[] }>;
+  workexperience: Array<{
+    role: string;
+    original_role?: string;
+    companyname: string;
+    duration: string;
+    experience: string[];
   }>;
+  annualSalary?: string;
+  hourlyRate?: string;
+  rateInJd?: boolean;
+}
+
+export interface ResumeArtifact {
+  id: string;
+  job_title: string | null;
+  company_name: string | null;
+  resume: ResumeData;
+  template: string;
+  generated_at: string | null;
+  job_description: string | null;
+  cover_letter_text: string | null;
+  cover_letter_template: string;
+  conversation_available: boolean;
+}
+
+export interface UpcomingInterview {
+  id: string;
+  workspace_id: string;
+  job_title: string | null;
+  company_name: string | null;
+  interview_date: string;
+  interview_note: string | null;
+  pipeline_status: PipelineStatus;
+  workspace: { name: string };
 }
 
 export interface ImportResult {
@@ -214,6 +257,7 @@ export interface ImportResult {
   created: number;
   duplicates: number;
   skipped: Array<{ row: number; reason: string }>;
+  missing_fields: MissingImportField[];
   detected_columns: Record<string, number | null>;
 }
 
@@ -222,4 +266,10 @@ export interface ImportPreview {
   detected_columns: Record<string, number | null>;
   total_rows: number;
   sample: unknown[][];
+  missing_fields: MissingImportField[];
+}
+
+export interface MissingImportField {
+  row: number;
+  fields: Array<'job_title' | 'company_name'>;
 }

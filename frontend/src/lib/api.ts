@@ -1,17 +1,16 @@
 'use client';
 
 import type {
-  AnalyticsOverview, ApplicationFilters, ImportPreview, ImportResult, JobApplication, Paginated,
-  PermissionType, PaymentReport, PaymentReportResult, Role, UrlPreviewResult, User, Workspace,
+  AnalyticsOverview, ApplicationFilters, BannedUrlPattern, ImportPreview, ImportResult, JobApplication, Paginated,
+  PaymentReport, PaymentReportResult, ResumeArtifact, Role, UpcomingInterview, User, Workspace,
   WorkspaceSummary,
 } from './types';
 
 /**
  * Single HTTP client for the whole app.
  *
- * Base URL is '' by default, so requests go to `/api/*` on the app's own origin and Next's rewrite
- * forwards them to the backend container. That keeps production same-origin (no CORS, tighter CSP,
- * one tunnel hostname) while `NEXT_PUBLIC_API_BASE_URL` still allows a split-origin setup.
+ * Base URL is '' by default, so requests go to `/api/*` on the app's own origin and Next's route
+ * handler forwards them to the backend. `NEXT_PUBLIC_API_BASE_URL` allows a split-origin setup.
  */
 const BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? '';
 const TOKEN_KEY = 'bidtracker_token';
@@ -108,6 +107,16 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
     }),
+  slackSettings: () => request<{ webhook_configured: boolean; slack_user_id: string | null }>(
+    '/auth/slack-settings',
+  ),
+  updateSlackSettings: (data: {
+    slack_webhook_url?: string | null;
+    slack_user_id?: string | null;
+  }) => request<{ webhook_configured: boolean; slack_user_id: string | null }>(
+    '/auth/slack-settings',
+    { method: 'PATCH', body: JSON.stringify(data) },
+  ),
 
   // ---- users (admin) ----
   listUsers: () => request<User[]>('/users'),
@@ -133,9 +142,15 @@ export const api = {
   updateWorkspace: (
     id: string,
     data: Partial<{
-      name: string; owner_user_id: string; is_archived: boolean; resume_profile_id: string;
-      profile_name: string; career_path: string; full_name: string; title: string; email: string;
-      phone: string; location: string; linkedin: string;
+      name: string; owner_user_id: string; is_archived: boolean;
+      profile_name: string; career_path: string; full_name: string;
+      first_name: string; middle_name: string; last_name: string;
+      title: string; email: string;
+      phone: string; location: string; country: string; linkedin: string;
+      address1: string; city: string; county: string; state: string; zip: string;
+      gender: string; hispanic_latino: string; ethnicity: string;
+      requires_sponsorship: string; legally_authorized_us: string;
+      us_work_status: string;
       update_headline: boolean; use_generated_role_titles: boolean;
       template: string; save_in_folder: boolean; auto_download: boolean;
       download_jd_with_pdf: boolean; use_company_name: boolean;
@@ -149,16 +164,6 @@ export const api = {
     request<{ success: boolean; deleted_applications: number }>(`/workspaces/${id}`, {
       method: 'DELETE',
     }),
-  grantPermission: (workspaceId: string, userId: string, permission: PermissionType) =>
-    request<unknown>(`/workspaces/${workspaceId}/permissions`, {
-      method: 'POST',
-      body: JSON.stringify({ user_id: userId, permission_type: permission }),
-    }),
-  revokePermission: (workspaceId: string, userId: string) =>
-    request<{ success: boolean }>(`/workspaces/${workspaceId}/permissions/${userId}`, {
-      method: 'DELETE',
-    }),
-
   // ---- applications ----
   listApplications: (
     workspaceId: string,
@@ -189,9 +194,23 @@ export const api = {
       method: 'PATCH',
       body: JSON.stringify(patch),
     }),
+  createApplication: (data: {
+    workspace_id: string;
+    job_title: string;
+    company_name: string;
+    url: string;
+    application_status: JobApplication['application_status'];
+  }) => request<JobApplication>('/applications', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  }),
   updatePipeline: (
     id: string,
-    patch: { pipeline_status?: string },
+    patch: {
+      pipeline_status?: string;
+      interview_date?: string | null;
+      interview_note?: string | null;
+    },
   ) =>
     request<JobApplication>(`/applications/${id}/pipeline`, {
       method: 'PATCH',
@@ -207,38 +226,25 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ ids }),
     }),
-  createFromUrls: (data: {
-    workspace_id: string;
-    date: string;
-    urls: string;
-    enrich?: boolean;
-  }) =>
-    request<{
-      created: number;
-      duplicates: number;
-      invalid_lines: string[];
-      duplicate_details: Array<{ url: string; reason: string; existing_in: string }>;
-    }>('/applications/urls', { method: 'POST', body: JSON.stringify(data) }),
-  previewUrls: (workspaceId: string, urls: string) =>
-    request<UrlPreviewResult>('/applications/urls/preview', {
+  getApplicationResume: (id: string) =>
+    request<ResumeArtifact>(`/applications/${id}/resume`),
+  listBannedPatterns: () => request<BannedUrlPattern[]>('/applications/banned-patterns'),
+  createBannedPattern: (pattern: string) =>
+    request<BannedUrlPattern>('/applications/banned-patterns', {
       method: 'POST',
-      body: JSON.stringify({ workspace_id: workspaceId, urls }),
+      body: JSON.stringify({ pattern }),
     }),
-  generateApplication: (data: { workspace_id: string; url: string; profile_id?: string; questions?: string[] }) =>
-    request<{ success: boolean; eligible: boolean; reason?: string; application?: JobApplication; resume?: unknown; answers?: unknown }>(
-      '/resume/generate', { method: 'POST', body: JSON.stringify(data) },
-    ),
-
+  deleteBannedPattern: (id: string) =>
+    request<{ success: boolean }>(`/applications/banned-patterns/${id}`, { method: 'DELETE' }),
   // ---- import ----
   importPreview: (workspaceId: string, file: File) => {
     const form = new FormData();
     form.append('file', file);
     return request<ImportPreview>(`/import/${workspaceId}/preview`, { method: 'POST', body: form });
   },
-  importRun: (workspaceId: string, file: File, opts: { enrich: boolean; default_date?: string }) => {
+  importRun: (workspaceId: string, file: File, opts: { default_date?: string }) => {
     const form = new FormData();
     form.append('file', file);
-    form.append('enrich', String(opts.enrich));
     if (opts.default_date) form.append('default_date', opts.default_date);
     return request<ImportResult>(`/import/${workspaceId}`, { method: 'POST', body: form });
   },
@@ -256,4 +262,6 @@ export const api = {
   // ---- analytics (admin) ----
   analyticsOverview: (params: { from?: string; to?: string; workspace_id?: string } = {}) =>
     request<AnalyticsOverview>(`/analytics/overview${qs(params)}`),
+  upcomingInterviews: (params: { from?: string; to?: string; workspace_id?: string } = {}) =>
+    request<UpcomingInterview[]>(`/analytics/upcoming-interviews${qs(params)}`),
 };

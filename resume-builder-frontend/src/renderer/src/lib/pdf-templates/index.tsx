@@ -12,7 +12,8 @@ import { TechTemplate } from "./tech"
 import { ElegantTemplate } from "./elegant"
 import { BoldTemplate } from "./bold"
 import { CorporateTemplate } from "./corporate"
-import { toast } from "@/components/ui/use-toast"
+import { downloadBlob, downloadText } from "@/lib/chrome-downloads"
+import { getProfileDirectoryHandle } from "@/lib/extension-storage"
 
 export { TEMPLATES, DEFAULT_TEMPLATE } from "./types"
 export type { TemplateId, TemplateInfo } from "./types"
@@ -36,10 +37,23 @@ export async function generateResumePDF(
   templateId: TemplateId = "classic",
   folderName?: string,
   jdContent?: string,
-  profileId?: string
+  profileId?: string,
+  downloadPath?: string,
 ): Promise<{ folderPath?: string }> {
   const TemplateComponent = templateComponents[templateId]
   const blob = await pdf(<TemplateComponent data={data} />).toBlob()
+
+  const chromeApi = (globalThis as { chrome?: { downloads?: unknown } }).chrome
+  const savedDirectoryHandle = isDirectory && profileId ? await getProfileDirectoryHandle(profileId) : null
+  if (isDirectory && downloadPath && chromeApi?.downloads && !savedDirectoryHandle) {
+    const prefix = [downloadPath, folderName, filename].filter(Boolean).join("/")
+    await downloadBlob(blob, prefix)
+    if (jdContent?.trim()) {
+      const jdPrefix = [downloadPath, folderName, "job-description.txt"].filter(Boolean).join("/")
+      await downloadText(jdContent, jdPrefix)
+    }
+    return {}
+  }
 
   // Try File System Access API first (allows creating directories)
   // If unavailable, fall back to standard download link
@@ -180,12 +194,7 @@ export async function generateResumePDF(
               await jdWritable.write(jdBlob)
               await jdWritable.close()
             } catch (e) {
-              // ignore JD write errors
-              toast({
-                title: 'JD Save failed',
-                description:
-                  'Could not download jd',
-              })
+              throw new Error("Could not save the job description in the selected folder.", { cause: e })
             }
           }
 
@@ -197,18 +206,10 @@ export async function generateResumePDF(
             // ignore
           }
 
-          try {
-            toast({
-              title: 'Save failed',
-              description:
-                'Could not access the previously selected folder. Click Download again and choose a directory to save the resume.',
-            })
-          } catch (err) {
-            // ignore
-          }
-
-          // Do not fallback to automatic download — let the user retry and choose folder
-          return {}
+          throw new Error(
+            'Could not access the selected folder. Choose the download location again in Settings.',
+            { cause: e },
+          )
         }
       }
     } catch (err) {
@@ -218,14 +219,7 @@ export async function generateResumePDF(
       return {}
     }
   } else {
-    const url = URL.createObjectURL(blob)
-    const link = document.createElement('a')
-    link.href = url
-    link.download = filename
-    document.body.appendChild(link)
-    link.click()
-    document.body.removeChild(link)
-    URL.revokeObjectURL(url)
+    await downloadBlob(blob, filename)
   }
 
   return {}

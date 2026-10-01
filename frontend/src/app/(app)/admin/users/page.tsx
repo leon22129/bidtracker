@@ -11,7 +11,7 @@ import { useToast } from '@/components/ui/toast';
  * User administration — admin only.
  *
  * The backend refuses to demote or deactivate the last remaining admin and refuses to delete a user who
- * still owns workspaces (payment attribution would be destroyed). This page surfaces those constraints
+ * owns workspaces or has created applications (payment attribution would be destroyed). This page surfaces those constraints
  * up front rather than letting the user discover them via a 400.
  */
 export default function UsersPage() {
@@ -88,7 +88,7 @@ export default function UsersPage() {
         <div>
           <h1 className="text-lg font-semibold">Users</h1>
           <p className="mt-0.5 text-xs text-gray-500">
-            Roles decide what a person can do everywhere; workspace permissions decide which tabs they see.
+            Roles decide what a person can do; workspace ownership decides which workspace they use.
           </p>
         </div>
         <button type="button" className="btn-primary" onClick={() => setShowCreate(true)}>
@@ -141,9 +141,6 @@ export default function UsersPage() {
                     </td>
                     <td className="px-3 py-2 tabular-nums text-gray-600">
                       {u.owned_workspace_count ?? 0} owned
-                      {(u.granted_workspace_count ?? 0) > 0 && (
-                        <span className="text-gray-400"> · {u.granted_workspace_count} shared</span>
-                      )}
                     </td>
                     <td className="px-3 py-2">
                       <span

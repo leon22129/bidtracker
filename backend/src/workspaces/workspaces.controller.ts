@@ -2,7 +2,7 @@ import {
   Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards,
 } from '@nestjs/common';
 import { WorkspacesService } from './workspaces.service';
-import { CreateWorkspaceDto, GrantPermissionDto, UpdateWorkspaceDto } from './dto/workspace.dto';
+import { CreateWorkspaceDto, UpdateWorkspaceDto } from './dto/workspace.dto';
 import { Roles } from '../common/decorators/roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { AuthUser, CurrentUser } from '../common/decorators/current-user.decorator';
@@ -54,15 +54,4 @@ export class WorkspacesController {
     return this.workspaces.remove(id, user);
   }
 
-  @Post(':id/permissions')
-  @Roles('admin', 'super_admin')
-  grant(@Param('id') id: string, @Body() dto: GrantPermissionDto, @CurrentUser() user: AuthUser) {
-    return this.workspaces.grantPermission(id, dto, user);
-  }
-
-  @Delete(':id/permissions/:userId')
-  @Roles('admin', 'super_admin')
-  revoke(@Param('id') id: string, @Param('userId') userId: string, @CurrentUser() user: AuthUser) {
-    return this.workspaces.revokePermission(id, userId, user);
-  }
 }

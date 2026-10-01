@@ -1,17 +1,28 @@
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
 const isDevelopment = process.env.NODE_ENV !== 'production';
+const frontendRoot = path.dirname(fileURLToPath(import.meta.url));
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  // Keep the dev compiler isolated from `next build`. Sharing `.next` lets a
+  // production build replace chunks underneath a running dev server.
+  distDir: isDevelopment ? '.next-dev' : '.next',
   reactStrictMode: true,
-  // `standalone` produces a self-contained server bundle, which keeps the runtime Docker image small
-  // (no node_modules copy) — meaningful on a free VPS.
-  output: 'standalone',
   poweredByHeader: false,
   eslint: { ignoreDuringBuilds: true },
+  experimental: { externalDir: true },
+  webpack(config) {
+    config.resolve.alias['@react-pdf/renderer'] = path.join(
+      frontendRoot,
+      'node_modules/@react-pdf/renderer',
+    );
+    return config;
+  },
 
   // The `/api/*` proxy deliberately lives in src/app/api/[...path]/route.ts and NOT in a `rewrites()`
-  // entry here: rewrites are serialised into the build manifest, so BACKEND_INTERNAL_URL would be
-  // frozen to whatever it was at image-build time. See that file for the full explanation.
+  // entry here so BACKEND_URL can be changed when the server starts without rebuilding the frontend.
 
   async headers() {
     return [

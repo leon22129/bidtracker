@@ -92,23 +92,21 @@ async function main() {
   const workspaces: Workspace[] = [];
   for (const bidder of bidders) {
     const name = `${bidder.username.charAt(0).toUpperCase()}${bidder.username.slice(1)} Applications`;
-    workspaces.push(
-      await prisma.workspace.upsert({
+    const workspace = await prisma.$transaction(async (tx) => {
+      const row = await tx.workspace.upsert({
         where: { name },
         update: {},
         create: { name, owner_user_id: bidder.id, created_by_user_id: admin.id },
-      }),
-    );
+      });
+      await tx.resumeProfile.upsert({
+        where: { workspace_id: row.id },
+        update: {},
+        create: { workspace_id: row.id, name },
+      });
+      return row;
+    });
+    workspaces.push(workspace);
   }
-
-  // Mike (bidder_manager) gets edit access to John's tab — the spec's exact example.
-  const john = workspaces[0];
-  const mike = bidders[1];
-  await prisma.workspacePermission.upsert({
-    where: { workspace_id_user_id: { workspace_id: john.id, user_id: mike.id } },
-    update: { permission_type: 'edit' },
-    create: { workspace_id: john.id, user_id: mike.id, permission_type: 'edit' },
-  });
 
   console.log(`Users: ${admin.username} (admin), ${bidders.map((b) => b.username).join(', ')}`);
   console.log(`Workspaces: ${workspaces.map((w) => w.name).join(', ')}`);
@@ -117,6 +115,7 @@ async function main() {
   const DAYS = 120;
   const perWorkspace = Math.floor(TOTAL_APPLICATIONS / workspaces.length);
   const seenNormalized = new Set<string>();
+  const seenUrls: string[] = [];
   let globalIndex = 0;
   let created = 0;
 
@@ -138,13 +137,14 @@ async function main() {
         globalIndex++;
         const company = pick(COMPANIES);
         const slug = company.toLowerCase().replace(/\s+/g, '-');
-        const url = pick(URL_TEMPLATES)(slug, globalIndex);
+        let url = pick(URL_TEMPLATES)(slug, globalIndex);
+        if (seenUrls.length > 0 && rand() < 0.04) url = pick(seenUrls);
         const normalized = normalizeUrl(url);
 
         // ~4% intentional duplicates so duplicate handling and payment exclusion are exercised.
-        const isDuplicate = seenNormalized.has(normalized) || rand() < 0.04;
-        const dupUrl = isDuplicate && seenNormalized.size > 0 ? url : url;
+        const isDuplicate = seenNormalized.has(normalized);
         seenNormalized.add(normalized);
+        seenUrls.push(url);
 
         const r = rand();
         const applicationStatus = isDuplicate
@@ -167,7 +167,7 @@ async function main() {
           workspace_id: workspace.id,
           date,
           number: startNumber + i,
-          url: dupUrl,
+          url,
           normalized_url: normalized,
           job_source: detectJobSource(url),
           job_title: rand() < 0.92 ? pick(TITLES) : null,
@@ -175,14 +175,13 @@ async function main() {
           application_status: applicationStatus,
           pipeline_status: pipelineStatus,
           note: rand() < 0.25 ? 'Tailored resume, referred by network.' : null,
-          resume_link: rand() < 0.4 ? `https://drive.example.com/resume-${globalIndex}.pdf` : null,
           // Older rows are already settled; recent ones are still open.
           paid: dayOffset > 21 && applicationStatus === 'Applied' && rand() < 0.85,
           created_by_user_id: pick(bidders).id,
         });
       }
 
-      // Chunked createMany: at 50k rows, per-row inserts would take minutes on SQLite.
+      // Chunked createMany keeps memory and query payloads bounded at larger seed sizes.
       for (let i = 0; i < rows.length; i += 500) {
         const res = await prisma.jobApplication.createMany({ data: rows.slice(i, i + 500) });
         created += res.count;

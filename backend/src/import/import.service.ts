@@ -1,10 +1,11 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
-import * as ExcelJS from 'exceljs';
+import ExcelJS from 'exceljs';
+import { Readable } from 'node:stream';
+import * as unzipper from 'unzipper';
 import { PrismaService } from '../prisma/prisma.service';
 import { WorkspaceAccessService } from '../workspaces/workspace-access.service';
 import { ApplicationsService } from '../applications/applications.service';
 import { DuplicateService } from '../applications/duplicate.service';
-import { MetadataService } from '../applications/metadata.service';
 import { NumberingService } from '../applications/numbering.service';
 import { AuthUser } from '../common/decorators/current-user.decorator';
 import { APPLICATION_STATUSES, ApplicationStatus, MAX_ROWS_PER_INGEST } from '../common/constants';
@@ -13,11 +14,11 @@ import { toDayStart, todayUtc } from '../common/utils/date.util';
 import {
   BANNED_URL_NOTE,
   detectJobSource,
-  isBannedUrl,
   looksLikeUrl,
   normalizeUrl,
-  normalizeCompanyName,
 } from '../common/utils/url.util';
+import { createJobFingerprint } from '../common/utils/job-fingerprint.util';
+import { BannedUrlService } from '../applications/banned-url.service';
 
 /**
  * Column aliases. Real-world spreadsheets from bidders never use exactly the header you asked for, so
@@ -30,7 +31,6 @@ const COLUMN_ALIASES: Record<string, string[]> = {
   url: ['url', 'joburl', 'link', 'joblink', 'applicationurl', 'joburllink', 'jobposting'],
   application_status: ['status', 'applicationstatus', 'appstatus'],
   note: ['note', 'notes', 'comment', 'comments', 'remark', 'remarks'],
-  resume_link: ['resumelink', 'resume', 'cv', 'cvlink', 'resumeurl'],
 };
 
 export interface ImportResult {
@@ -38,7 +38,14 @@ export interface ImportResult {
   created: number;
   duplicates: number;
   skipped: Array<{ row: number; reason: string }>;
+  missing_fields: MissingFieldWarning[];
   detected_columns: Record<string, string | null>;
+}
+
+type MissingField = 'job_title' | 'company_name';
+interface MissingFieldWarning {
+  row: number;
+  fields: MissingField[];
 }
 
 @Injectable()
@@ -50,15 +57,15 @@ export class ImportService {
     private readonly access: WorkspaceAccessService,
     private readonly applications: ApplicationsService,
     private readonly duplicates: DuplicateService,
-    private readonly metadata: MetadataService,
     private readonly numbering: NumberingService,
+    private readonly bannedUrls: BannedUrlService,
   ) {}
 
   async import(
     user: AuthUser,
     workspaceId: string,
     file: { originalname: string; buffer: Buffer; mimetype: string },
-    options: { enrich?: boolean; defaultDate?: string } = {},
+    options: { defaultDate?: string } = {},
   ): Promise<ImportResult> {
     await this.access.assertCanEdit(user, workspaceId);
 
@@ -83,7 +90,10 @@ export class ImportService {
       );
     }
 
-    const dataRows = raw.slice(1).filter((r) => r.some((c) => String(c ?? '').trim() !== ''));
+    const dataRows = raw
+      .slice(1)
+      .map((cells, index) => ({ cells, rowNumber: index + 2 }))
+      .filter(({ cells }) => cells.some((cell) => String(cell ?? '').trim() !== ''));
     if (dataRows.length > MAX_ROWS_PER_INGEST) {
       throw new BadRequestException(
         `File has ${dataRows.length} rows; the maximum per import is ${MAX_ROWS_PER_INGEST}. Split the file.`,
@@ -96,8 +106,7 @@ export class ImportService {
     const skipped: Array<{ row: number; reason: string }> = [];
     const parsed: ParsedRow[] = [];
 
-    dataRows.forEach((cells, i) => {
-      const rowNumber = i + 2; // 1-based, +1 for the header
+    dataRows.forEach(({ cells, rowNumber }) => {
       const get = (key: string) =>
         map[key] === null || map[key] === undefined ? '' : String(cells[map[key]!] ?? '').trim();
 
@@ -158,7 +167,6 @@ export class ImportService {
         job_title: nullIfBlank(get('job_title')),
         company_name: nullIfBlank(get('company_name')),
         note: nullIfBlank(get('note')),
-        resume_link: nullIfBlank(get('resume_link')),
       });
     });
 
@@ -168,25 +176,42 @@ export class ImportService {
         created: 0,
         duplicates: 0,
         skipped,
+        missing_fields: [],
         detected_columns: map as any,
       };
     }
 
-    // --- Pass 2: duplicate classification (one batched query set) -----------
-    const verdicts = await this.duplicates.classifyBatch(
+    const missingFields = collectMissingFields(parsed);
+
+    // --- Pass 2: duplicate classification (one batched query set) ---------
+    const urlVerdicts = await this.duplicates.classifyBatch(
       workspaceId,
       parsed.map((p) => p.url),
-      parsed.map((p) => p.company_name),
     );
 
-    // --- Pass 3: enrich only the rows actually missing a title/company ------
-    const needsEnrichment = parsed
-      .filter((p) => !p.company_name || !p.job_title)
-      .map((p) => p.url);
-    const enrichment = await this.metadata.enrichMany(
-      needsEnrichment,
-      options.enrich !== false,
+    // --- Pass 3: classify company/title identities exactly as supplied ------
+    const bannedVerdicts = await this.bannedUrls.matchMany(parsed.map((row) => row.url));
+    const identityVerdicts = await this.duplicates.classifyJobIdentities(
+      workspaceId,
+      parsed.map((row) => ({
+        company_name: row.company_name,
+        job_title: row.job_title,
+      })),
     );
+    const verdicts = urlVerdicts.map((verdict, index) => {
+      const identity = identityVerdicts[index];
+      return verdict.is_duplicate || !identity.is_duplicate
+        ? verdict
+        : {
+            ...verdict,
+            is_duplicate: true,
+            reason: identity.reason,
+            duplicate_type: 'job_fingerprint' as const,
+            existing: identity.existing,
+          };
+    });
+    const verdictByRow = new Map(parsed.map((row, index) => [row, verdicts[index]]));
+    const bannedByRow = new Map(parsed.map((row, index) => [row, bannedVerdicts[index]]));
 
     // --- Pass 4: allocate numbers per date, then batch insert ---------------
     const byDate = new Map<number, ParsedRow[]>();
@@ -201,11 +226,8 @@ export class ImportService {
       const date = new Date(time);
       const start = await this.numbering.reserveBlock(this.prisma, workspaceId, date, rows.length);
       rows.forEach((row, idx) => {
-        const verdict = verdicts[parsed.indexOf(row)];
-        const meta = enrichment.get(row.url);
-        const finalCompanyName = row.company_name ?? meta?.company_name ?? null;
-        const normalizedCompany = normalizeCompanyName(finalCompanyName ?? '');
-        const banned = isBannedUrl(row.url);
+        const verdict = verdictByRow.get(row);
+        const banned = bannedByRow.get(row) ?? false;
         inserts.push({
           workspace_id: workspaceId,
           date,
@@ -216,21 +238,16 @@ export class ImportService {
           // Banned URLs are auto-rejected, regardless of spreadsheet status or duplicate checks.
           application_status: banned ? 'Rejected' : verdict?.is_duplicate ? 'Duplicated' : row.status,
           pipeline_status: 'Not Started',
-          job_title: row.job_title ?? meta?.job_title ?? null,
-          company_name: finalCompanyName,
-          normalized_company_name: normalizedCompany || null,
+          job_title: row.job_title,
+          company_name: row.company_name,
+          job_fingerprint: createJobFingerprint(row.company_name, row.job_title),
           note: banned ? BANNED_URL_NOTE : row.note,
-          resume_link: row.resume_link,
           created_by_user_id: user.id,
         });
       });
     }
 
-    const created = await this.applications.insertChunked(
-      inserts,
-      workspaceId,
-      inserts[0]?.date ?? fallbackDate,
-    );
+    const created = await this.applications.insertChunked(inserts, workspaceId);
 
     this.logger.log(
       `Import into ${workspaceId} by ${user.username}: ${created} created, ` +
@@ -242,6 +259,7 @@ export class ImportService {
       created,
       duplicates: verdicts.filter((v) => v.is_duplicate).length,
       skipped: skipped.slice(0, 200),
+      missing_fields: missingFields,
       detected_columns: map as any,
     };
   }
@@ -255,11 +273,29 @@ export class ImportService {
     if (!raw.length) throw new BadRequestException('The file appears to be empty');
 
     const header = raw[0].map((c) => String(c ?? ''));
+    const map = mapColumns(header);
+    const dataRows = raw
+      .slice(1)
+      .map((cells, index) => ({ cells, rowNumber: index + 2 }))
+      .filter(({ cells }) => cells.some((cell) => String(cell ?? '').trim() !== ''));
+    const parsedForWarnings: Array<Pick<ParsedRow, 'rowNumber' | 'job_title' | 'company_name'>> = [];
+    dataRows.forEach(({ cells, rowNumber }) => {
+      const get = (key: string) =>
+        map[key] === null || map[key] === undefined ? '' : String(cells[map[key]!] ?? '').trim();
+      if (!looksLikeUrl(get('url'))) return;
+      parsedForWarnings.push({
+        rowNumber,
+        job_title: nullIfBlank(get('job_title')),
+        company_name: nullIfBlank(get('company_name')),
+      });
+    });
+
     return {
       headers: header,
-      detected_columns: mapColumns(header),
-      total_rows: Math.max(0, raw.length - 1),
-      sample: raw.slice(1, 6),
+      detected_columns: map,
+      total_rows: dataRows.length,
+      sample: dataRows.slice(0, 5).map(({ cells }) => cells),
+      missing_fields: collectMissingFields(parsedForWarnings),
     };
   }
 }
@@ -272,7 +308,6 @@ interface ParsedRow {
   job_title: string | null;
   company_name: string | null;
   note: string | null;
-  resume_link: string | null;
 }
 
 function canon(s: string): string {
@@ -290,6 +325,7 @@ function mapColumns(header: string[]): Record<string, number | null> {
 }
 
 async function parseXlsx(buffer: Buffer): Promise<any[][]> {
+  await assertSafeXlsxArchive(buffer);
   const workbook = new ExcelJS.Workbook();
   await workbook.xlsx.load(buffer as any);
   const sheet = workbook.worksheets[0];
@@ -316,6 +352,48 @@ async function parseXlsx(buffer: Buffer): Promise<any[][]> {
     rows.push(cells);
   });
   return rows;
+}
+
+export async function assertSafeXlsxArchive(
+  buffer: Buffer,
+  maxExpandedBytes = boundedEnvironmentNumber('MAX_XLSX_EXPANDED_MB', 100, 1, 512) * 1024 * 1024,
+  maxEntries = boundedEnvironmentNumber('MAX_XLSX_ZIP_ENTRIES', 2000, 10, 10_000),
+) {
+  if (!Number.isFinite(maxExpandedBytes) || maxExpandedBytes <= 0) {
+    throw new BadRequestException('The XLSX expanded-size limit is invalid');
+  }
+  if (!Number.isFinite(maxEntries) || maxEntries <= 0) {
+    throw new BadRequestException('The XLSX archive-entry limit is invalid');
+  }
+  const archive = Readable.from([buffer]).pipe(unzipper.Parse({ forceStream: true }));
+  let totalBytes = 0;
+  let entryCount = 0;
+
+  try {
+    for await (const entry of archive as AsyncIterable<NodeJS.ReadableStream>) {
+      entryCount++;
+      if (entryCount > maxEntries) {
+        throw new BadRequestException(`The XLSX archive contains more than ${maxEntries} entries`);
+      }
+      for await (const chunk of entry as AsyncIterable<Buffer | string>) {
+        totalBytes += typeof chunk === 'string' ? Buffer.byteLength(chunk) : chunk.length;
+        if (totalBytes > maxExpandedBytes) {
+          throw new BadRequestException(
+            `The XLSX archive expands beyond the ${Math.floor(maxExpandedBytes / 1024 / 1024)} MB limit`,
+          );
+        }
+      }
+    }
+  } catch (error) {
+    archive.destroy();
+    if (error instanceof BadRequestException) throw error;
+    throw new BadRequestException('The XLSX file is not a valid or safely bounded ZIP archive');
+  }
+}
+
+function boundedEnvironmentNumber(name: string, fallback: number, minimum: number, maximum: number) {
+  const parsed = Number(process.env[name] ?? fallback);
+  return Number.isFinite(parsed) ? Math.min(maximum, Math.max(minimum, parsed)) : fallback;
 }
 
 /** RFC-4180-aware CSV parser: handles quoted fields, embedded commas/newlines and escaped quotes. */
@@ -367,6 +445,17 @@ export function parseCsv(buffer: Buffer): any[][] {
 function nullIfBlank(v: string): string | null {
   const t = v.trim();
   return t === '' ? null : t;
+}
+
+function collectMissingFields(
+  rows: Array<Pick<ParsedRow, 'rowNumber' | 'job_title' | 'company_name'>>,
+): MissingFieldWarning[] {
+  return rows.flatMap((row) => {
+    const fields: MissingField[] = [];
+    if (!row.company_name) fields.push('company_name');
+    if (!row.job_title) fields.push('job_title');
+    return fields.length ? [{ row: row.rowNumber, fields }] : [];
+  });
 }
 
 function truncate(s: string, n: number): string {

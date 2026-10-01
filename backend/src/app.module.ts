@@ -13,11 +13,13 @@ import { HealthController } from './health.controller';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { AdminBootstrapService } from './bootstrap/admin-bootstrap.service';
 import { ResumeModule } from './resume/resume.module';
+import { ConversationCleanupModule } from './resume/conversation-cleanup.module';
 
 @Module({
   imports: [
     PrismaModule,
     ScheduleModule.forRoot(),
+    ConversationCleanupModule,
     AuthModule,
     UsersModule,
     WorkspacesModule,

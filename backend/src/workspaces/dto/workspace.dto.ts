@@ -1,5 +1,4 @@
 import { IsArray, IsBoolean, IsEmail, IsIn, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
-import { PERMISSION_TYPES, PermissionType } from '../../common/constants';
 
 export class CreateWorkspaceDto {
   @IsString()
@@ -29,10 +28,6 @@ export class UpdateWorkspaceDto {
 
   @IsOptional()
   @IsString()
-  resume_profile_id?: string;
-
-  @IsOptional()
-  @IsString()
   profile_name?: string;
 
   @IsOptional()
@@ -42,6 +37,21 @@ export class UpdateWorkspaceDto {
   @IsOptional()
   @IsString()
   full_name?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  first_name?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  middle_name?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  last_name?: string;
 
   @IsOptional()
   @IsString()
@@ -61,7 +71,67 @@ export class UpdateWorkspaceDto {
 
   @IsOptional()
   @IsString()
+  @MaxLength(100)
+  country?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  address1?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  city?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  county?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  state?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(30)
+  zip?: string;
+
+  @IsOptional()
+  @IsString()
   linkedin?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  gender?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  hispanic_latino?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(150)
+  ethnicity?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(20)
+  requires_sponsorship?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(20)
+  legally_authorized_us?: string;
+
+  @IsOptional()
+  @IsString()
+  @IsIn(['', 'US Citizen', 'Green Card', 'Other'])
+  us_work_status?: string;
 
   @IsOptional()
   @IsBoolean()
@@ -106,12 +176,4 @@ export class UpdateWorkspaceDto {
   @IsOptional()
   @IsArray()
   certifications?: Array<{ name: string; issuer: string; year: string }>;
-}
-
-export class GrantPermissionDto {
-  @IsString()
-  user_id: string;
-
-  @IsIn(PERMISSION_TYPES)
-  permission_type: PermissionType;
 }

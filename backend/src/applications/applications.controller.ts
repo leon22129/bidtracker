@@ -1,9 +1,10 @@
 import {
-  Body, Controller, Get, HttpCode, Param, Patch, Post, Query, UseGuards,
+  Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Query, UseGuards,
 } from '@nestjs/common';
 import { ApplicationsService } from './applications.service';
 import {
-  BulkIdsDto, BulkUpdateApplicationsDto, CreateFromUrlsDto, QueryApplicationsDto,
+  BulkIdsDto, BulkUpdateApplicationsDto, CreateGeneratedApplicationDto, CreateManualApplicationDto,
+  QueryApplicationsDto,
   UpdateApplicationDto, UpdatePipelineDto,
 } from './dto/application.dto';
 import { RolesGuard } from '../common/guards/roles.guard';
@@ -12,11 +13,19 @@ import { AuthUser, CurrentUser } from '../common/decorators/current-user.decorat
 import {
   APPLICATION_STATUSES, APPLICATION_STATUS_COLORS, JOB_SOURCES, PIPELINE_STATUSES,
 } from '../common/constants';
+import { BannedUrlService } from './banned-url.service';
+import { CreateBannedUrlPatternDto } from './dto/banned-url.dto';
+import { ApplicationGenerationService } from '../resume/resume.service';
+import { GenerateApplicationDto } from '../resume/dto/generate.dto';
 
 @Controller('applications')
 @UseGuards(RolesGuard)
 export class ApplicationsController {
-  constructor(private readonly applications: ApplicationsService) {}
+  constructor(
+    private readonly applications: ApplicationsService,
+    private readonly bannedUrls: BannedUrlService,
+    private readonly generation: ApplicationGenerationService,
+  ) {}
 
   /** Enum catalogue so the frontend never hardcodes a list that could drift from the backend. */
   @Get('meta')
@@ -34,24 +43,58 @@ export class ApplicationsController {
     return this.applications.findAll(user, query);
   }
 
+  @Post()
+  createManual(
+    @CurrentUser() user: AuthUser,
+    @Body() dto: CreateManualApplicationDto,
+  ) {
+    return this.applications.createManual(user, dto);
+  }
+
   @Get('summary')
   summary(@CurrentUser() user: AuthUser, @Query('workspace_id') workspaceId: string) {
     return this.applications.summary(user, workspaceId);
   }
 
   // Static routes must precede ':id' so they are not captured as an id.
-  @Post('urls')
-  createFromUrls(@CurrentUser() user: AuthUser, @Body() dto: CreateFromUrlsDto) {
-    return this.applications.createFromUrls(user, dto);
+  @Post('generated')
+  createGenerated(
+    @CurrentUser() user: AuthUser,
+    @Body() dto: CreateGeneratedApplicationDto,
+  ) {
+    return this.applications.createGenerated(user, dto);
   }
 
-  @Post('urls/preview')
-  @HttpCode(200)
-  previewUrls(
+  /** Canonical application workflow endpoint. `/resume/generate` remains a compatibility alias. */
+  @Post('generate')
+  generate(@CurrentUser() user: AuthUser, @Body() dto: GenerateApplicationDto) {
+    return this.generation.generate(user, dto);
+  }
+
+  @Get(':id/resume')
+  getResume(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.applications.getResume(user, id);
+  }
+
+  @Get('banned-patterns')
+  @Roles('admin', 'super_admin')
+  bannedPatterns() {
+    return this.bannedUrls.list();
+  }
+
+  @Post('banned-patterns')
+  @Roles('admin', 'super_admin')
+  createBannedPattern(
     @CurrentUser() user: AuthUser,
-    @Body() body: { workspace_id: string; urls: string },
+    @Body() dto: CreateBannedUrlPatternDto,
   ) {
-    return this.applications.previewUrls(user, body.workspace_id, body.urls ?? '');
+    return this.bannedUrls.create(dto.pattern, user.id);
+  }
+
+  @Delete('banned-patterns/:patternId')
+  @Roles('admin', 'super_admin')
+  removeBannedPattern(@Param('patternId') patternId: string) {
+    return this.bannedUrls.remove(patternId);
   }
 
   @Patch('bulk')

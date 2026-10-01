@@ -10,7 +10,7 @@
  *
  *   node smoke.mjs                                            # local dev server on :3001
  *   SMOKE_BASE=http://127.0.0.1:3000/api \
- *     SMOKE_ADMIN_PASSWORD=... node smoke.mjs                 # a docker compose stack via the proxy
+ *     SMOKE_ADMIN_PASSWORD=... node smoke.mjs                 # a deployed frontend proxy
  *
  * Env: SMOKE_BASE, SMOKE_ADMIN_EMAIL, SMOKE_ADMIN_PASSWORD.
  */
@@ -57,6 +57,7 @@ const now = new Date();
 const isoDay = now.getUTCDay() || 7;
 const thisMonday = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - (isoDay - 1)));
 const PREV_MONDAY = iso(new Date(thisMonday.getTime() - 7 * 86_400_000));
+const PREV_SUNDAY = iso(new Date(thisMonday.getTime() - 86_400_000));
 const TODAY = iso(now);
 
 /**
@@ -96,6 +97,7 @@ async function provision(adminToken) {
       await req(`/users/${user.id}`, { method: 'PATCH', token: adminToken, body: { is_active: true, role: b.role } });
     }
     b.userId = user.id;
+    b.token = await login(b.email, PASSWORD);
   }
 
   const existingWorkspaces = (await req('/workspaces', { token: adminToken })).body;
@@ -114,64 +116,63 @@ async function provision(adminToken) {
     b.workspaceId = ws.id;
   }
 
-  // The spec's own example: Mike manages John's tab without owning it.
   const johnWs = BIDDERS[0].workspaceId;
-  await req(`/workspaces/${johnWs}/permissions`, {
-    method: 'POST',
-    token: adminToken,
-    body: { user_id: BIDDERS[1].userId, permission_type: 'edit' },
-  });
+
+  async function createExtensionFixture(token, workspaceId, url, index) {
+    const created = await req('/applications/generated', {
+      method: 'POST',
+      token,
+      body: {
+        workspace_id: workspaceId,
+        url,
+        job_title: `Smoke fixture ${stamp}-${index}`,
+        company_name: `Smoke company ${stamp}-${index}`,
+      },
+    });
+    if (created.status >= 300 || !created.body.success) {
+      throw new Error(`could not create application fixture: ${msg(created)}`);
+    }
+    return created.body.application;
+  }
 
   // Rows inside the previous ISO week, so the weekly settlement has something to count. Statuses are
   // mixed on purpose: only the Applied ones may ever appear in a payment.
   for (const b of BIDDERS) {
-    const urls = Array.from(
-      { length: 6 },
-      (_, i) => `https://boards.greenhouse.io/${b.username}-wk/jobs/${stamp}-${i}`,
-    ).join('\n');
-    await req('/applications/urls', {
-      method: 'POST',
-      token: adminToken,
-      body: { workspace_id: b.workspaceId, date: PREV_MONDAY, urls, enrich: false },
-    });
-    const week = (
-      await req(
-        `/applications?workspace_id=${b.workspaceId}&date_from=${PREV_MONDAY}&date_to=${PREV_MONDAY}&search=${stamp}&page_size=10`,
-        { token: adminToken },
-      )
-    ).body.items;
-    const ids = week.map((r) => r.id);
-    if (ids.length >= 5) {
-      await req('/applications/bulk', {
+    for (let i = 0; i < 6; i++) {
+      const application = await createExtensionFixture(
+        b.token,
+        b.workspaceId,
+        `https://boards.greenhouse.io/${b.username}-wk/jobs/${stamp}-${i}`,
+        `${b.username}-${i}`,
+      );
+      await req(`/applications/${application.id}`, {
         method: 'PATCH',
         token: adminToken,
-        body: { ids: ids.slice(0, 3), patch: { application_status: 'Applied' } },
+        body: {
+          date: PREV_MONDAY,
+          application_status: i < 3 ? 'Applied' : i === 3 ? 'Rejected' : 'Pending',
+        },
       });
-      await req(`/applications/${ids[3]}`, {
-        method: 'PATCH',
-        token: adminToken,
-        body: { application_status: 'Rejected' },
-      });
-      // ids[4] and beyond stay Pending, which is what makes "all rows > paid-for rows" meaningful.
     }
   }
 
   // Rows dated today in John's tab: the open rows the policy checks edit, plus one already-paid row.
   // Today is never inside the previous ISO week, so touching these cannot disturb the payment figures.
-  const urls = Array.from(
-    { length: 8 },
-    (_, i) => `https://jobs.lever.co/john-today/${stamp}-${i}`,
-  ).join('\n');
-  await req('/applications/urls', {
-    method: 'POST',
-    token: adminToken,
-    body: { workspace_id: johnWs, date: TODAY, urls, enrich: false },
-  });
-  const today = (
-    await req(`/applications?workspace_id=${johnWs}&date_from=${TODAY}&date_to=${TODAY}&search=${stamp}&page_size=20`, {
+  const today = [];
+  for (let i = 0; i < 8; i++) {
+    const application = await createExtensionFixture(
+      BIDDERS[0].token,
+      johnWs,
+      `https://jobs.lever.co/john-today/${stamp}-${i}`,
+      `john-today-${i}`,
+    );
+    const updated = await req(`/applications/${application.id}`, {
+      method: 'PATCH',
       token: adminToken,
-    })
-  ).body.items;
+      body: { date: TODAY, application_status: 'Pending' },
+    });
+    today.push(updated.body);
+  }
   if (today.length) {
     // One row taken all the way to paid: the paid lock has to be tested against a real locked row.
     const lockMe = today[today.length - 1].id;
@@ -396,72 +397,6 @@ check(
 );
 await req(`/applications/${bulkIds[0]}`, { method: 'PATCH', token: admin, body: { paid: false } });
 
-section('URL paste, numbering and duplicates');
-// A date this run has never used before, so "numbering restarts at 1" is a real assertion rather than
-// a coincidence. Far enough out that no seeded or provisioned row can share it.
-const DATE = iso(new Date(Date.UTC(2030, 0, 1) + (Date.now() % 3000) * 86_400_000));
-const urls = [
-  `https://boards.greenhouse.io/smoketest/jobs/${stamp}?utm_source=x&gh_src=y`,
-  `https://jobs.lever.co/smoketest/${stamp}-b`,
-  `HTTPS://BOARDS.GREENHOUSE.IO/smoketest/jobs/${stamp}/`,
-  'not-a-url-at-all',
-].join('\n');
-const preview = await req('/applications/urls/preview', { method: 'POST', token: john, body: { workspace_id: JW, urls } });
-check('preview endpoint responds', preview.status === 200, cut(preview.body, 300));
-const ins = await req('/applications/urls', {
-  method: 'POST',
-  token: john,
-  body: { workspace_id: JW, date: DATE, urls, enrich: false },
-});
-check(
-  'paste inserts the valid lines and rejects the malformed one',
-  ins.status < 300 && ins.body.created === 3 && ins.body.invalid_lines.length === 1 && ins.body.duplicates === 1,
-  cut(ins.body, 300),
-);
-const day = await req(
-  `/applications?workspace_id=${JW}&date_from=${DATE}&date_to=${DATE}&sort_by=number&sort_dir=asc&page_size=50`,
-  { token: admin },
-);
-check(
-  'numbering restarts at 1 for a fresh date',
-  day.body.items.length > 0 && day.body.items[0].number === 1,
-  `numbers=${day.body.items.map((r) => r.number).join(',')}`,
-);
-check('numbers are contiguous', day.body.items.every((r, i) => r.number === i + 1));
-check(
-  'job source detected from hostname',
-  day.body.items.some((r) => r.job_source === 'Greenhouse') && day.body.items.some((r) => r.job_source === 'Lever'),
-  day.body.items.map((r) => r.job_source).join(','),
-);
-check('tracking params stripped from normalized_url', day.body.items.every((r) => !r.normalized_url.includes('utm_source')));
-// Fetch this run's rows by search rather than by reading the first page of the day: on a large
-// database the date already holds hundreds of seeded rows and the new ones sit far past page 1.
-// `smoketest` narrows to the paste fixtures; `stamp` then narrows to this run's three.
-const thisRun = (await req(`/applications?workspace_id=${JW}&search=smoketest&page_size=200`, { token: admin })).body.items.filter(
-  (r) => r.url.includes(stamp),
-);
-check('the three pasted rows are retrievable', thisRun.length === 3, `found ${thisRun.length}`);
-const dupRow = thisRun.find((r) => r.application_status === 'Duplicated');
-check('case/trailing-slash variant auto-flagged Duplicated', !!dupRow, dupRow && dupRow.url);
-check(
-  'the other two lines inserted un-flagged',
-  thisRun.filter((r) => r.application_status !== 'Duplicated').length === 2,
-  `statuses=${thisRun.map((r) => r.application_status).join(',')}`,
-);
-if (dupRow) {
-  const clearDup = await req(`/applications/${dupRow.id}`, {
-    method: 'PATCH',
-    token: john,
-    body: { application_status: 'Applied' },
-  });
-  check('bidder cannot un-duplicate a row', clearDup.status === 403, `${clearDup.status}`);
-  check(
-    'admin can un-duplicate',
-    (await req(`/applications/${dupRow.id}`, { method: 'PATCH', token: admin, body: { application_status: 'Applied' } }))
-      .status === 200,
-  );
-}
-
 section('spreadsheet import');
 async function upload(path, token, csv, fields = {}) {
   const form = new FormData();
@@ -480,15 +415,15 @@ async function upload(path, token, csv, fields = {}) {
 // Deliberately messy: aliased headers, a blank URL, a malformed URL, a duplicate of row 1, and a
 // Status column a bidder is not allowed to honour.
 // Its own fresh date, so "imported rows numbered from 1" cannot pass on leftovers from a prior run.
-const IDATE = iso(new Date(Date.parse(DATE) + 86_400_000));
+const IDATE = iso(new Date(Date.UTC(2030, 0, 1) + (Date.now() % 3000) * 86_400_000));
 const csv = [
-  'Date,Job Title,Company,Job URL,Status,Notes,Resume',
-  `${IDATE},Staff Engineer,"Acme, Inc.",https://boards.greenhouse.io/importtest/jobs/${stamp}1,Applied,"Referred, strong fit",https://d.example.com/r1.pdf`,
-  `${IDATE},Backend Engineer,Globex,https://jobs.lever.co/importtest/${stamp}2,Pending,,`,
-  `${IDATE},Duplicate Row,Acme,https://boards.greenhouse.io/importtest/jobs/${stamp}1/,Applied,,`,
-  `${IDATE},No URL Row,Initech,,Applied,,`,
-  `${IDATE},Bad URL Row,Initech,http://,Applied,,`,
-  `${IDATE},Smuggled Status,Hooli,https://jobs.lever.co/importtest/${stamp}3,Duplicated,,`,
+  'Date,Job Title,Company,Job URL,Status,Notes',
+  `${IDATE},Staff Engineer,"Acme, Inc.",https://boards.greenhouse.io/importtest/jobs/${stamp}1,Applied,"Referred, strong fit"`,
+  `${IDATE},Backend Engineer,Globex,https://jobs.lever.co/importtest/${stamp}2,Pending,`,
+  `${IDATE},Duplicate Row,Acme,https://boards.greenhouse.io/importtest/jobs/${stamp}1/,Applied,`,
+  `${IDATE},No URL Row,Initech,,Applied,`,
+  `${IDATE},Bad URL Row,Initech,http://,Applied,`,
+  `${IDATE},Smuggled Status,Hooli,https://jobs.lever.co/importtest/${stamp}3,Duplicated,`,
 ].join('\n');
 
 check('import rejects an unsupported extension', (await (async () => {
@@ -500,7 +435,7 @@ check('import rejects an unsupported extension', (await (async () => {
 
 const impPreview = await upload(`/import/${JW}/preview`, john, csv);
 check('import preview maps aliased headers', impPreview.status < 300, cut(impPreview.body, 420));
-const impRun = await upload(`/import/${JW}`, john, csv, { enrich: 'false' });
+const impRun = await upload(`/import/${JW}`, john, csv);
 check('import commits rows', impRun.status < 300, cut(impRun.body, 420));
 
 const firstOfDay = await req(
@@ -535,54 +470,100 @@ check(
 check('import is refused on a workspace the caller cannot edit', (await upload(`/import/${JW}`, sarah, csv)).status === 404);
 
 section('payments');
-check('bidder blocked from /payments', (await req('/payments/weekly', { token: john })).status === 403);
-check('manager blocked from /payments', (await req('/payments/weekly', { token: mike })).status === 403);
-const prev = await req('/payments/weekly/preview', { token: admin });
-check('weekly preview', prev.status === 200, cut(prev.body, 400));
-const gen1 = await req('/payments/weekly/generate', { method: 'POST', token: admin, body: {} });
-const gen2 = await req('/payments/weekly/generate', { method: 'POST', token: admin, body: {} });
-check(
-  'generate is idempotent',
-  gen1.status === 200 && gen2.status === 200 && JSON.stringify(gen1.body.rows ?? gen1.body) === JSON.stringify(gen2.body.rows ?? gen2.body),
-  cut(gen2.body, 300),
+const johnSelf = await req(
+  `/payments/report?start_date=${PREV_MONDAY}&end_date=${PREV_SUNDAY}&bidder_id=not-john`,
+  { token: john },
 );
-const stored = await req('/payments/weekly', { token: admin });
-check('stored reports readable', stored.status === 200 && Array.isArray(stored.body), `${stored.body.length} rows`);
-const byBidder = await req('/payments/by-bidder', { token: admin });
-check('payout grouped by workspace owner', byBidder.status === 200, cut(byBidder.body, 300));
+check(
+  'bidder can read only their own bid count',
+  johnSelf.status === 200
+    && johnSelf.body.total_applied >= 3
+    && johnSelf.body.bidders.length === 1
+    && johnSelf.body.bidders[0].bidder_username === 'john',
+  cut(johnSelf.body, 300),
+);
+const mikeSelf = await req(`/payments/report?start_date=${PREV_MONDAY}&end_date=${PREV_SUNDAY}`, { token: mike });
+check(
+  'manager can read only their own bid count',
+  mikeSelf.status === 200
+    && mikeSelf.body.total_applied >= 3
+    && mikeSelf.body.bidders.length === 1
+    && mikeSelf.body.bidders[0].bidder_username === 'mike',
+  cut(mikeSelf.body, 300),
+);
+check('bidder remains blocked from payment history', (await req('/payments/history', { token: john })).status === 403);
+const prev = await req(`/payments/report?start_date=${PREV_MONDAY}&end_date=${PREV_SUNDAY}`, { token: admin });
+check('payment report', prev.status === 200, cut(prev.body, 400));
 
 // The spec's hard rules: the week is the previous Monday-Sunday, only Applied counts, and credit
-// follows Workspace.owner_user_id. Cross-check the report against an independent filtered query.
+// follows the immutable application creator. Cross-check the report against independent row reads.
 const week = prev.body;
-const from = week.week_start_date.slice(0, 10);
-const to = week.week_end_date.slice(0, 10);
-check('week runs Monday to Sunday', new Date(week.week_start_date).getUTCDay() === 1 && new Date(week.week_end_date).getUTCDay() === 0, `${from}..${to}`);
-check('week is the one before the current one', new Date(week.week_end_date) < new Date(), week.week_label);
-check('preview covers every workspace', week.rows.length >= 3, `${week.rows.length} rows`);
-check('every row credits the workspace owner', week.rows.every((r) => !!r.owner_user_id && !!r.owner_username));
+const from = week.start_date.slice(0, 10);
+const to = week.end_date.slice(0, 10);
+check('week runs Monday to Sunday', new Date(week.start_date).getUTCDay() === 1 && new Date(week.end_date).getUTCDay() === 0, `${from}..${to}`);
+check('week is the one before the current one', new Date(week.end_date) < new Date(), `${from}..${to}`);
+const workspaceCounts = week.bidders.flatMap((bidder) => bidder.workspaces.map((workspace) => ({
+  ...workspace,
+  bidder_id: bidder.bidder_id,
+  bidder_username: bidder.bidder_username,
+})));
+check(
+  'report covers every fixture workspace',
+  [JW, MW, SW].every((workspaceId) => workspaceCounts.some((row) => row.workspace_id === workspaceId)),
+);
+
+async function countCreatorRows(workspaceId, creatorId, filters = {}) {
+  let page = 1;
+  let count = 0;
+  let totalPages = 1;
+  do {
+    const params = new URLSearchParams({
+      workspace_id: workspaceId,
+      date_from: from,
+      date_to: to,
+      page: String(page),
+      page_size: '500',
+      ...filters,
+    });
+    const response = await req(`/applications?${params}`, { token: admin });
+    if (response.status >= 300) return null;
+    count += response.body.items.filter((row) => row.created_by_user_id === creatorId).length;
+    totalPages = response.body.total_pages;
+    page++;
+  } while (page <= totalPages);
+  return count;
+}
 
 // Only the three fixture workspaces are cross-checked: a pre-existing workspace with no rows in this
 // week would make the "all rows > paid-for rows" comparison vacuous rather than wrong.
-for (const r of week.rows.filter((w) => [JW, MW, SW].includes(w.workspace_id))) {
-  const q = await req(
-    `/applications?workspace_id=${r.workspace_id}&application_status=Applied&date_from=${from}&date_to=${to}&page_size=1`,
-    { token: admin },
-  );
+for (const r of workspaceCounts.filter((w) => [JW, MW, SW].includes(w.workspace_id))) {
+  const appliedCount = await countCreatorRows(r.workspace_id, r.bidder_id, {
+    application_status: 'Applied',
+    paid: 'false',
+  });
   check(
-    `applied_count matches an independent query (${r.owner_username})`,
-    q.body.total === r.applied_count,
-    `report=${r.applied_count} query=${q.body.total}`,
+    `applied_count matches an independent query (${r.bidder_username})`,
+    appliedCount === r.applied_count,
+    `report=${r.applied_count} query=${appliedCount}`,
   );
-  const everything = await req(
-    `/applications?workspace_id=${r.workspace_id}&date_from=${from}&date_to=${to}&page_size=1`,
-    { token: admin },
-  );
+  const everythingCount = await countCreatorRows(r.workspace_id, r.bidder_id);
   check(
-    `Pending/Rejected/Duplicated excluded from pay (${r.owner_username})`,
-    everything.body.total > r.applied_count,
-    `all=${everything.body.total} paid-for=${r.applied_count}`,
+    `Pending/Rejected/Duplicated excluded from pay (${r.bidder_username})`,
+    everythingCount !== null && everythingCount > r.applied_count,
+    `all=${everythingCount} paid-for=${r.applied_count}`,
   );
 }
+
+const johnPayment = week.bidders.find((bidder) => bidder.bidder_username === 'john');
+if (johnPayment) {
+  const paymentBody = { bidder_id: johnPayment.bidder_id, start_date: from, end_date: to };
+  const process1 = await req('/payments/process', { method: 'POST', token: admin, body: paymentBody });
+  const process2 = await req('/payments/process', { method: 'POST', token: admin, body: paymentBody });
+  check('payment processing uses the filtered update count', process1.status < 300 && process1.body.applied_count === johnPayment.applied_count, cut(process1.body, 300));
+  check('payment processing is idempotent', process2.status < 300 && process2.body.already_processed === true, cut(process2.body, 300));
+}
+const history = await req('/payments/history', { token: admin });
+check('payment history is readable', history.status === 200 && Array.isArray(history.body), cut(history.body, 300));
 
 section('analytics');
 for (const p of ['overview', 'conversion', 'interviews-by-workspace', 'interviews-by-source', 'pipeline', 'upcoming-interviews']) {

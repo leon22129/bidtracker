@@ -1,0 +1,60 @@
+{
+  "manifest_version": 3,
+  "name": "Resume Builder",
+  "version": "0.6.3",
+  "description": "Generate tailored resumes while browsing job postings.",
+  "action": {
+    "default_title": "Open Resume Builder",
+    "default_icon": {
+      "16": "icon-16.png",
+      "32": "icon-32.png"
+    }
+  },
+  "icons": {
+    "16": "icon-16.png",
+    "32": "icon-32.png",
+    "48": "icon-48.png",
+    "128": "icon-128.png"
+  },
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "side_panel": {
+    "default_path": "index.html"
+  },
+  "permissions": [
+    "sidePanel",
+    "storage",
+    "tabs",
+    "scripting",
+    "webNavigation",
+    "downloads"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "http://*/*",
+        "https://*/*"
+      ],
+      "js": [
+        "content-script.js"
+      ],
+      "run_at": "document_idle",
+      "all_frames": true,
+      "match_about_blank": true,
+      "match_origin_as_fallback": true
+    }
+  ],
+  "host_permissions": [
+    "http://*/*",
+    "https://*/*",
+    "http://localhost/*",
+    "http://127.0.0.1/*",
+    "https://api.resume-ai.com/*",
+    "https://*.trycloudflare.com/*"
+  ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'; connect-src 'self' data: http://localhost:* http://127.0.0.1:* https://api.resume-ai.com https://*.trycloudflare.com"
+  }
+}

@@ -1,11 +1,25 @@
 import 'reflect-metadata';
-// Loads backend/.env for local development. In Docker every variable arrives from compose, and dotenv
-// never overwrites an already-set variable, so this line is a no-op there.
+// Loads backend/.env for local development. dotenv never overwrites variables already supplied by
+// the host process, so production service managers can provide configuration directly.
 import 'dotenv/config';
-import { Logger, ValidationPipe } from '@nestjs/common';
+import { Logger, LogLevel, ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
+import { randomUUID } from 'node:crypto';
 import { AppModule } from './app.module';
 import { PrismaExceptionFilter } from './common/filters/prisma-exception.filter';
+import { logEvent, runWithRequestContext } from './common/logging/structured-logger';
+import { RequestErrorLoggingInterceptor } from './common/logging/request-error-logging.interceptor';
+import { DailyFileLogger } from './common/logging/daily-file.logger';
+
+function enabledLogLevels(): LogLevel[] {
+  const level = (process.env.LOG_LEVEL || 'info').trim().toLowerCase();
+  if (level === 'fatal') return ['fatal'];
+  if (level === 'error') return ['fatal', 'error'];
+  if (level === 'warn') return ['fatal', 'error', 'warn'];
+  if (level === 'debug') return ['fatal', 'error', 'warn', 'log', 'debug'];
+  if (level === 'verbose') return ['fatal', 'error', 'warn', 'log', 'debug', 'verbose'];
+  return ['fatal', 'error', 'warn', 'log'];
+}
 
 /**
  * A production deploy with the built-in development secret would let anyone who has read this
@@ -28,15 +42,56 @@ function assertProductionSecrets(logger: Logger) {
 }
 
 async function bootstrap() {
+  const fileLogger = new DailyFileLogger(enabledLogLevels());
+  Logger.overrideLogger(fileLogger);
   const logger = new Logger('Bootstrap');
   assertProductionSecrets(logger);
 
   const app = await NestFactory.create(AppModule, {
-    // Trust the reverse proxy / Cloudflare Tunnel for client IPs.
+    // Reverse proxies and Cloudflare Tunnel can sit in front of this server when needed.
     bodyParser: true,
+    logger: fileLogger,
   });
 
   app.setGlobalPrefix('api');
+
+  const httpLogger = new Logger('Http');
+  app.use((req: any, res: any, next: any) => {
+    const suppliedRequestId = req.get?.('x-request-id');
+    const requestId = typeof suppliedRequestId === 'string' && /^[A-Za-z0-9._:-]{1,100}$/.test(suppliedRequestId)
+      ? suppliedRequestId
+      : randomUUID();
+    const startedAt = performance.now();
+    const isHealthCheck = req.path === '/api/health';
+    res.setHeader('X-Request-Id', requestId);
+
+    runWithRequestContext(requestId, () => {
+      logEvent(httpLogger, isHealthCheck ? 'debug' : 'log', 'http_request_started', {
+        method: req.method,
+        path: req.path,
+        ip: req.ip || req.socket?.remoteAddress,
+      });
+
+      res.once('finish', () => {
+        const statusCode = res.statusCode;
+        const level = statusCode >= 500
+          ? 'error'
+          : statusCode >= 400
+            ? 'warn'
+            : isHealthCheck ? 'debug' : 'log';
+        logEvent(httpLogger, level, 'http_request_completed', {
+          method: req.method,
+          path: req.path,
+          status_code: statusCode,
+          duration_ms: Number((performance.now() - startedAt).toFixed(2)),
+          response_bytes: Number(res.getHeader('content-length')) || undefined,
+          user_id: req.user?.id,
+        });
+      });
+
+      next();
+    });
+  });
 
   app.useGlobalPipes(
     new ValidationPipe({
@@ -48,6 +103,7 @@ async function bootstrap() {
   );
 
   app.useGlobalFilters(new PrismaExceptionFilter());
+  app.useGlobalInterceptors(new RequestErrorLoggingInterceptor());
 
   // CORS: the frontend is normally same-origin behind the tunnel, but a split-origin dev setup
   // (localhost:3000 -> localhost:3001) and a separate tunnel hostname both need this.
@@ -56,7 +112,13 @@ async function bootstrap() {
     .map((o) => o.trim())
     .filter(Boolean);
   app.enableCors({
-    origin: origins.includes('*') ? true : origins,
+    origin: (origin, callback) => {
+      if (!origin || origins.includes('*') || origins.includes(origin) || origin.startsWith('chrome-extension://')) {
+        callback(null, true);
+        return;
+      }
+      callback(null, false);
+    },
     credentials: true,
     methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
   });
@@ -76,12 +138,12 @@ async function bootstrap() {
   const port = Number(process.env.PORT || 3001);
   await app.listen(port, '0.0.0.0');
   logger.log(`API listening on http://0.0.0.0:${port}/api`);
-  logger.log(`Duplicate detection scope: ${process.env.DUPLICATE_SCOPE || 'workspace'}`);
-  logger.log(`URL enrichment: ${process.env.ENABLE_URL_ENRICHMENT === 'false' ? 'disabled' : 'enabled'}`);
+  logger.log('Duplicate detection scope: workspace (database-enforced for active URLs)');
+  logger.log(`Job fingerprint window: ${process.env.JOB_FINGERPRINT_WINDOW_DAYS || '90'} days`);
 }
 
 bootstrap().catch((err) => {
-  // eslint-disable-next-line no-console
-  console.error('Fatal startup error:', err);
+  const logger = new Logger('Bootstrap');
+  logger.fatal('Fatal startup error', err instanceof Error ? err.stack : String(err));
   process.exit(1);
 });

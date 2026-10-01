@@ -14,8 +14,12 @@ const FIELD_LABELS: Record<string, string> = {
   url: 'URL',
   application_status: 'Status',
   note: 'Note',
-  resume_link: 'Resume Link',
 };
+
+const MISSING_FIELD_LABELS = {
+  job_title: 'Job Title',
+  company_name: 'Company Name',
+} as const;
 
 /**
  * Excel / CSV import.
@@ -38,7 +42,6 @@ export default function ImportPage() {
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<ImportPreview | null>(null);
   const [result, setResult] = useState<ImportResult | null>(null);
-  const [enrich, setEnrich] = useState(false);
   const [defaultDate, setDefaultDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [busy, setBusy] = useState(false);
   const [dragging, setDragging] = useState(false);
@@ -73,9 +76,15 @@ export default function ImportPage() {
     if (!file) return;
     setBusy(true);
     try {
-      const res = await api.importRun(workspaceId, file, { enrich, default_date: defaultDate });
+      const res = await api.importRun(workspaceId, file, { default_date: defaultDate });
       setResult(res);
       toast.success(`Imported ${res.created.toLocaleString()} rows`);
+      if (res.missing_fields.length > 0) {
+        toast.info(
+          `${res.missing_fields.length.toLocaleString()} imported row${res.missing_fields.length === 1 ? '' : 's'} ` +
+            `${res.missing_fields.length === 1 ? 'has' : 'have'} a missing company name or job title.`,
+        );
+      }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Import failed');
     } finally {
@@ -93,14 +102,8 @@ export default function ImportPage() {
         </Link>
         <h1 className="mt-1 text-lg font-semibold">Import from Excel or CSV</h1>
         <p className="mt-0.5 text-xs text-gray-500">
-          Need to paste URLs one per line?{' '}
-          <Link href={`/workspaces/${workspaceId}/add-urls`} className="text-blue-600 hover:underline">
-            Paste URLs instead
-          </Link>
-        </p>
-        <p className="mt-0.5 text-xs text-gray-500">
-          Recognised columns: Date, Job Title, Company Name, URL, Status, Note, Resume Link. Only the URL
-          column is required — everything else is optional or derived.
+          Recognised columns: Date, Job Title, Company Name, URL, Status, and Note. Only the URL
+          column is required. Rows without a company name or job title are imported and flagged for review.
         </p>
       </div>
 
@@ -122,7 +125,7 @@ export default function ImportPage() {
         <input
           ref={inputRef}
           type="file"
-          accept=".xlsx,.xls,.csv,text/csv"
+          accept=".xlsx,.csv,text/csv"
           className="hidden"
           onChange={(e) => void choose(e.target.files?.[0] ?? null)}
         />
@@ -195,6 +198,15 @@ export default function ImportPage() {
             </p>
           )}
 
+          {preview.missing_fields.length > 0 && (
+            <p className="mt-3 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+              {preview.missing_fields.length.toLocaleString()} row
+              {preview.missing_fields.length === 1 ? '' : 's'} with a valid URL
+              {preview.missing_fields.length === 1 ? ' is' : ' are'} missing a company name or job title.
+              They will still be imported and listed for review afterward.
+            </p>
+          )}
+
           {preview.sample.length > 0 && (
             <div className="mt-4 overflow-auto rounded border border-gray-200">
               <table className="w-full text-2xs">
@@ -237,19 +249,6 @@ export default function ImportPage() {
               <p className="mt-1 text-2xs text-gray-500">Used for rows with a missing/unparseable date.</p>
             </div>
 
-            <label className="mb-6 flex items-center gap-2 text-xs text-gray-700">
-              <input
-                type="checkbox"
-                className="h-3.5 w-3.5 accent-gray-900"
-                checked={enrich}
-                onChange={(e) => setEnrich(e.target.checked)}
-              />
-              Fetch missing company / job title from each URL
-            </label>
-            <span className="mb-6 text-2xs text-gray-500">
-              Off by default: on a 5,000-row file this makes 5,000 outbound requests.
-            </span>
-
             <button
               type="button"
               className="btn-primary mb-6 ml-auto"
@@ -266,12 +265,29 @@ export default function ImportPage() {
       {result && (
         <div className="card mt-5 p-4">
           <h2 className="text-sm font-semibold">Import complete</h2>
-          <div className="mt-3 grid grid-cols-4 gap-3">
+          <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-5">
             <Stat label="Rows in file" value={result.total_rows} />
             <Stat label="Created" value={result.created} />
             <Stat label="Marked Duplicated" value={result.duplicates} tone="red" />
             <Stat label="Skipped" value={result.skipped.length} tone="amber" />
+            <Stat label="Missing fields" value={result.missing_fields.length} tone="amber" />
           </div>
+
+          {result.missing_fields.length > 0 && (
+            <details className="mt-3" open={result.missing_fields.length <= 10}>
+              <summary className="cursor-pointer text-xs text-gray-600">
+                Review {result.missing_fields.length} row{result.missing_fields.length === 1 ? '' : 's'} with missing fields
+              </summary>
+              <ul className="mt-2 max-h-56 space-y-1 overflow-auto text-2xs">
+                {result.missing_fields.map((warning) => (
+                  <li key={warning.row} className="rounded border border-amber-100 bg-amber-50/60 px-2 py-1">
+                    <span className="font-medium">Row {warning.row}:</span>{' '}
+                    Missing {warning.fields.map((field) => MISSING_FIELD_LABELS[field]).join(' and ')}
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
 
           {result.skipped.length > 0 && (
             <details className="mt-3" open={result.skipped.length <= 10}>

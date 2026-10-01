@@ -30,3 +30,7 @@ Thumbs.db
 *.swp
 resume-builder-frontend/config.json
 resume-builder-frontend/dist-web/
+backend/tsconfig.build.tsbuildinfo
+backend/prisma/generated/
+frontend/.next-dev/
+frontend/tsconfig.tsbuildinfo

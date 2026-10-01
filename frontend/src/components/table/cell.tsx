@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import type { AccessLevel, ApplicationStatus, JobApplication, PipelineStatus, User } from '@/lib/types';
+import type { ApplicationStatus, JobApplication, PipelineStatus, User } from '@/lib/types';
 import { allowedStatusTransitions, canEditField, whyLocked } from '@/lib/permissions';
 import { PipelinePill, StatusPill } from '@/components/ui/status-pill';
 import type { ColumnDef } from './columns';
@@ -10,9 +10,11 @@ interface CellProps {
   row: JobApplication;
   column: ColumnDef;
   user: User | null;
-  access: AccessLevel;
   boundary?: 'day' | 'week';
   onCommit: (field: keyof JobApplication, value: unknown) => void;
+  onDownloadResume?: (row: JobApplication) => void;
+  onDownloadJobDescription?: (row: JobApplication) => void;
+  onDownloadCoverLetter?: (row: JobApplication) => void;
 }
 
 /**
@@ -26,11 +28,14 @@ interface CellProps {
  * Permission handling: `canEditField` mirrors the backend policy, so locked cells render as static
  * text with a tooltip explaining *why*. The backend re-checks regardless.
  */
-export function Cell({ row, column, user, access, boundary, onCommit }: CellProps) {
+export function Cell({
+  row, column, user, boundary, onCommit, onDownloadResume, onDownloadJobDescription,
+  onDownloadCoverLetter,
+}: CellProps) {
   const [editing, setEditing] = useState(false);
   const [customSource, setCustomSource] = useState(false);
-  const editable = column.editor !== 'readonly' && canEditField(user, access, row, column.key);
-  const lockReason = whyLocked(user, access, row, column.key);
+  const editable = column.editor !== 'readonly' && canEditField(user, row, column.key);
+  const lockReason = whyLocked(user, row, column.key);
 
   function commit(value: unknown) {
     setEditing(false);
@@ -40,6 +45,41 @@ export function Cell({ row, column, user, access, boundary, onCommit }: CellProp
     const normalisedNext = value === null ? '' : value;
     if (String(normalisedCurrent) === String(normalisedNext)) return; // no-op edit: skip the request
     onCommit(column.key, value);
+  }
+
+  if (column.editor === 'resume') {
+    const hasResume = Boolean(row.resume_generated_at);
+    return (
+      <div className="cell justify-center gap-1">
+        <button
+          type="button"
+          className="rounded border border-gray-400 bg-white px-1.5 py-0.5 text-2xs font-semibold text-gray-800 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-40"
+          disabled={!hasResume}
+          title={hasResume ? 'Download saved resume PDF' : 'No resume was saved for this application'}
+          onClick={() => onDownloadResume?.(row)}
+        >
+          Resume.pdf
+        </button>
+        <button
+          type="button"
+          className="rounded border border-gray-400 bg-white px-1.5 py-0.5 text-2xs font-semibold text-gray-800 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-40"
+          disabled={!hasResume}
+          title={hasResume ? 'Download the saved job description as jd.txt' : 'No job description was saved'}
+          onClick={() => onDownloadJobDescription?.(row)}
+        >
+          JD.txt
+        </button>
+        <button
+          type="button"
+          className="rounded border border-gray-400 bg-white px-1.5 py-0.5 text-2xs font-semibold text-gray-800 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-40"
+          disabled={!row.cover_letter_template}
+          title={row.cover_letter_template ? 'Download cover letter.pdf' : 'No cover letter was generated'}
+          onClick={() => onDownloadCoverLetter?.(row)}
+        >
+          Cover letter.pdf
+        </button>
+      </div>
+    );
   }
 
   // ---- checkbox (paid) ----
@@ -274,11 +314,7 @@ function Display({
   }
   if (column.editor === 'url') {
     if (!value) return <span className="text-gray-300">—</span>;
-    const isResumeLink = column.key === 'resume_link';
     const compactUrl = String(value).replace(/^https?:\/\/(www\.)?/, '');
-    const displayUrl = isResumeLink && compactUrl.length > 32
-      ? `${compactUrl.slice(0, 29)}...`
-      : compactUrl;
     return (
       <a
         href={String(value)}
@@ -289,7 +325,7 @@ function Display({
         // Opening the link must not also start an edit on the cell behind it.
         onClick={(e) => e.stopPropagation()}
       >
-        {displayUrl}
+        {compactUrl}
       </a>
     );
   }

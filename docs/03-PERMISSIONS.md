@@ -4,7 +4,7 @@ Authorization answers **three independent questions**, and the code keeps them s
 
 ```
 (A) ROLE      — may this kind of user call this endpoint at all?      → RolesGuard
-(B) SCOPE     — may this user touch this workspace, and read or write? → WorkspaceAccessService
+(B) SCOPE     — is this workspace owned by/created by this user?       → WorkspaceAccessService
 (C) FIELD     — may this user set this column to this value?           → ApplicationPolicy
 ```
 
@@ -20,10 +20,9 @@ unit-tested module that every write path must pass through.
 | Change username / role | ✅ | ❌ | ❌ |
 | Change **own** password | ✅ | ✅ | ✅ |
 | Create / rename / delete workspace | ✅ | ❌ | ❌ |
-| Grant workspace permissions | ✅ | ❌ | ❌ |
-| List all workspaces | ✅ | granted only | granted only |
-| Add URLs / import Excel | ✅ | ✅ (edit scope) | ✅ (edit scope) |
-| Edit job title/company/url/note/resume | ✅ | ✅ (edit scope) | ✅ (edit scope) |
+| List accessible workspaces | created workspaces | owned workspace | owned workspace |
+| Add application manually / import Excel or CSV | ✅ | ✅ (owned workspace) | ✅ (owned workspace) |
+| Edit job title/company/url/note | ✅ | ✅ (owned workspace) | ✅ (owned workspace) |
 | Set status `Pending→Applied`, `Applied→Rejected` | ✅ | ✅ | ✅ |
 | Any other status transition | ✅ | ❌ | ❌ |
 | Set/clear `Duplicated` | ✅ | ❌ | ❌ |
@@ -32,31 +31,32 @@ unit-tested module that every write path must pass through.
 | Toggle `paid` | ✅ | ❌ | ❌ |
 | Edit **any** field on a paid row | ✅ | ❌ | ❌ |
 | Delete applications | ✅ | ❌ | ❌ |
-| Generate / view payment reports | ✅ | ❌ | ❌ |
+| View own live bid-count report | ✅ | ✅ | ✅ |
+| View payment history / process payment | ✅ | ❌ | ❌ |
 | View analytics dashboard | ✅ | ❌ | ❌ |
 
-`bidder_manager` vs `bidder` is intentionally **not** a capability difference — it is a *breadth* difference.
-A manager is expected to hold `edit` grants on many workspaces; a junior holds one. Encoding it as breadth
-rather than power means adding a tab to a manager is a data change, not a code change.
+`bidder_manager` and `bidder` currently have the same workspace scope and field capabilities. A workspace
+has one owner and one resume profile; assigning the workspace to another user transfers current access but
+does not rewrite historical application/payment attribution.
 
 ## 3.2 (B) Workspace scope resolution
 
 ```ts
-resolveAccess(user, workspaceId): 'none' | 'view' | 'edit'
+canAccess(user, workspace): boolean
 
-  if (user.role === 'admin')                    return 'edit';   // admin bypasses grants entirely
-  if (workspace.owner_user_id === user.id)      return 'edit';   // you always control your own tab
-  const grant = permission(workspaceId, user.id);
-  return grant?.permission_type ?? 'none';
+  if (user.role === 'super_admin') return true;
+  if (user.role === 'admin') return workspace.created_by_user_id === user.id;
+  return workspace.owner_user_id === user.id;
 ```
 
 Consequences:
-- A **junior bidder cannot see another tab exists.** `GET /workspaces` returns only owned + granted rows, so
+- A **bidder cannot see another workspace exists.** `GET /workspaces` returns only owned rows, so
   the workspace switcher is naturally filtered — no client-side hiding.
 - Every application endpoint derives `workspaceId` from **the row**, not from the request body, then re-checks
   scope. So you cannot move a row into a workspace you can't write to, and you cannot read row `X` by guessing
   its id.
-- `view` scope is read-only at the service layer: any mutation on a `view` workspace is `403` regardless of role.
+- There is no share grant or view-only mode. If a workspace is returned to a user, workspace-level access permits
+  both reading and writing; role and field rules still restrict which application fields may be changed.
 
 ## 3.3 (C) Field-level policy — the security core
 
@@ -64,7 +64,7 @@ Consequences:
 
 ```ts
 BIDDER_WRITABLE = { job_title, company_name, url, job_source,
-                    application_status, note, resume_link, date }
+                    application_status, note, date }
 
 ADMIN_ONLY      = { pipeline_status, interview_date, interview_note,
                     paid, workspace_id, number }
@@ -136,10 +136,9 @@ record; it renders gray and read-only in the UI, but the UI is only a courtesy �
 | Single cell edit | `PATCH /applications/:id` | scope=edit, not-locked, patch filter, transition check |
 | Bulk edit | `PATCH /applications/bulk` | same, evaluated **per row**; partial success reported per id |
 | Bulk delete | `POST /applications/bulk-delete` | admin only |
-| Paid toggle | `POST /applications/bulk-paid` | admin only; stamps `paid_by`, `paid_at` |
-| Manual URL paste | `POST /applications/urls` | scope=edit; status forced to `Pending`/`Duplicated` by system |
+| Manual create | `POST /applications` | scope=edit; required title/company/URL/status; status transition policy enforced |
 | Excel/CSV import | `POST /import/:workspaceId` | scope=edit; imported `Status` clamped — non-admins cannot import `Duplicated`/paid |
-| Pipeline update | `PATCH /applications/:id/pipeline` | admin only |
+| Pipeline/interview update | `PATCH /applications/:id/pipeline` | admin only; validates pipeline status, interview date, and note |
 
 The import path is the classic hole: a CSV column named `Status` containing `Duplicated` would otherwise let a
 bidder bypass the state machine. `import.service.ts` therefore routes every row's status through the *same*

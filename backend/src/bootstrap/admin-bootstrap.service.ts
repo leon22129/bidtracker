@@ -6,7 +6,7 @@ import { hashPassword } from '../auth/auth.service';
  * Creates the default superadmin on first boot.
  *
  * Idempotency rule: the account is created only when there is NO elevated account at all. That means restarts,
- * container recreation, and rolling deploys can never produce a second default admin, and — crucially —
+ * process restarts and rolling deploys can never produce a second default admin, and — crucially —
  * changing the admin's password does not cause it to be reset on the next restart (which a naive
  * "upsert by email" implementation would do, silently reverting a password change).
  *

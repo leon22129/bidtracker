@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@react-pdf/renderer": "^4.5.1",
     "@tanstack/react-virtual": "^3.10.9",
     "next": "^14.2.20",
     "react": "^18.3.1",

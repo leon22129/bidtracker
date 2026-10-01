@@ -12,12 +12,30 @@ import {
   normalizeResumeEducation,
   normalizeResumePersonalInfo,
 } from "../../../shared/resume-profile"
-
-const API_BASE = (import.meta as any).env?.VITE_BIDTRACKER_API_URL || "http://127.0.0.1:3001/api"
-const TOKEN_KEY = "bidtracker_token"
+import { authStorage, getApiBaseUrl } from "@/lib/extension-storage"
 
 function createId() {
   return crypto.randomUUID()
+}
+
+class UnauthorizedError extends Error {
+  constructor() {
+    super("Your session has expired. Please sign in again.")
+    this.name = "UnauthorizedError"
+  }
+}
+
+async function apiFetch(path: string, init: RequestInit = {}): Promise<Response> {
+  const token = await authStorage.getToken()
+  const headers = new Headers(init.headers)
+  if (token) headers.set("Authorization", `Bearer ${token}`)
+  const response = await fetch(`${await getApiBaseUrl()}${path}`, { ...init, headers })
+  if (response.status === 401 && path !== "/auth/login") {
+    await authStorage.clearToken()
+    window.dispatchEvent(new CustomEvent("resume-ai-auth-invalid"))
+    throw new UnauthorizedError()
+  }
+  return response
 }
 
 function createProfile(input: CreateAiProfileInput): AiProfile {
@@ -37,13 +55,12 @@ function createProfile(input: CreateAiProfileInput): AiProfile {
 
 const webAiProfiles: AiProfilesApi = {
   async list() {
-    const response = await fetch(`${API_BASE}/workspaces/profiles/assigned`, {
-      headers: { Authorization: `Bearer ${localStorage.getItem(TOKEN_KEY) || ""}` },
-    })
+    const response = await apiFetch("/workspaces/profiles/assigned")
     if (!response.ok) throw new Error("Unable to load assigned profiles.")
     const profiles = await response.json() as Array<any>
     return profiles.map((profile) => ({
       id: profile.id,
+      workspaceId: profile.workspace_id,
       name: profile.name,
       careerPath: profile.career_path || "",
       personalInfo: normalizeResumePersonalInfo(profile.personal_info),
@@ -66,14 +83,12 @@ const webAiProfiles: AiProfilesApi = {
     throw new Error("Profiles are created and assigned in BidTracker.")
   },
   async update(input: UpdateAiProfileInput) {
-    const response = await fetch(`${API_BASE}/workspaces/profiles/${input.id}`, {
+    const response = await apiFetch(`/workspaces/profiles/${input.id}`, {
       method: "PATCH",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${localStorage.getItem(TOKEN_KEY) || ""}`,
       },
       body: JSON.stringify({
-        full_name: input.personalInfo?.fullName || "",
         template: input.template,
         save_in_folder: input.saveInFolder,
         auto_download: input.autoDownload,
@@ -108,52 +123,89 @@ const webAiProfiles: AiProfilesApi = {
     throw new Error("Profiles are deleted in BidTracker.")
   },
   async generate(input: GenerateResumeInput): Promise<GenerateResumeResult> {
-    const response = await fetch(`${API_BASE}/resume/profile-generate`, {
+    const conversationAnswers = input.kind === "applicationAnswers" && Boolean(input.conversationId)
+    const applicationGeneration = !conversationAnswers && Boolean(input.url && input.workspaceId)
+    const path = conversationAnswers
+      ? "/resume/answers"
+      : applicationGeneration
+        ? "/applications/generate"
+        : "/resume/profile-generate"
+    const response = await apiFetch(path, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${localStorage.getItem(TOKEN_KEY) || ""}`,
       },
-      body: JSON.stringify({
-        profile_id: input.profileId,
-        job_description: input.jobDescription,
-        kind: input.kind,
-        questions: input.questions,
-        resume: input.resume,
-      }),
+      body: JSON.stringify(conversationAnswers
+        ? { conversation_id: input.conversationId, questions: input.questions }
+        : {
+            ...(applicationGeneration ? { workspace_id: input.workspaceId, url: input.url } : {}),
+            profile_id: input.profileId,
+            job_description: input.jobDescription,
+            kind: input.kind,
+            questions: input.questions,
+            resume: input.resume,
+          }),
     })
-    const data = await response.json().catch(() => null) as { tailored_resume?: string; full_name?: string; error?: string } | null
-    if (!response.ok) throw new Error(data?.error || `Generation failed (${response.status}).`)
+    const data = await response.json().catch(() => null) as { tailored_resume?: string; full_name?: string; conversation_id?: string; error?: string; message?: string; eligible?: boolean; reason?: string; banned?: boolean; resume?: unknown; answers?: unknown; application?: GenerateResumeResult["application"]; duplicate?: boolean; duplicate_type?: string | null; existing_application?: GenerateResumeResult["existingApplication"] } | null
+    if (!response.ok) throw new Error(data?.message || data?.error || `Generation failed (${response.status}).`)
+    if (conversationAnswers) {
+      if (!Array.isArray(data?.answers)) throw new Error("The AI provider returned an empty response.")
+      return { tailored_resume: JSON.stringify({ answers: data.answers }) }
+    }
+    if (applicationGeneration) {
+      const answerPayload = data?.answers && typeof data.answers === "object"
+        ? (data.answers as { answers?: unknown }).answers
+        : data?.answers
+      const answers = Array.isArray(answerPayload)
+        ? answerPayload.filter((item): item is { question: string; answer: string } => Boolean(
+            item
+            && typeof item === "object"
+            && typeof (item as { question?: unknown }).question === "string"
+            && typeof (item as { answer?: unknown }).answer === "string",
+          ))
+        : undefined
+      if (data?.duplicate) return {
+        duplicate: true,
+        duplicateType: data.duplicate_type,
+        existingApplication: data.existing_application,
+        application: data.application,
+        tailored_resume: data.resume ? JSON.stringify(data.resume) : undefined,
+        full_name: data.full_name,
+      }
+      if (data?.banned) return { banned: true, tailored_resume: "" }
+      if (data?.eligible === false) return { eligible: false, reason: data.reason, tailored_resume: "" }
+      if (!data?.resume) throw new Error("The AI provider returned an empty response.")
+      return { eligible: true, tailored_resume: JSON.stringify(data.resume), full_name: data.full_name, conversationId: data.conversation_id, application: data.application, answers }
+    }
     if (!data?.tailored_resume) throw new Error("The AI provider returned an empty response.")
-    return { tailored_resume: data.tailored_resume, full_name: data.full_name }
+    return { tailored_resume: data.tailored_resume, full_name: data.full_name, conversationId: data.conversation_id }
   },
 }
 
 const webAuth: WebAuthApi = {
   async status(): Promise<WebAuthStatus> {
-    const token = localStorage.getItem(TOKEN_KEY)
+    const token = await authStorage.getToken()
     if (!token) return { authenticated: false }
-    const response = await fetch(`${API_BASE}/auth/me`, { headers: { Authorization: `Bearer ${token}` } })
+    const response = await apiFetch("/auth/me")
     if (!response.ok) {
-      localStorage.removeItem(TOKEN_KEY)
       return { authenticated: false }
     }
     const data = await response.json() as { username: string }
     return { authenticated: true, username: data.username }
   },
   async login(username, password) {
-    const response = await fetch(`${API_BASE}/auth/login`, {
+    const response = await apiFetch("/auth/login", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email: username, password }),
     })
     const data = await response.json().catch(() => null) as { access_token?: string; user?: { username: string }; message?: string } | null
     if (!response.ok || !data?.access_token) throw new Error(data?.message || "Unable to sign in.")
-    localStorage.setItem(TOKEN_KEY, data.access_token)
+    await authStorage.setToken(data.access_token)
     return { authenticated: true, username: data.user?.username || username }
   },
   async logout() {
-    localStorage.removeItem(TOKEN_KEY)
+    await authStorage.clearToken()
   },
 }
 

@@ -33,10 +33,11 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   if (!user) return null;
 
   const nav = [
-    { href: '/workspaces', label: 'Workspaces', show: true },
+    { href: '/workspaces', label: 'Dashboard', show: true },
     { href: '/admin/payments', label: 'Bid Count Report', show: true },
     { href: '/admin/analytics', label: 'Analytics', show: canViewAnalytics(user) },
     { href: '/admin/users', label: 'Users', show: isAdmin(user) },
+    { href: '/admin/banned-urls', label: 'Banned URLs', show: isAdmin(user) },
   ].filter((n) => n.show);
 
   return (

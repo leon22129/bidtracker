@@ -5,7 +5,7 @@ import { ApplicationStatus, Role } from '../constants';
  * FIELD-LEVEL AUTHORIZATION — the security core of this application.
  *
  * Pure functions, zero I/O, so they can be unit-tested exhaustively and, more importantly, so that
- * EVERY write path (inline edit, bulk edit, URL paste, Excel import, paid toggle) can call the same
+ * EVERY write path (inline edit, bulk edit, Excel import, paid toggle) can call the same
  * code. A permission model that lives in the UI or is re-implemented per endpoint is a permission
  * model with holes; this module exists to make the side door impossible.
  */
@@ -19,7 +19,6 @@ export const BIDDER_WRITABLE_FIELDS = [
   'job_source',
   'application_status',
   'note',
-  'resume_link',
 ] as const;
 
 /** Fields only an admin may ever write. */
@@ -27,6 +26,8 @@ export const ADMIN_ONLY_FIELDS = [
   'number',
   'workspace_id',
   'pipeline_status',
+  'interview_date',
+  'interview_note',
   'paid',
 ] as const;
 
@@ -35,7 +36,6 @@ const DUPLICATED_WRITABLE_FIELDS = [
   'company_name',
   'job_source',
   'note',
-  'resume_link',
 ] as const;
 
 /**

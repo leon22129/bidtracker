@@ -6,9 +6,10 @@
  * offsets, each filter, each sort, and the dashboard aggregates. Every figure is the median of five
  * runs after one warm-up, so it reflects a warm page cache rather than cold-start I/O.
  *
- *   DATABASE_URL="file:./perf.db" npx prisma migrate deploy
- *   DATABASE_URL="file:./perf.db" npm run seed -- --applications 150000 --reset   # 50k per workspace
- *   DATABASE_URL="file:./perf.db" node dist/main.js &
+ *   export DATABASE_URL="postgresql://bidtracker:PASSWORD@127.0.0.1:5432/bidtracker?schema=public"
+ *   npx prisma migrate deploy
+ *   npm run seed -- --applications 150000 --reset   # 50k per workspace
+ *   node dist/main.js &
  *   SMOKE_ADMIN_EMAIL=... SMOKE_ADMIN_PASSWORD=... node perf.mjs
  */
 const B = 'http://127.0.0.1:3001/api';
@@ -69,12 +70,18 @@ await time('workspace summary', `/applications/summary?workspace_id=${id}`);
 await time('analytics: conversion', '/analytics/conversion');
 await time('analytics: full dashboard', '/analytics/overview');
 await time('analytics: interviews by source', '/analytics/interviews-by-source');
-await time('payments: weekly preview', '/payments/weekly/preview');
+await time('payments: report aggregation', '/payments/report');
 
+const paymentReport = await get('/payments/report');
+const paymentBidder = paymentReport.bidders?.[0];
 const t = Date.now();
-const gen = await fetch(`${B}/payments/weekly/generate`, {
+const gen = paymentBidder ? await fetch(`${B}/payments/process`, {
   method: 'POST',
   headers: { ...H, 'Content-Type': 'application/json' },
-  body: '{}',
-});
-console.log(`${String(Date.now() - t).padStart(5)} ms   ${'payments: weekly settlement (write)'.padEnd(38)} status=${gen.status}`);
+  body: JSON.stringify({
+    bidder_id: paymentBidder.bidder_id,
+    start_date: paymentReport.start_date.slice(0, 10),
+    end_date: paymentReport.end_date.slice(0, 10),
+  }),
+}) : null;
+console.log(`${String(Date.now() - t).padStart(5)} ms   ${'payments: process filtered update (write)'.padEnd(38)} status=${gen?.status ?? 'skipped'}`);

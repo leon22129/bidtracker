@@ -1,15 +1,131 @@
 # ============================================================================
-# BidTracker - Production + optional Cloudflare Quick Tunnel
+# BidTracker - backend + frontend with optional Cloudflare Quick Tunnel
 #
 # Usage:
 #   .\start.ps1
+#   .\start.ps1 --dev
 #   .\start.ps1 --rebuild
 #   .\start.ps1 --no-cloudflare
 #
-# Ctrl+C stops backend, both frontends, and the optional Cloudflare tunnel.
+# Ctrl+C or closing this terminal stops the backend, frontend, and optional tunnel.
 # ============================================================================
 
 $ErrorActionPreference = "Stop"
+
+# Keep every process started by this script in a Windows job object. Windows closes
+# the job handle if this PowerShell process exits for any reason (including its
+# terminal being closed), and KILL_ON_JOB_CLOSE then stops the complete process tree.
+if (-not ("BidTrackerProcessJob" -as [type])) {
+    Add-Type -TypeDefinition @"
+using System;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+
+public static class BidTrackerProcessJob
+{
+    private const int JobObjectExtendedLimitInformation = 9;
+    private const uint JobObjectLimitKillOnJobClose = 0x00002000;
+    private static IntPtr handle = IntPtr.Zero;
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct IoCounters
+    {
+        public ulong ReadOperationCount;
+        public ulong WriteOperationCount;
+        public ulong OtherOperationCount;
+        public ulong ReadTransferCount;
+        public ulong WriteTransferCount;
+        public ulong OtherTransferCount;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct BasicLimitInformation
+    {
+        public long PerProcessUserTimeLimit;
+        public long PerJobUserTimeLimit;
+        public uint LimitFlags;
+        public UIntPtr MinimumWorkingSetSize;
+        public UIntPtr MaximumWorkingSetSize;
+        public uint ActiveProcessLimit;
+        public UIntPtr Affinity;
+        public uint PriorityClass;
+        public uint SchedulingClass;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct ExtendedLimitInformation
+    {
+        public BasicLimitInformation BasicLimitInformation;
+        public IoCounters IoInfo;
+        public UIntPtr ProcessMemoryLimit;
+        public UIntPtr JobMemoryLimit;
+        public UIntPtr PeakProcessMemoryUsed;
+        public UIntPtr PeakJobMemoryUsed;
+    }
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
+    private static extern IntPtr CreateJobObject(IntPtr jobAttributes, string name);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool SetInformationJobObject(
+        IntPtr job,
+        int infoClass,
+        IntPtr info,
+        uint infoLength);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool AssignProcessToJobObject(IntPtr job, IntPtr process);
+
+    [DllImport("kernel32.dll")]
+    private static extern bool CloseHandle(IntPtr objectHandle);
+
+    public static void Create()
+    {
+        Close();
+        handle = CreateJobObject(IntPtr.Zero, null);
+        if (handle == IntPtr.Zero)
+            throw new Win32Exception(Marshal.GetLastWin32Error(), "Could not create process job");
+
+        var limits = new ExtendedLimitInformation();
+        limits.BasicLimitInformation.LimitFlags = JobObjectLimitKillOnJobClose;
+        int length = Marshal.SizeOf(typeof(ExtendedLimitInformation));
+        IntPtr info = Marshal.AllocHGlobal(length);
+
+        try
+        {
+            Marshal.StructureToPtr(limits, info, false);
+            if (!SetInformationJobObject(handle, JobObjectExtendedLimitInformation, info, (uint)length))
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "Could not configure process job");
+        }
+        catch
+        {
+            Close();
+            throw;
+        }
+        finally
+        {
+            Marshal.FreeHGlobal(info);
+        }
+    }
+
+    public static void AddProcess(IntPtr processHandle)
+    {
+        if (handle == IntPtr.Zero)
+            throw new InvalidOperationException("Process job has not been created");
+        if (!AssignProcessToJobObject(handle, processHandle))
+            throw new Win32Exception(Marshal.GetLastWin32Error(), "Could not add process to job");
+    }
+
+    public static void Close()
+    {
+        if (handle == IntPtr.Zero)
+            return;
+        CloseHandle(handle);
+        handle = IntPtr.Zero;
+    }
+}
+"@
+}
 
 # ============================================================================
 # Configuration
@@ -18,18 +134,18 @@ $ErrorActionPreference = "Stop"
 $Root = $PSScriptRoot
 $Backend = Join-Path $Root "backend"
 $Frontend = Join-Path $Root "frontend"
-$ResumeBuilder = Join-Path $Root "resume-builder-frontend"
 
 $BackendBuild = Join-Path $Backend "dist\main.js"
 $FrontendBuild = Join-Path $Frontend ".next"
 
 $FrontendUrl = "http://127.0.0.1:3000"
 $HealthUrl = "$FrontendUrl/api/health"
-$ResumeBuilderUrl = "http://127.0.0.1:3002"
 
 $Rebuild = $false
+$Dev = $false
 $NoCloudflare = $false
 $Processes = @()
+$ProcessJobCreated = $false
 
 $LogDirectory = Join-Path $env:TEMP "bidtracker"
 
@@ -52,6 +168,14 @@ foreach ($Arg in $args) {
             $Rebuild = $true
         }
 
+        "--dev" {
+            $Dev = $true
+        }
+
+        "-dev" {
+            $Dev = $true
+        }
+
         "--no-cloudflare" {
             $NoCloudflare = $true
         }
@@ -61,23 +185,37 @@ foreach ($Arg in $args) {
         }
 
         "--help" {
-            Write-Host "Usage: .\start.ps1 [--rebuild] [--no-cloudflare]"
+            Write-Host "Usage: .\start.ps1 [--dev | --rebuild] [--no-cloudflare]"
             exit 0
         }
 
         "-h" {
-            Write-Host "Usage: .\start.ps1 [--rebuild] [--no-cloudflare]"
+            Write-Host "Usage: .\start.ps1 [--dev | --rebuild] [--no-cloudflare]"
             exit 0
         }
 
         default {
             Write-Host ""
             Write-Host "Unknown option: $Arg" -ForegroundColor Red
-            Write-Host "Usage: .\start.ps1 [--rebuild] [--no-cloudflare]"
+            Write-Host "Usage: .\start.ps1 [--dev | --rebuild] [--no-cloudflare]"
             Write-Host ""
             exit 2
         }
     }
+}
+
+if ($Dev -and $Rebuild) {
+    Write-Host ""
+    Write-Host "--dev and --rebuild cannot be used together." -ForegroundColor Red
+    Write-Host "Usage: .\start.ps1 [--dev | --rebuild] [--no-cloudflare]"
+    Write-Host ""
+    exit 2
+}
+
+# Development mode is intentionally local-only. Hot-reload servers should not
+# be exposed through a public quick tunnel.
+if ($Dev) {
+    $NoCloudflare = $true
 }
 
 # ============================================================================
@@ -106,10 +244,85 @@ function Stop-ProcessTree {
     }
 }
 
+function Start-ManagedNpmProcess {
+    param(
+        [string]$NpmScript,
+        [string]$WorkingDirectory,
+        [string]$StandardOutputPath,
+        [string]$StandardErrorPath
+    )
+
+    # The helper waits before starting npm. This gives the launcher time to put
+    # it in the job first, so npm and Node inherit job membership with no race.
+    $GateName = "Local\BidTracker-$PID-$([Guid]::NewGuid().ToString('N'))"
+    $ReadyName = "$GateName-Ready"
+    $Gate = [Threading.EventWaitHandle]::new(
+        $false,
+        [Threading.EventResetMode]::ManualReset,
+        $GateName
+    )
+    $Ready = [Threading.EventWaitHandle]::new(
+        $false,
+        [Threading.EventResetMode]::ManualReset,
+        $ReadyName
+    )
+    $Process = $null
+
+    $HelperScript = @"
+`$gate = [Threading.EventWaitHandle]::OpenExisting('$GateName')
+`$ready = [Threading.EventWaitHandle]::OpenExisting('$ReadyName')
+try {
+    `$ready.Set() | Out-Null
+    `$gate.WaitOne() | Out-Null
+}
+finally {
+    `$gate.Dispose()
+    `$ready.Dispose()
+}
+& npm.cmd run $NpmScript
+exit `$LASTEXITCODE
+"@
+
+    $EncodedCommand = [Convert]::ToBase64String(
+        [Text.Encoding]::Unicode.GetBytes($HelperScript)
+    )
+
+    try {
+        $Process = Start-Process `
+            -FilePath "powershell.exe" `
+            -ArgumentList @("-NoProfile", "-NonInteractive", "-EncodedCommand", $EncodedCommand) `
+            -WorkingDirectory $WorkingDirectory `
+            -WindowStyle Hidden `
+            -RedirectStandardOutput $StandardOutputPath `
+            -RedirectStandardError $StandardErrorPath `
+            -PassThru
+
+        [BidTrackerProcessJob]::AddProcess($Process.Handle)
+        if (!$Ready.WaitOne(10000)) {
+            throw "npm process helper did not initialize within 10 seconds"
+        }
+        $Gate.Set() | Out-Null
+        return $Process
+    }
+    catch {
+        if ($null -ne $Process -and !$Process.HasExited) {
+            Stop-ProcessTree $Process.Id
+        }
+        throw
+    }
+    finally {
+        $Gate.Dispose()
+        $Ready.Dispose()
+    }
+}
+
 function Cleanup {
     Write-Host ""
     Write-Host "==> stopping" -ForegroundColor Yellow
 
+    # Stop each tracked tree while its wrapper process still exists. Closing the
+    # job first can make the wrappers exit before taskkill can discover escaped
+    # npm/Node descendants, leaving dev watchers alive after the launcher stops.
     foreach ($Process in $Processes) {
         if ($null -eq $Process) {
             continue
@@ -123,6 +336,17 @@ function Cleanup {
         }
         catch {
             # Already stopped.
+        }
+    }
+
+    if ($ProcessJobCreated) {
+        try {
+            [BidTrackerProcessJob]::Close()
+            $script:ProcessJobCreated = $false
+            Start-Sleep -Milliseconds 250
+        }
+        catch {
+            # Explicit process-tree cleanup above already made the best effort.
         }
     }
 
@@ -184,14 +408,6 @@ if (!(Test-Path $Frontend)) {
     Die "Frontend directory not found: $Frontend"
 }
 
-if (!(Test-Path $ResumeBuilder)) {
-    Die "Resume-builder directory not found: $ResumeBuilder"
-}
-
-if (!(Test-Path (Join-Path $ResumeBuilder "node_modules"))) {
-    Die "Resume-builder dependencies are missing. Run: Push-Location resume-builder-frontend; npm install; Pop-Location"
-}
-
 if (!(Test-Path (Join-Path $Backend ".env"))) {
     Die "Backend .env not found: $Backend\.env"
 }
@@ -204,11 +420,18 @@ if (!$NoCloudflare -and !(Get-Command cloudflared.exe -ErrorAction SilentlyConti
     Die "cloudflared was not found in PATH."
 }
 
+try {
+    [BidTrackerProcessJob]::Create()
+    $ProcessJobCreated = $true
+}
+catch {
+    Die "Could not create the process cleanup job: $($_.Exception.Message)"
+}
+
 Say "checking ports"
 
 Stop-PortProcess -Port 3001
 Stop-PortProcess -Port 3000
-Stop-PortProcess -Port 3002
 
 Start-Sleep -Milliseconds 500
 
@@ -216,7 +439,7 @@ Start-Sleep -Milliseconds 500
 # Build backend
 # ============================================================================
 
-if ($Rebuild -or !(Test-Path $BackendBuild)) {
+if (!$Dev -and ($Rebuild -or !(Test-Path $BackendBuild))) {
 
     Say "building backend"
 
@@ -238,7 +461,7 @@ if ($Rebuild -or !(Test-Path $BackendBuild)) {
 # Build frontend
 # ============================================================================
 
-if ($Rebuild -or !(Test-Path $FrontendBuild)) {
+if (!$Dev -and ($Rebuild -or !(Test-Path $FrontendBuild))) {
 
     Say "building frontend"
 
@@ -270,9 +493,6 @@ $BackendErr = Join-Path $LogDirectory "backend-err.log"
 $FrontendOut = Join-Path $LogDirectory "frontend-out.log"
 $FrontendErr = Join-Path $LogDirectory "frontend-err.log"
 
-$ResumeBuilderOut = Join-Path $LogDirectory "resume-builder-out.log"
-$ResumeBuilderErr = Join-Path $LogDirectory "resume-builder-err.log"
-
 $CloudflareOut = Join-Path $LogDirectory "cloudflared-out.log"
 $CloudflareErr = Join-Path $LogDirectory "cloudflared-err.log"
 
@@ -281,8 +501,6 @@ foreach ($Log in @(
     $BackendErr,
     $FrontendOut,
     $FrontendErr,
-    $ResumeBuilderOut,
-    $ResumeBuilderErr,
     $CloudflareOut,
     $CloudflareErr
 )) {
@@ -295,17 +513,22 @@ foreach ($Log in @(
 # Start backend
 # ============================================================================
 
-Say "starting backend"
+if ($Dev) {
+    $BackendStartCommand = "run start:dev"
+    $FrontendStartCommand = "run dev"
+    Say "starting backend from source (watch mode)"
+}
+else {
+    $BackendStartCommand = "run start"
+    $FrontendStartCommand = "run start"
+    Say "starting backend"
+}
 
-$BackendProcess = Start-Process `
-    -FilePath "npm.cmd" `
-    -ArgumentList "run start" `
+$BackendProcess = Start-ManagedNpmProcess `
+    -NpmScript ($BackendStartCommand -replace '^run ', '') `
     -WorkingDirectory $Backend `
-    -WindowStyle Hidden `
-    -RedirectStandardOutput $BackendOut `
-    -RedirectStandardError $BackendErr `
-    -PassThru
-
+    -StandardOutputPath $BackendOut `
+    -StandardErrorPath $BackendErr
 $Processes += $BackendProcess
 
 Write-Host "Backend PID: $($BackendProcess.Id)"
@@ -316,37 +539,14 @@ Write-Host "Backend PID: $($BackendProcess.Id)"
 
 Say "starting frontend"
 
-$FrontendProcess = Start-Process `
-    -FilePath "npm.cmd" `
-    -ArgumentList "run start" `
+$FrontendProcess = Start-ManagedNpmProcess `
+    -NpmScript ($FrontendStartCommand -replace '^run ', '') `
     -WorkingDirectory $Frontend `
-    -WindowStyle Hidden `
-    -RedirectStandardOutput $FrontendOut `
-    -RedirectStandardError $FrontendErr `
-    -PassThru
-
+    -StandardOutputPath $FrontendOut `
+    -StandardErrorPath $FrontendErr
 $Processes += $FrontendProcess
 
 Write-Host "Frontend PID: $($FrontendProcess.Id)"
-
-# ============================================================================
-# Start resume-builder frontend
-# ============================================================================
-
-Say "starting resume-builder"
-
-$ResumeBuilderProcess = Start-Process `
-    -FilePath "npm.cmd" `
-    -ArgumentList "run dev -- --host 127.0.0.1 --port 3002" `
-    -WorkingDirectory $ResumeBuilder `
-    -WindowStyle Hidden `
-    -RedirectStandardOutput $ResumeBuilderOut `
-    -RedirectStandardError $ResumeBuilderErr `
-    -PassThru
-
-$Processes += $ResumeBuilderProcess
-
-Write-Host "Resume-builder PID: $($ResumeBuilderProcess.Id)"
 
 # ============================================================================
 # Wait for application
@@ -388,21 +588,6 @@ for ($i = 1; $i -le 60; $i++) {
         Die "frontend failed to start."
     }
 
-    if ($ResumeBuilderProcess.HasExited) {
-        Write-Host ""
-        Write-Host "Resume-builder stopped unexpectedly." -ForegroundColor Red
-
-        if (Test-Path $ResumeBuilderOut) {
-            Get-Content $ResumeBuilderOut -Tail 30
-        }
-
-        if (Test-Path $ResumeBuilderErr) {
-            Get-Content $ResumeBuilderErr -Tail 30
-        }
-
-        Die "resume-builder failed to start."
-    }
-
     try {
         $Response = Invoke-WebRequest `
             -Uri $HealthUrl `
@@ -411,22 +596,9 @@ for ($i = 1; $i -le 60; $i++) {
             -ErrorAction Stop
 
         if ($Response.StatusCode -eq 200) {
-            try {
-                $ResumeBuilderResponse = Invoke-WebRequest `
-                    -Uri $ResumeBuilderUrl `
-                    -TimeoutSec 3 `
-                    -UseBasicParsing `
-                    -ErrorAction Stop
-
-                if ($ResumeBuilderResponse.StatusCode -eq 200) {
-                    $LocalHealthy = $true
-                    Write-Host "Application is ready." -ForegroundColor Green
-                    break
-                }
-            }
-            catch {
-                # Resume-builder is still starting.
-            }
+            $LocalHealthy = $true
+            Write-Host "Application is ready." -ForegroundColor Green
+            break
         }
     }
     catch {
@@ -438,6 +610,24 @@ for ($i = 1; $i -le 60; $i++) {
 }
 
 if (!$LocalHealthy) {
+    Write-Host ""
+    Write-Host "Backend log:" -ForegroundColor Yellow
+    if (Test-Path $BackendOut) {
+        Get-Content $BackendOut -Tail 40
+    }
+    if (Test-Path $BackendErr) {
+        Get-Content $BackendErr -Tail 40
+    }
+
+    Write-Host ""
+    Write-Host "Frontend log:" -ForegroundColor Yellow
+    if (Test-Path $FrontendOut) {
+        Get-Content $FrontendOut -Tail 40
+    }
+    if (Test-Path $FrontendErr) {
+        Get-Content $FrontendErr -Tail 40
+    }
+
     Die "application did not become ready within 60 seconds."
 }
 
@@ -461,6 +651,7 @@ $CloudflareProcess = Start-Process `
     -RedirectStandardError $CloudflareErr `
     -PassThru
 
+[BidTrackerProcessJob]::AddProcess($CloudflareProcess.Handle)
 $Processes += $CloudflareProcess
 
 Write-Host "Cloudflare PID: $($CloudflareProcess.Id)"
@@ -594,9 +785,13 @@ else {
 Write-Host ""
 Write-Host "============================================================" -ForegroundColor Green
 Write-Host ""
-Write-Host "  PUBLIC URL:" -ForegroundColor White
+Write-Host "  FRONTEND URL:" -ForegroundColor White
 Write-Host ""
 Write-Host "  $Public" -ForegroundColor Green
+Write-Host ""
+Write-Host "  BACKEND API URL:" -ForegroundColor White
+Write-Host ""
+Write-Host "  $Public/api" -ForegroundColor Green
 Write-Host ""
 Write-Host "  STATUS:" -ForegroundColor White
 Write-Host ""
@@ -606,7 +801,9 @@ Write-Host "============================================================" -Foreg
 Write-Host ""
 Write-Host "  Backend:   http://127.0.0.1:3001"
 Write-Host "  Frontend:  http://127.0.0.1:3000"
-Write-Host "  Resume:    http://127.0.0.1:3002"
+if ($Dev) {
+    Write-Host "  Mode:      development (source watch; no build)"
+}
 Write-Host ""
 if ($NoCloudflare) {
     Write-Host "  Cloudflare disabled; use the local URL above."
@@ -616,7 +813,7 @@ else {
     Write-Host "  The URL changes when you run the script again."
 }
 Write-Host ""
-Write-Host "  Press Ctrl+C to stop everything."
+Write-Host "  Press Ctrl+C or close this terminal to stop everything."
 Write-Host ""
 Write-Host "============================================================" -ForegroundColor Green
 Write-Host ""
@@ -640,12 +837,6 @@ try {
         if ($FrontendProcess.HasExited) {
             Write-Host ""
             Write-Host "WARNING: frontend has stopped." -ForegroundColor Yellow
-            break
-        }
-
-        if ($ResumeBuilderProcess.HasExited) {
-            Write-Host ""
-            Write-Host "WARNING: resume-builder has stopped." -ForegroundColor Yellow
             break
         }
 

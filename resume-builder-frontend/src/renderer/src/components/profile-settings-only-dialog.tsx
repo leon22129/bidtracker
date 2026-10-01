@@ -38,7 +38,9 @@ export function ProfileSettingsOnlyDialog({
     setGenerateCoverLetter(profile.generateCoverLetter ?? false)
     setCoverLetterTemplate((profile.coverLetterTemplate as CoverLetterTemplateId | undefined) ?? DEFAULT_COVER_LETTER_TEMPLATE)
     setSaveInFolder(profile.saveInFolder ?? false)
-    setAutoDownload(profile.autoDownload ?? false)
+    /// set this as false for now
+    // setAutoDownload(profile.autoDownload ?? false)
+    setAutoDownload(false)
     setDownloadJDWithPDF(profile.downloadJDWithPDF ?? false)
     setUseCompanyName(profile.useCompanyName ?? true)
     setMessage("")
@@ -112,7 +114,7 @@ export function ProfileSettingsOnlyDialog({
               Save inside dated folder
             </label>
             <label className="flex items-center gap-3 pl-6 text-sm">
-              <Checkbox checked={autoDownload} onCheckedChange={(value) => { const enabled = value === true; setAutoDownload(enabled); if (enabled) setSaveInFolder(true) }} />
+              <Checkbox checked={false} disabled />
               Automatically download when ready
             </label>
             <label className="flex items-center gap-3 pl-6 text-sm">

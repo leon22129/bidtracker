@@ -1,16 +1,13 @@
-// Prisma schema — SQLite.
-//
-// NOTE ON ENUMS: SQLite has no native enum type and Prisma therefore rejects `enum` blocks for this
-// provider. Every "enum" column below is a String whose allowed values live in
-// `src/common/constants.ts` and are enforced at the DTO boundary with `@IsIn(...)`.
-// This keeps the schema portable: switching `provider` to "postgresql" requires no column changes.
+// Prisma schema — PostgreSQL.
+// Enum-like fields remain strings so API constants and DTO validation stay the application source of
+// truth. Migration 20260924030000 mirrors those values with PostgreSQL CHECK constraints.
 
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
@@ -18,26 +15,29 @@ datasource db {
 // User
 // ---------------------------------------------------------------------------
 model User {
-  id            String   @id @default(cuid())
-  username      String   @unique
-  email         String   @unique
-  password_hash String
-  role          String   @default("bidder") // super_admin | admin | bidder_manager | bidder
-  is_active     Boolean  @default(true)
-  created_at    DateTime @default(now())
-  updated_at    DateTime @updatedAt
+  id                 String   @id @default(cuid())
+  username           String   @unique
+  email              String   @unique
+  password_hash      String
+  role               String   @default("bidder") // super_admin | admin | bidder_manager | bidder
+  is_active          Boolean  @default(true)
+  created_at         DateTime @default(now())
+  updated_at         DateTime @updatedAt
   created_by_user_id String?
+  slack_webhook_url  String?
+  slack_user_id      String?
+  slack_milestone_day DateTime?
+  slack_last_milestone Int    @default(0)
 
-  ownedWorkspaces Workspace[]           @relation("WorkspaceOwner")
-  createdWorkspaces Workspace[]         @relation("WorkspaceCreator")
-  createdUsers     User[]               @relation("UserCreator")
-  resumeProfiles   ResumeProfile[]
-  createdResumeProfiles ResumeProfile[] @relation("ResumeProfileCreator")
-  permissions     WorkspacePermission[]
-  createdApplications JobApplication[]  @relation("CreatedBy")
-  processedPaymentReports PaymentReport[] @relation("ProcessedBy")
-  bidderPaymentReports PaymentReport[] @relation("BidderPaymentReports")
-  creator         User?                @relation("UserCreator", fields: [created_by_user_id], references: [id], onDelete: SetNull)
+  ownedWorkspaces          Workspace[]          @relation("WorkspaceOwner")
+  createdWorkspaces        Workspace[]          @relation("WorkspaceCreator")
+  createdUsers             User[]               @relation("UserCreator")
+  createdApplications      JobApplication[]     @relation("CreatedBy")
+  processedPaymentReports  PaymentReport[]      @relation("ProcessedBy")
+  bidderPaymentReports     PaymentReport[]      @relation("BidderPaymentReports")
+  createdBannedUrlPatterns BannedUrlPattern[]   @relation("BannedUrlPatternCreator")
+  resumeConversations      ResumeConversation[]
+  creator                  User?                @relation("UserCreator", fields: [created_by_user_id], references: [id], onDelete: SetNull)
 
   @@index([role])
   @@index([created_by_user_id])
@@ -46,87 +46,97 @@ model User {
 
 // ---------------------------------------------------------------------------
 // Workspace (a "tab", e.g. "John Applications")
-// The owner is the payment subject. Access is granted separately.
+// The owner controls the current assignment. Payment attribution is immutable on each application.
 // ---------------------------------------------------------------------------
 model Workspace {
-  id            String   @id @default(cuid())
-  name          String   @unique
-  owner_user_id String
+  id                 String   @id @default(cuid())
+  name               String   @unique
+  owner_user_id      String
   created_by_user_id String?
-  is_archived   Boolean  @default(false)
-  created_at    DateTime @default(now())
-  updated_at    DateTime @updatedAt
+  is_archived        Boolean  @default(false)
+  created_at         DateTime @default(now())
+  updated_at         DateTime @updatedAt
 
   // Restrict: a user who owns a workspace cannot be deleted — payment attribution must survive.
-  owner        User                  @relation("WorkspaceOwner", fields: [owner_user_id], references: [id], onDelete: Restrict)
-  creator      User?                 @relation("WorkspaceCreator", fields: [created_by_user_id], references: [id], onDelete: SetNull)
-  permissions  WorkspacePermission[]
-  applications JobApplication[]
-  resume_profile_id String?
-  resumeProfile ResumeProfile? @relation(fields: [resume_profile_id], references: [id], onDelete: SetNull)
+  owner               User                 @relation("WorkspaceOwner", fields: [owner_user_id], references: [id], onDelete: Restrict)
+  creator             User?                @relation("WorkspaceCreator", fields: [created_by_user_id], references: [id], onDelete: SetNull)
+  applications        JobApplication[]
+  resumeProfile       ResumeProfile?
+  resumeConversations ResumeConversation[]
 
   @@index([owner_user_id])
   @@index([created_by_user_id])
   @@index([is_archived])
-  @@index([resume_profile_id])
   @@map("workspaces")
 }
 
-// A resume-builder profile assigned to one bid-tracker user.
+// A workspace-owned resume-builder profile. workspace_id is unique, so profiles cannot be shared.
 model ResumeProfile {
-  id            String   @id @default(cuid())
-  user_id       String
-  created_by_user_id String?
-  name          String
-  career_path   String   @default("")
-  full_name     String   @default("")
-  title         String   @default("")
-  email         String   @default("")
-  phone         String   @default("")
-  location      String   @default("")
-  linkedin      String   @default("")
-  update_headline Boolean @default(true)
-  use_generated_role_titles Boolean @default(true)
-  template       String   @default("classic")
-  save_in_folder Boolean  @default(false)
-  auto_download  Boolean  @default(false)
-  download_jd_with_pdf Boolean @default(false)
-  use_company_name Boolean @default(true)
-  generate_cover_letter Boolean @default(false)
-  cover_letter_template String @default("classic")
-  education_json String  @default("[]")
-  certifications_json String @default("[]")
-  created_at    DateTime @default(now())
-  updated_at    DateTime @updatedAt
+  id                        String   @id @default(cuid())
+  workspace_id              String   @unique
+  name                      String
+  career_path               String   @default("")
+  full_name                 String   @default("")
+  first_name                String   @default("")
+  middle_name               String   @default("")
+  last_name                 String   @default("")
+  title                     String   @default("")
+  email                     String   @default("")
+  phone                     String   @default("")
+  location                  String   @default("")
+  country                   String   @default("")
+  address1                  String   @default("")
+  city                      String   @default("")
+  county                    String   @default("")
+  state                     String   @default("")
+  zip                       String   @default("")
+  linkedin                  String   @default("")
+  gender                    String   @default("")
+  hispanic_latino           String   @default("")
+  ethnicity                 String   @default("")
+  requires_sponsorship      String   @default("")
+  legally_authorized_us     String   @default("")
+  us_work_status            String   @default("")
+  update_headline           Boolean  @default(true)
+  use_generated_role_titles Boolean  @default(true)
+  template                  String   @default("classic")
+  save_in_folder            Boolean  @default(false)
+  auto_download             Boolean  @default(false)
+  download_jd_with_pdf      Boolean  @default(false)
+  use_company_name          Boolean  @default(true)
+  generate_cover_letter     Boolean  @default(false)
+  cover_letter_template     String   @default("classic")
+  education_json            String   @default("[]")
+  certifications_json       String   @default("[]")
+  created_at                DateTime @default(now())
+  updated_at                DateTime @updatedAt
 
-  user       User        @relation(fields: [user_id], references: [id], onDelete: Cascade)
-  creator    User?       @relation("ResumeProfileCreator", fields: [created_by_user_id], references: [id], onDelete: SetNull)
-  workspaces Workspace[]
+  workspace           Workspace            @relation(fields: [workspace_id], references: [id], onDelete: Cascade)
+  resumeConversations ResumeConversation[]
 
-  @@unique([user_id, name])
-  @@index([user_id])
-  @@index([created_by_user_id])
   @@map("resume_profiles")
 }
 
-// ---------------------------------------------------------------------------
-// WorkspacePermission — grants a non-owner view/edit access to a workspace
-// ---------------------------------------------------------------------------
-model WorkspacePermission {
-  id              String   @id @default(cuid())
-  workspace_id    String
-  user_id         String
-  permission_type String   @default("edit") // view | edit
-  created_at      DateTime @default(now())
-  updated_at      DateTime @updatedAt
+// Server-owned mapping to a compact OpenAI conversation used only for
+// application questions. The public id is this row's id, never the provider id.
+model ResumeConversation {
+  id                     String   @id @default(cuid())
+  openai_conversation_id String   @unique
+  user_id                String
+  workspace_id           String?
+  profile_id             String
+  created_at             DateTime @default(now())
+  updated_at             DateTime @updatedAt
 
-  workspace Workspace @relation(fields: [workspace_id], references: [id], onDelete: Cascade)
-  user      User      @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  user         User             @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  workspace    Workspace?       @relation(fields: [workspace_id], references: [id], onDelete: Cascade)
+  profile      ResumeProfile    @relation(fields: [profile_id], references: [id], onDelete: Cascade)
+  applications JobApplication[]
 
-  @@unique([workspace_id, user_id])
   @@index([user_id])
   @@index([workspace_id])
-  @@map("workspace_permissions")
+  @@index([profile_id])
+  @@map("resume_conversations")
 }
 
 // ---------------------------------------------------------------------------
@@ -140,30 +150,41 @@ model JobApplication {
   date   DateTime
   number Int
 
-  job_title           String?
-  company_name        String? // for enrichment and display
-  normalized_company_name String? // canonical form for company-name duplicate detection
-  url                 String
-  normalized_url      String  // canonical form — URL duplicate key
-  job_source          String  @default("Other")
+  job_title       String?
+  company_name    String? // for duplicate matching and display
+  url             String
+  normalized_url  String // canonical form — URL duplicate key
+  job_fingerprint String? // recent workspace duplicate signal: normalized company + title
+  job_source      String  @default("Other")
 
-  application_status String @default("Pending")     // Pending | Applied | Rejected | Duplicated
-  pipeline_status    String @default("Not Started") // admin-managed recruiting stage
+  application_status String    @default("Pending") // Pending | Applied | Rejected | Duplicated
+  pipeline_status    String    @default("Not Started") // admin-managed recruiting stage
+  interview_date     DateTime?
+  interview_note     String?
 
   note String?
 
-  paid    Boolean   @default(false)
+  paid Boolean @default(false)
 
-  resume_link String?
+  // Durable generation artifacts. The conversation is temporary and may be deleted by retention;
+  // the resume snapshot and JD remain so the exact files can be downloaded later.
+  conversation_id       String?
+  job_description       String?
+  generated_resume_json String?
+  resume_template       String?
+  resume_generated_at   DateTime?
+  cover_letter_text     String?
+  cover_letter_template String?
 
-  // Audit only. Deliberately NOT an input to payment — see Workspace.owner_user_id.
-  created_by_user_id String?
+  // Immutable payment subject: the bidder who created/performed this application.
+  created_by_user_id String
 
   created_at DateTime @default(now())
   updated_at DateTime @updatedAt
 
-  workspace Workspace @relation(fields: [workspace_id], references: [id], onDelete: Cascade)
-  createdByUser User? @relation("CreatedBy", fields: [created_by_user_id], references: [id], onDelete: SetNull)
+  workspace     Workspace           @relation(fields: [workspace_id], references: [id], onDelete: Cascade)
+  createdByUser User                @relation("CreatedBy", fields: [created_by_user_id], references: [id], onDelete: Restrict)
+  conversation  ResumeConversation? @relation(fields: [conversation_id], references: [id], onDelete: SetNull)
 
   // Guarantees the "number resets per date" invariant at the storage layer, and doubles as the
   // covering index for the default table sort (date desc, number desc).
@@ -172,13 +193,18 @@ model JobApplication {
   @@index([workspace_id, pipeline_status])
   @@index([workspace_id, job_source])
   @@index([workspace_id, paid])
+  // PostgreSQL enforces a partial unique index on (workspace_id, normalized_url) for Pending/Applied
+  // rows. Prisma schema syntax cannot represent partial indexes, so keep that invariant in SQL.
   @@index([workspace_id, normalized_url])
-  @@index([workspace_id, normalized_company_name])
-  @@index([normalized_url])
-  @@index([normalized_company_name])
-  @@index([url])
+  @@index([workspace_id, job_fingerprint, created_at])
   @@index([date])
+  @@index([interview_date])
   @@index([workspace_id, created_at])
+  @@index([created_by_user_id, created_at])
+  @@index([conversation_id])
+  // Migration 20260924030000 adds pg_trgm GIN indexes for job_title, company_name, url, and note.
+  @@index([application_status, paid, date, created_by_user_id, workspace_id], map: "job_applications_payment_lookup_idx")
+  @@index([workspace_id, date(sort: Desc), number(sort: Asc)], map: "job_applications_workspace_date_desc_number_asc_idx")
   @@map("job_applications")
 }
 
@@ -196,10 +222,23 @@ model PaymentReport {
   created_at    DateTime @default(now())
   updated_at    DateTime @updatedAt
 
-  bidder    User @relation("BidderPaymentReports", fields: [bidder_id], references: [id], onDelete: Restrict)
+  bidder    User  @relation("BidderPaymentReports", fields: [bidder_id], references: [id], onDelete: Restrict)
   processor User? @relation("ProcessedBy", fields: [processed_by], references: [id], onDelete: SetNull)
 
   @@index([bidder_id, start_date, end_date])
   @@index([processed_at])
   @@map("payment_reports")
+}
+
+model BannedUrlPattern {
+  id                 String   @id @default(cuid())
+  pattern            String   @unique
+  created_by_user_id String?
+  created_at         DateTime @default(now())
+  updated_at         DateTime @default(now()) @updatedAt
+
+  createdByUser User? @relation("BannedUrlPatternCreator", fields: [created_by_user_id], references: [id], onDelete: SetNull)
+
+  @@index([created_by_user_id])
+  @@map("banned_url_patterns")
 }
