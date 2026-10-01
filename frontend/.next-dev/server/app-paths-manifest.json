@@ -1,9 +1,0 @@
-{
-  "/api/[...path]/route": "app/api/[...path]/route.js",
-  "/login/page": "app/login/page.js",
-  "/(app)/workspaces/[id]/add/page": "app/(app)/workspaces/[id]/add/page.js",
-  "/(app)/workspaces/[id]/page": "app/(app)/workspaces/[id]/page.js",
-  "/(app)/workspaces/page": "app/(app)/workspaces/page.js",
-  "/(app)/account/page": "app/(app)/account/page.js",
-  "/(app)/admin/users/page": "app/(app)/admin/users/page.js"
-}
