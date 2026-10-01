@@ -46,14 +46,16 @@ describe('ApplicationsService generated-application duplicate-click protection',
       classifyBatch: jest.fn(),
       findRecentJobMatch: jest.fn().mockResolvedValue(null),
     };
+    const slackNotifications = { notifyApplicationCreated: jest.fn().mockResolvedValue(undefined) };
     const service = new ApplicationsService(
       prisma as any,
       access as any,
       numbering as any,
       duplicates as any,
       { matches: jest.fn().mockResolvedValue(false), matchMany: jest.fn() } as any,
+      slackNotifications as any,
     );
-    return { service, prisma, numbering, duplicates };
+    return { service, prisma, numbering, duplicates, slackNotifications };
   }
 
   it('treats an existing identical URL in the workspace as a successful retry', async () => {
@@ -176,7 +178,7 @@ describe('ApplicationsService generated-application duplicate-click protection',
   });
 
   it('creates a complete manual application with the selected status', async () => {
-    const { service, prisma, duplicates } = setup();
+    const { service, prisma, duplicates, slackNotifications } = setup();
     duplicates.classifyBatch.mockResolvedValue([{
       normalized_url: existing.normalized_url,
       is_duplicate: false,
@@ -197,6 +199,7 @@ describe('ApplicationsService generated-application duplicate-click protection',
         application_status: 'Applied',
       }),
     }));
+    expect(slackNotifications.notifyApplicationCreated).toHaveBeenCalledWith(user.id);
   });
 
   it('applies the status policy to manual creation', async () => {

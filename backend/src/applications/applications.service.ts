@@ -29,6 +29,7 @@ import {
   QueryApplicationsDto,
   UpdateApplicationDto, UpdatePipelineDto,
 } from './dto/application.dto';
+import { SlackNotificationService } from './slack-notification.service';
 
 const ROW_SELECT = {
   id: true, workspace_id: true, date: true, number: true, job_title: true, company_name: true,
@@ -48,6 +49,7 @@ export class ApplicationsService {
     private readonly numbering: NumberingService,
     private readonly duplicates: DuplicateService,
     private readonly bannedUrls: BannedUrlService,
+    private readonly slackNotifications: SlackNotificationService,
   ) {}
 
   // -------------------------------------------------------------------------
@@ -497,16 +499,20 @@ export class ApplicationsService {
         }),
       );
 
+    let application;
     try {
-      return await create(applicationStatus);
+      application = await create(applicationStatus);
     } catch (error) {
       if (isActiveUrlCollision(error) && ['Pending', 'Applied'].includes(applicationStatus)) {
         // Another backend committed this URL after classification. Preserve the attempted row as an
         // explicit duplicate; the database remains the final authority under cross-process races.
-        return create('Duplicated');
+        application = await create('Duplicated');
+      } else {
+        throw error;
       }
-      throw error;
     }
+    await this.slackNotifications.notifyApplicationCreated(user.id);
+    return application;
   }
 
   /** Idempotent compatibility save path for older resume clients. */
@@ -604,6 +610,7 @@ export class ApplicationsService {
         }),
       );
 
+      await this.slackNotifications.notifyApplicationCreated(user.id);
       return { success: true, already_added: false, application };
     } catch (error) {
       if (!isActiveUrlCollision(error)) throw error;
@@ -675,7 +682,7 @@ export class ApplicationsService {
       });
     }
     const date = toDayStart(new Date());
-    return this.numbering.withNextNumber(workspaceId, date, (number) =>
+    const application = await this.numbering.withNextNumber(workspaceId, date, (number) =>
       this.prisma.jobApplication.create({
         data: {
           workspace_id: workspaceId,
@@ -691,6 +698,8 @@ export class ApplicationsService {
         select: ROW_SELECT,
       }),
     );
+    await this.slackNotifications.notifyApplicationCreated(user.id);
+    return application;
   }
 
   /**
@@ -717,6 +726,10 @@ export class ApplicationsService {
           },
           { timeout: 120_000, maxWait: 15_000 },
         );
+        const creatorIds = [...new Set(rows.map((row) => row.created_by_user_id))];
+        await Promise.all(creatorIds.map((creatorId) => (
+          this.slackNotifications.notifyApplicationCreated(creatorId)
+        )));
         return inserted;
       } catch (err) {
         if (isActiveUrlCollision(err) && attempt < attempts) {

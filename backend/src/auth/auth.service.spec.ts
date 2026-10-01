@@ -2,6 +2,8 @@ import { UnauthorizedException } from '@nestjs/common';
 import { AuthService } from './auth.service';
 
 describe('AuthService', () => {
+  afterEach(() => jest.useRealTimers());
+
   it('blocks deactivated users before issuing a token', async () => {
     const prisma = {
       user: {
@@ -24,5 +26,85 @@ describe('AuthService', () => {
       service.login({ email: 'inactive@example.com', password: 'correct-password' }),
     ).rejects.toEqual(new UnauthorizedException('This account has been deactivated'));
     expect(jwt.signAsync).not.toHaveBeenCalled();
+  });
+
+  it('returns only safe Slack configuration for the authenticated admin', async () => {
+    const prisma = {
+      user: { findUnique: jest.fn().mockResolvedValue({
+        slack_webhook_url: 'https://hooks.slack.com/services/T/B/secret',
+        slack_user_id: 'U012ABCDEF',
+      }) },
+    };
+    const service = new AuthService(prisma as never, {} as never);
+
+    await expect(service.slackSettings('admin-1')).resolves.toEqual({
+      webhook_configured: true,
+      slack_user_id: 'U012ABCDEF',
+    });
+    expect(prisma.user.findUnique).toHaveBeenCalledWith({
+      where: { id: 'admin-1' },
+      select: { slack_webhook_url: true, slack_user_id: true },
+    });
+  });
+
+  it('stores Slack settings only on the authenticated admin and initializes today’s milestone', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-10-01T15:00:00.000Z'));
+    const prisma = {
+      user: {
+        findUnique: jest.fn().mockResolvedValue({
+          role: 'admin', slack_webhook_url: null, slack_user_id: null,
+        }),
+        findMany: jest.fn().mockResolvedValue([{ id: 'admin-1' }, { id: 'bidder-1' }]),
+        update: jest.fn().mockResolvedValue({
+          slack_webhook_url: 'https://hooks.slack.com/services/T/B/secret',
+          slack_user_id: 'U012ABCDEF',
+        }),
+      },
+      jobApplication: { count: jest.fn().mockResolvedValue(17) },
+    };
+    const service = new AuthService(prisma as never, {} as never);
+
+    await service.updateSlackSettings('admin-1', {
+      slack_webhook_url: 'https://hooks.slack.com/services/T/B/secret',
+      slack_user_id: 'U012ABCDEF',
+    });
+
+    expect(prisma.user.update).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: 'admin-1' },
+      data: expect.objectContaining({
+        slack_last_milestone: 10,
+        slack_milestone_day: new Date('2026-10-01T00:00:00.000Z'),
+      }),
+    }));
+  });
+
+  it('clears the authenticated admin’s webhook without exposing it', async () => {
+    const prisma = {
+      user: {
+        findUnique: jest.fn().mockResolvedValue({
+          role: 'admin',
+          slack_webhook_url: 'https://hooks.slack.com/services/T/B/secret',
+          slack_user_id: 'U012ABCDEF',
+        }),
+        update: jest.fn().mockResolvedValue({
+          slack_webhook_url: null,
+          slack_user_id: 'U012ABCDEF',
+        }),
+      },
+      jobApplication: { count: jest.fn() },
+    };
+    const service = new AuthService(prisma as never, {} as never);
+
+    await expect(service.updateSlackSettings('admin-1', {
+      slack_webhook_url: null,
+    })).resolves.toEqual({
+      webhook_configured: false,
+      slack_user_id: 'U012ABCDEF',
+    });
+    expect(prisma.user.update).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: 'admin-1' },
+      data: { slack_webhook_url: null },
+    }));
+    expect(prisma.jobApplication.count).not.toHaveBeenCalled();
   });
 });

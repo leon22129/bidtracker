@@ -107,6 +107,16 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
     }),
+  slackSettings: () => request<{ webhook_configured: boolean; slack_user_id: string | null }>(
+    '/auth/slack-settings',
+  ),
+  updateSlackSettings: (data: {
+    slack_webhook_url?: string | null;
+    slack_user_id?: string | null;
+  }) => request<{ webhook_configured: boolean; slack_user_id: string | null }>(
+    '/auth/slack-settings',
+    { method: 'PATCH', body: JSON.stringify(data) },
+  ),
 
   // ---- users (admin) ----
   listUsers: () => request<User[]>('/users'),

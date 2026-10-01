@@ -28,6 +28,10 @@ model User {
   created_at         DateTime @default(now())
   updated_at         DateTime @updatedAt
   created_by_user_id String?
+  slack_webhook_url  String?
+  slack_user_id      String?
+  slack_milestone_day DateTime?
+  slack_last_milestone Int    @default(0)
 
   ownedWorkspaces          Workspace[]          @relation("WorkspaceOwner")
   createdWorkspaces        Workspace[]          @relation("WorkspaceCreator")
@@ -203,6 +207,7 @@ model JobApplication {
   @@index([workspace_id, job_fingerprint, created_at])
   @@index([date])
   @@index([workspace_id, created_at])
+  @@index([created_by_user_id, created_at])
   @@index([conversation_id])
   @@index([application_status, paid, date, created_by_user_id, workspace_id], map: "job_applications_payment_lookup_idx")
   @@index([workspace_id, date(sort: Desc), number(sort: Asc)], map: "job_applications_workspace_date_desc_number_asc_idx")
