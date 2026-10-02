@@ -35,6 +35,7 @@ import {
   Pencil,
   RefreshCw,
   ClipboardCheck,
+  Eye,
   History,
   UserRound,
   MapPin,
@@ -947,25 +948,28 @@ export function ProfileWorkspace({
           }}
         />
 
-        <div className="flex items-center gap-3 flex-wrap">
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => void handleScanPage("page")}
-            disabled={isScanningPage || isGenerating}
-          >
-            <RefreshCw className={`h-4 w-4 mr-2 ${isScanningPage ? "animate-spin" : ""}`} />
-            {isScanningPage ? "Scanning Page..." : "Scan Current Page"}
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => void handleLoadLastApplication()}
-            disabled={!profile.workspaceId || isLoadingLastApplication || isGenerating}
-          >
-            <History className={`h-4 w-4 mr-2 ${isLoadingLastApplication ? "animate-spin" : ""}`} />
-            {isLoadingLastApplication ? "Loading..." : "Load Last Application"}
-          </Button>
+        <div className="space-y-2">
+          <p className="text-sm font-semibold text-foreground">Job page actions</p>
+          <div className="max-w-xl">
+            <Button
+              type="button"
+              onClick={() => void handleScanPage("page")}
+              disabled={isScanningPage || isGenerating}
+              className="group h-auto min-h-14 w-full justify-start whitespace-normal border border-blue-800 bg-blue-700 px-4 py-3 text-left text-white shadow-sm hover:bg-blue-800 hover:text-white focus-visible:border-blue-900 focus-visible:ring-blue-500/60 disabled:border-slate-300 disabled:bg-slate-200 disabled:text-slate-600 disabled:opacity-100 dark:border-blue-400 dark:bg-blue-700 dark:hover:bg-blue-600 dark:disabled:border-slate-700 dark:disabled:bg-slate-800 dark:disabled:text-slate-400"
+            >
+              <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-white/15">
+                <RefreshCw className={isScanningPage ? "animate-spin" : ""} />
+              </span>
+              <span className="min-w-0">
+                <span className="block font-semibold">
+                  {isScanningPage ? "Scanning Current Page..." : "Scan Current Page"}
+                </span>
+                <span className="block text-xs font-normal text-blue-100 group-disabled:text-current">
+                  Import the active job description
+                </span>
+              </span>
+            </Button>
+          </div>
           {pageScanMessage && <p className="text-sm text-muted-foreground">{pageScanMessage}</p>}
         </div>
 
@@ -976,23 +980,44 @@ export function ProfileWorkspace({
           </Alert>
         )}
 
-        <div className="flex gap-3 flex-wrap">
-          <Button disabled={isGenerating} onClick={() => void handleGenerate()}>
-            {isGenerating ? "Generating..." : "Generate Resume"}
-          </Button>
-          <Button
-          variant="outline"
-          onClick={() => setPreviewOpen(true)}
-          disabled={!resumeData}
-          >
-          Preview Resume
-          </Button>
-          {resumeData && (
-            <Button variant="secondary" onClick={() => setWorkflowTab("questions")}>
-              Continue to Application Questions
-              <MessagesSquare className="h-4 w-4" />
+        <div className="space-y-3">
+          <div className="flex gap-3 flex-wrap">
+            <Button disabled={isGenerating} onClick={() => void handleGenerate()}>
+              {isGenerating ? "Generating..." : "Generate Resume"}
             </Button>
-          )}
+            <Button
+              onClick={() => setPreviewOpen(true)}
+              disabled={!resumeData}
+              className="min-h-10 border border-violet-800 bg-violet-700 px-4 text-white shadow-sm hover:bg-violet-800 hover:text-white focus-visible:border-violet-900 focus-visible:ring-violet-500/60 disabled:border-slate-300 disabled:bg-slate-200 disabled:text-slate-600 disabled:opacity-100 dark:border-violet-400 dark:bg-violet-700 dark:hover:bg-violet-600 dark:disabled:border-slate-700 dark:disabled:bg-slate-800 dark:disabled:text-slate-400"
+            >
+              <Eye />
+              Preview Resume
+            </Button>
+            {resumeData && (
+              <Button variant="secondary" onClick={() => setWorkflowTab("questions")}>
+                Continue to Application Questions
+                <MessagesSquare className="h-4 w-4" />
+              </Button>
+            )}
+          </div>
+          <Button
+            type="button"
+            onClick={() => void handleLoadLastApplication()}
+            disabled={!profile.workspaceId || isLoadingLastApplication || isGenerating}
+            className="group h-auto min-h-14 w-full max-w-xl justify-start whitespace-normal border border-slate-950 bg-slate-900 px-4 py-3 text-left text-white shadow-sm hover:bg-slate-700 hover:text-white focus-visible:border-slate-950 focus-visible:ring-slate-500/60 disabled:border-slate-300 disabled:bg-slate-200 disabled:text-slate-600 disabled:opacity-100 dark:border-slate-100 dark:bg-slate-100 dark:text-slate-950 dark:hover:bg-white dark:hover:text-slate-950 dark:disabled:border-slate-700 dark:disabled:bg-slate-800 dark:disabled:text-slate-400"
+          >
+            <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-white/15 dark:bg-black/10">
+              <History className={isLoadingLastApplication ? "animate-spin" : ""} />
+            </span>
+            <span className="min-w-0">
+              <span className="block font-semibold">
+                {isLoadingLastApplication ? "Loading Last Application..." : "Load Last Application"}
+              </span>
+              <span className="block text-xs font-normal text-slate-200 group-disabled:text-current dark:text-slate-600 dark:group-disabled:text-current">
+                Restore its resume and saved answers
+              </span>
+            </span>
+          </Button>
         </div>
         </CardContent>
       </Card>
@@ -1041,18 +1066,19 @@ export function ProfileWorkspace({
           <div className="flex items-center gap-3 flex-wrap">
             <Button
               type="button"
-              variant="outline"
               onClick={() => void handleScanPage("questions")}
               disabled={isScanningPage || isGeneratingAnswers}
+              className="min-h-10 border border-blue-800 bg-blue-700 px-4 text-white shadow-sm hover:bg-blue-800 hover:text-white focus-visible:border-blue-900 focus-visible:ring-blue-500/60 disabled:border-slate-300 disabled:bg-slate-200 disabled:text-slate-600 disabled:opacity-100 dark:border-blue-400 dark:bg-blue-700 dark:hover:bg-blue-600 dark:disabled:border-slate-700 dark:disabled:bg-slate-800 dark:disabled:text-slate-400"
             >
-              <RefreshCw className={`h-4 w-4 mr-2 ${isScanningPage ? "animate-spin" : ""}`} />
+              <RefreshCw className={isScanningPage ? "animate-spin" : ""} />
               {isScanningPage ? "Scanning Questions..." : "Scan Questions"}
             </Button>
             <Button
-              variant="outline"
               onClick={() => void handleGenerateAnswers()}
               disabled={!resumeData || !conversationId || isGeneratingAnswers || isGenerating || isScanningPage}
+              className="min-h-10 border border-violet-800 bg-violet-700 px-4 text-white shadow-sm hover:bg-violet-800 hover:text-white focus-visible:border-violet-900 focus-visible:ring-violet-500/60 disabled:border-slate-300 disabled:bg-slate-200 disabled:text-slate-600 disabled:opacity-100 dark:border-violet-400 dark:bg-violet-700 dark:hover:bg-violet-600 dark:disabled:border-slate-700 dark:disabled:bg-slate-800 dark:disabled:text-slate-400"
             >
+              <MessagesSquare />
               {isGeneratingAnswers ? "Writing Answers..." : "Generate Answers"}
             </Button>
             <Button
