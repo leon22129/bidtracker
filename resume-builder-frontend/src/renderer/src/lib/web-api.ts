@@ -4,6 +4,8 @@ import type {
   CreateAiProfileInput,
   GenerateResumeInput,
   GenerateResumeResult,
+  SavedGeneratedApplication,
+  SavedConversationAnswers,
   UpdateAiProfileInput,
 } from "../../../shared/ai-profiles"
 import type { WebAuthApi, WebAuthStatus } from "../../../shared/auth"
@@ -142,7 +144,7 @@ const webAiProfiles: AiProfilesApi = {
             profile_id: input.profileId,
             job_description: input.jobDescription,
             kind: input.kind,
-            questions: input.questions,
+            ...(!applicationGeneration ? { questions: input.questions } : {}),
             resume: input.resume,
           }),
     })
@@ -179,6 +181,18 @@ const webAiProfiles: AiProfilesApi = {
     }
     if (!data?.tailored_resume) throw new Error("The AI provider returned an empty response.")
     return { tailored_resume: data.tailored_resume, full_name: data.full_name, conversationId: data.conversation_id }
+  },
+  async loadLastApplication(workspaceId: string): Promise<SavedGeneratedApplication> {
+    const response = await apiFetch(`/applications/latest-generated?workspace_id=${encodeURIComponent(workspaceId)}`)
+    const data = await response.json().catch(() => null) as (SavedGeneratedApplication & { message?: string }) | null
+    if (!response.ok || !data) throw new Error(data?.message || "Unable to load the last application.")
+    return data
+  },
+  async loadConversationAnswers(conversationId: string): Promise<SavedConversationAnswers> {
+    const response = await apiFetch(`/resume/answers/${encodeURIComponent(conversationId)}`)
+    const data = await response.json().catch(() => null) as (SavedConversationAnswers & { message?: string }) | null
+    if (!response.ok || !data) throw new Error(data?.message || "Unable to restore application answers.")
+    return data
   },
 }
 

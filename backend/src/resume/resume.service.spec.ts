@@ -191,6 +191,41 @@ describe('ApplicationGenerationService application metadata eligibility', () => 
     expect(openAi.mock.calls[0][0]).not.toContain(dto.job_description);
   });
 
+  it('restores the latest application questions and answers from conversation items', async () => {
+    const { service, prisma } = setup();
+    prisma.resumeConversation.findUnique.mockResolvedValue({
+      id: 'conversation-1',
+      user_id: user.id,
+      workspace_id: dto.workspace_id,
+      openai_conversation_id: 'conv_openai_1',
+    });
+    jest.spyOn(service as any, 'openAiRequest').mockResolvedValue({
+      data: [
+        {
+          role: 'assistant',
+          content: [{
+            type: 'output_text',
+            text: JSON.stringify({
+              answers: [{ question: 'Are you authorized?', answer: 'Yes' }],
+            }),
+          }],
+        },
+        {
+          role: 'user',
+          content: [{
+            type: 'input_text',
+            text: 'Application questions:\n1. Are you authorized?\n   Allowed answers: ["Yes","No"]\n\nReturn valid JSON only in this exact shape:',
+          }],
+        },
+      ],
+    });
+
+    await expect(service.getConversationAnswers(user, 'conversation-1')).resolves.toEqual({
+      questions: [{ question: 'Are you authorized?', options: ['Yes', 'No'] }],
+      answers: [{ question: 'Are you authorized?', answer: 'Yes' }],
+    });
+  });
+
   it('seeds answer conversations with real candidate profile values', async () => {
     const { service, prisma } = setup();
     (service as any).createAnswerConversation.mockRestore();

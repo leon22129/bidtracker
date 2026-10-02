@@ -31,6 +31,17 @@ const MODEL = process.env.OPENAI_MODEL || 'gpt-5.6-sol';
 type OpenAiError = { message?: string; type?: string; code?: string; param?: string };
 type OpenAiResponse = { id?: string; output_text?: string; output?: Array<{ type?: string; role?: string; content?: Array<{ type?: string; text?: string }> }>; usage?: OpenAiUsage; error?: OpenAiError };
 type OpenAiConversationResponse = { id?: string; error?: OpenAiError };
+type OpenAiConversationItem = {
+  id?: string;
+  created_at?: number;
+  type?: string;
+  role?: string;
+  content?: string | Array<{ type?: string; text?: string }>;
+};
+type OpenAiConversationItemsResponse = {
+  data?: OpenAiConversationItem[];
+  error?: OpenAiError;
+};
 type OpenAiOptions = {
   conversationId?: string;
   instructions?: string;
@@ -176,15 +187,6 @@ export class ApplicationGenerationService {
       jobDescription,
       resume,
     );
-    let answers: unknown = null;
-    if (dto.questions?.length) {
-      answers = await this.answerInConversation(
-        conversation.openai_conversation_id,
-        dto.questions,
-        profile,
-      );
-    }
-
     const coverLetterText = profile.generate_cover_letter && typeof resume.coverletter === 'string'
       ? resume.coverletter
       : undefined;
@@ -209,7 +211,6 @@ export class ApplicationGenerationService {
       eligible: true,
       application: saved.application,
       resume,
-      answers,
       conversation_id: conversation.id,
       full_name: profile.full_name,
     };
@@ -284,6 +285,48 @@ export class ApplicationGenerationService {
       data: { updated_at: new Date() },
     });
     return answers;
+  }
+
+  async getConversationAnswers(user: AuthUser, conversationId: string) {
+    const conversation = await this.prisma.resumeConversation.findUnique({
+      where: { id: conversationId },
+    });
+    if (!conversation || conversation.user_id !== user.id) {
+      throw new BadRequestException('Conversation not found');
+    }
+    if (conversation.workspace_id) {
+      await this.access.assertCanEdit(user, conversation.workspace_id);
+    }
+
+    const history = await this.openAiRequest(
+      `/conversations/${encodeURIComponent(conversation.openai_conversation_id)}/items?order=desc&limit=100`,
+      undefined,
+      'GET',
+      'conversation_history',
+    ) as OpenAiConversationItemsResponse;
+    const items = Array.isArray(history.data) ? history.data : [];
+
+    for (let answerIndex = 0; answerIndex < items.length; answerIndex++) {
+      const answerItem = items[answerIndex];
+      if (answerItem.role !== 'assistant') continue;
+      const answers = this.parseConversationAnswers(this.conversationItemText(answerItem));
+      if (!answers.length) continue;
+
+      const questionItem = items.slice(answerIndex + 1).find((item) => (
+        item.role === 'user' && this.conversationItemText(item).includes('Application questions:')
+      ));
+      const questions = questionItem
+        ? this.parseConversationQuestions(this.conversationItemText(questionItem))
+        : [];
+      return {
+        questions: questions.length
+          ? questions
+          : answers.map((item) => ({ question: item.question, options: [] })),
+        answers,
+      };
+    }
+
+    return { questions: [], answers: [] };
   }
 
   private async findAccessibleProfile(user: AuthUser, profileId: string) {
@@ -471,6 +514,58 @@ ${JSON.stringify(resume)}`;
         return { question: expected.question, answer: selected };
       }),
     };
+  }
+
+  private conversationItemText(item: OpenAiConversationItem): string {
+    if (typeof item.content === 'string') return item.content;
+    if (!Array.isArray(item.content)) return '';
+    return item.content
+      .filter((part) => part.type === 'input_text' || part.type === 'output_text')
+      .map((part) => part.text || '')
+      .join('');
+  }
+
+  private parseConversationAnswers(text: string): Array<{ question: string; answer: string }> {
+    try {
+      const parsed = this.parseJson(text);
+      if (!Array.isArray(parsed.answers)) return [];
+      return parsed.answers
+        .filter((item): item is Record<string, unknown> => Boolean(
+          item && typeof item === 'object' &&
+          typeof (item as Record<string, unknown>).question === 'string' &&
+          typeof (item as Record<string, unknown>).answer === 'string',
+        ))
+        .map((item) => ({
+          question: String(item.question),
+          answer: String(item.answer),
+        }));
+    } catch {
+      return [];
+    }
+  }
+
+  private parseConversationQuestions(text: string): ApplicationQuestionInput[] {
+    const section = text.match(/Application questions:\s*([\s\S]*?)\n\s*Return valid JSON/i)?.[1];
+    if (!section) return [];
+    return [...section.matchAll(/(?:^|\n)\d+\.\s+([\s\S]*?)(?=\n\d+\.\s+|$)/g)]
+      .map((match) => {
+        const block = match[1].trim();
+        const optionMatch = block.match(/\n\s*Allowed answers:\s*(\[[^\n]*\])\s*$/i);
+        let options: string[] = [];
+        if (optionMatch) {
+          try {
+            const parsed: unknown = JSON.parse(optionMatch[1]);
+            if (Array.isArray(parsed)) {
+              options = parsed.filter((value): value is string => typeof value === 'string');
+            }
+          } catch {
+            options = [];
+          }
+        }
+        const question = optionMatch ? block.slice(0, optionMatch.index).trim() : block;
+        return { question, options };
+      })
+      .filter((item) => item.question.length > 0);
   }
 
   private async openAi(prompt: string, options: OpenAiOptions = {}) {

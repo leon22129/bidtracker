@@ -37,7 +37,10 @@ describe('ApplicationsService generated-application duplicate-click protection',
       },
       resumeConversation: { findUnique: jest.fn() },
     };
-    const access = { assertCanEdit: jest.fn().mockResolvedValue(undefined) };
+    const access = {
+      assertCanEdit: jest.fn().mockResolvedValue(undefined),
+      assertCanView: jest.fn().mockResolvedValue(undefined),
+    };
     const numbering = {
       withNextNumber: jest.fn(async (_workspaceId, _date, create) => create(1)),
     };
@@ -173,6 +176,37 @@ describe('ApplicationsService generated-application duplicate-click protection',
         resume_generated_at: expect.any(Date),
         cover_letter_text: 'Dear Hiring Team,\n\nI am excited to apply.',
         cover_letter_template: 'minimal',
+      }),
+    }));
+  });
+
+  it('restores the signed-in user\'s latest generated application', async () => {
+    const { service, prisma } = setup();
+    prisma.jobApplication.findFirst.mockResolvedValue({
+      id: 'application-1',
+      url: dto.url,
+      job_title: dto.job_title,
+      company_name: dto.company_name,
+      generated_resume_json: JSON.stringify({ summary: 'Recovered resume', personalInfo: {} }),
+      resume_template: 'modern',
+      resume_generated_at: new Date('2026-10-01T12:00:00.000Z'),
+      job_description: 'Recovered job description',
+      conversation_id: 'conversation-1',
+      cover_letter_text: 'Recovered cover letter',
+      cover_letter_template: 'minimal',
+    });
+
+    await expect(service.getLatestGenerated(user, dto.workspace_id)).resolves.toMatchObject({
+      id: 'application-1',
+      url: dto.url,
+      resume: { summary: 'Recovered resume', personalInfo: {} },
+      conversation_id: 'conversation-1',
+    });
+    expect(prisma.jobApplication.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        workspace_id: dto.workspace_id,
+        created_by_user_id: user.id,
+        generated_resume_json: { not: null },
       }),
     }));
   });

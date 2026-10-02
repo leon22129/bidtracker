@@ -35,6 +35,13 @@ import {
   Pencil,
   RefreshCw,
   ClipboardCheck,
+  History,
+  UserRound,
+  MapPin,
+  Mail,
+  Phone,
+  Linkedin,
+  MessagesSquare,
 } from "lucide-react";
 import {
   type ResumeData,
@@ -92,6 +99,44 @@ function questionInputFromEditorLine(line: string, scannedQuestions: PageQuestio
     question: scanned?.question ?? line,
     options: scanned?.options ?? [],
   };
+}
+
+function comparableJobUrl(raw: string): string {
+  try {
+    const url = new URL(raw);
+    const ignored = new Set([
+      "source", "src", "ref", "referrer", "trackingid", "trk", "trkinfo", "position",
+      "pagenum", "origin", "originalsubdomain", "savedsearchid", "refid", "eburl", "from",
+      "lipi", "licu", "fbclid", "gclid", "mc_cid", "mc_eid", "ittk", "sid", "jobclick",
+      "campaignid", "clickid", "applyflowversion",
+    ]);
+    const params = new URLSearchParams();
+    [...url.searchParams.keys()].sort().forEach((key) => {
+      const lower = key.toLowerCase();
+      if (ignored.has(lower) || ["utm_", "gh_", "ref_"].some((prefix) => lower.startsWith(prefix))) return;
+      url.searchParams.getAll(key).forEach((value) => params.append(lower, value));
+    });
+    const host = url.hostname.toLowerCase().replace(/^www\./, "");
+    const path = url.pathname.replace(/\/{2,}/g, "/").replace(/\/+$/, "");
+    const query = params.toString();
+    return `${host}${path}${query ? `?${query}` : ""}`;
+  } catch {
+    return raw.trim().toLowerCase();
+  }
+}
+
+function formatAddressLines(personalInfo: PersonalInfo): string[] {
+  const cityStateZip = [
+    personalInfo.city?.trim(),
+    [personalInfo.state?.trim(), personalInfo.zip?.trim()].filter(Boolean).join(" "),
+  ].filter(Boolean).join(", ");
+  const structured = [
+    personalInfo.address1?.trim(),
+    cityStateZip,
+    personalInfo.county?.trim() ? `County: ${personalInfo.county.trim()}` : "",
+    personalInfo.country?.trim(),
+  ].filter(Boolean);
+  return structured.length ? structured : [personalInfo.location?.trim()].filter(Boolean);
 }
 
 export function ProfileWorkspace({
@@ -159,6 +204,7 @@ export function ProfileWorkspace({
   const [isScanningPage, setIsScanningPage] = useState(false);
   const [isFillingPage, setIsFillingPage] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
+  const [isLoadingLastApplication, setIsLoadingLastApplication] = useState(false);
   const [error, setError] = useState("");
   const [applicationError, setApplicationError] = useState("");
   const [pageScanMessage, setPageScanMessage] = useState("");
@@ -169,6 +215,8 @@ export function ProfileWorkspace({
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewEditable, setPreviewEditable] = useState(false);
   const [downloadLocationPromptOpen, setDownloadLocationPromptOpen] = useState(false);
+  const [workflowTab, setWorkflowTab] = useState<"resume" | "questions">("resume");
+  const addressLines = formatAddressLines(personalInfo);
 
   const syncFromProfile = (p: AiProfile) => {
     setSelectedTemplate(
@@ -220,6 +268,7 @@ export function ProfileWorkspace({
     setError("");
     setConversationId(null);
     setCompanyName("");
+    setApplicationAnswers([]);
     setIsGenerating(true);
 
     const shouldGenerateCoverLetter = profile.generateCoverLetter ?? generateCoverLetter;
@@ -228,15 +277,6 @@ export function ProfileWorkspace({
     const shouldUseCompanyName = profile.useCompanyName ?? useCompanyName;
     const shouldAutoDownload = profile.autoDownload ?? autoDownload;
     const shouldSaveInFolder = profile.saveInFolder ?? saveInFolder;
-    const initialQuestionLines = applicationQuestions
-      .split("\n")
-      .map((question) => question.trim())
-      .filter(Boolean)
-      .slice(0, 50);
-    const initialQuestions = initialQuestionLines.map((question) =>
-      questionInputFromEditorLine(question, scannedQuestions),
-    );
-
     try {
       const tabUrl = await getCurrentBrowserTabUrl();
       const data = await window.aiProfiles.generate({
@@ -244,7 +284,6 @@ export function ProfileWorkspace({
         workspaceId: profile.workspaceId,
         url: tabUrl,
         jobDescription,
-        questions: initialQuestions.length ? initialQuestions : undefined,
         kind: "resume",
       });
       if (data.duplicate) {
@@ -364,6 +403,83 @@ export function ProfileWorkspace({
       toast({ title: "Generation Failed", description: msg });
     } finally {
       setIsGenerating(false);
+    }
+  };
+
+  const handleLoadLastApplication = async () => {
+    if (!profile.workspaceId || isLoadingLastApplication) return;
+    setIsLoadingLastApplication(true);
+    setError("");
+    try {
+      const saved = await window.aiProfiles.loadLastApplication(profile.workspaceId);
+      const loadedResume = saved.resume as ResumeData;
+      if (!loadedResume || typeof loadedResume !== "object" || !loadedResume.personalInfo) {
+        throw new Error("The saved resume is not valid.");
+      }
+
+      setJobDescription(saved.job_description ?? "");
+      setResumeData(loadedResume);
+      setPersonalInfo(loadedResume.personalInfo);
+      setEducation(loadedResume.education ?? []);
+      setCertifications(loadedResume.certifications ?? []);
+      setCompanyName(saved.company_name ?? "");
+      setConversationId(saved.conversation_id);
+      setCoverLetterText(saved.cover_letter_text);
+      let restoredHistory = { questions: [] as ApplicationQuestionInput[], answers: [] as Array<{ question: string; answer: string }> };
+      let historyRestoreFailed = false;
+      if (saved.conversation_id) {
+        try {
+          restoredHistory = await window.aiProfiles.loadConversationAnswers(saved.conversation_id);
+        } catch {
+          historyRestoreFailed = true;
+        }
+      }
+      const restoredQuestions: PageQuestion[] = restoredHistory.questions.map((item) => ({
+        question: item.question,
+        options: item.options ?? [],
+        fieldType: item.options?.length ? "select" : "text",
+        sensitive: false,
+      }));
+      setApplicationQuestions(restoredQuestions.map(formatQuestionEditorLine).join("\n"));
+      setScannedQuestions(restoredQuestions);
+      setApplicationAnswers(restoredHistory.answers);
+      if (restoredHistory.answers.length) setWorkflowTab("questions");
+      setApplicationError("");
+      if (saved.template) setSelectedTemplate(saved.template as TemplateId);
+      if (saved.cover_letter_template) {
+        setCoverLetterTemplate(saved.cover_letter_template as CoverLetterTemplateId);
+      }
+      if (saved.cover_letter_text) setGenerateCoverLetter(true);
+
+      let mismatch = false;
+      try {
+        const currentUrl = await getCurrentBrowserTabUrl();
+        mismatch = comparableJobUrl(currentUrl) !== comparableJobUrl(saved.url);
+      } catch {
+        // Standalone mode has no active browser tab to compare.
+      }
+
+      const conversationNote = !saved.conversation_id
+        ? " The saved documents were restored, but the application-answer conversation has expired."
+        : historyRestoreFailed
+          ? " The documents were restored, but conversation history could not be retrieved."
+          : restoredHistory.answers.length
+            ? ` Restored ${restoredHistory.answers.length} application answer${restoredHistory.answers.length === 1 ? "" : "s"}; you can continue from the conversation.`
+            : " The conversation is available, but it does not contain application answers yet.";
+      const description = mismatch
+        ? `The active page URL does not match the restored application (${saved.company_name || saved.job_title || saved.url}).${conversationNote}`
+        : `Restored ${saved.company_name || saved.job_title || "your last generated application"}.${conversationNote}`;
+      toast({
+        title: mismatch ? "Application URL does not match" : "Last application loaded",
+        description,
+        variant: mismatch ? "destructive" : "default",
+      });
+    } catch (err) {
+      const message = getFriendlyErrorMessage(err, "Unable to load the last application.");
+      setError(message);
+      toast({ title: "Could Not Load Last Application", description: message, variant: "destructive" });
+    } finally {
+      setIsLoadingLastApplication(false);
     }
   };
 
@@ -512,7 +628,10 @@ export function ProfileWorkspace({
       const dd = String(now.getDate()).padStart(2, "0");
       const yyyy = String(now.getFullYear());
       const effectiveGenerateCoverLetter =
-        overrideGenerateCoverLetter ?? (profile.generateCoverLetter ?? generateCoverLetter);
+        overrideGenerateCoverLetter ?? (
+          Boolean(overrideCoverLetterText ?? coverLetterText) ||
+          (profile.generateCoverLetter ?? generateCoverLetter)
+        );
       const effectiveCoverLetterTemplate =
         overrideCoverLetterTemplate ??
         ((profile.coverLetterTemplate as CoverLetterTemplateId | undefined) ?? coverLetterTemplate);
@@ -647,12 +766,122 @@ export function ProfileWorkspace({
       <div className="grid items-start gap-6">
       <div className="order-1 min-w-0">
       <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="flex items-center gap-2">
+            <UserRound className="h-5 w-5" />
+            Personal Information
+          </CardTitle>
+          <CardDescription>
+            The contact details used for this profile's resume and application autofill.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
+            <div className="min-w-0 rounded-md border bg-muted/30 p-3">
+              <div className="mb-1 flex items-center gap-2 text-xs font-medium text-muted-foreground">
+                <UserRound className="h-3.5 w-3.5" /> Full name
+              </div>
+              <div className="truncate text-sm font-medium" title={personalInfo.fullName || undefined}>
+                {personalInfo.fullName || "Not provided"}
+              </div>
+            </div>
+            <div className="min-w-0 rounded-md border bg-muted/30 p-3 sm:col-span-2">
+              <div className="mb-1 flex items-center gap-2 text-xs font-medium text-muted-foreground">
+                <MapPin className="h-3.5 w-3.5" /> Full address
+              </div>
+              {addressLines.length ? (
+                <div className="text-sm font-medium" title={addressLines.join(", ")}>
+                  {addressLines.map((line) => <div key={line} className="truncate">{line}</div>)}
+                </div>
+              ) : <div className="text-sm font-medium">Not provided</div>}
+            </div>
+            <div className="min-w-0 rounded-md border bg-muted/30 p-3">
+              <div className="mb-1 flex items-center gap-2 text-xs font-medium text-muted-foreground">
+                <Mail className="h-3.5 w-3.5" /> Email
+              </div>
+              {personalInfo.email ? (
+                <a className="block truncate text-sm font-medium text-primary hover:underline" href={`mailto:${personalInfo.email}`} title={personalInfo.email}>
+                  {personalInfo.email}
+                </a>
+              ) : <div className="text-sm font-medium">Not provided</div>}
+            </div>
+            <div className="min-w-0 rounded-md border bg-muted/30 p-3">
+              <div className="mb-1 flex items-center gap-2 text-xs font-medium text-muted-foreground">
+                <Phone className="h-3.5 w-3.5" /> Phone
+              </div>
+              {personalInfo.phone ? (
+                <a className="block truncate text-sm font-medium text-primary hover:underline" href={`tel:${personalInfo.phone}`} title={personalInfo.phone}>
+                  {personalInfo.phone}
+                </a>
+              ) : <div className="text-sm font-medium">Not provided</div>}
+            </div>
+            <div className="min-w-0 rounded-md border bg-muted/30 p-3">
+              <div className="mb-1 flex items-center gap-2 text-xs font-medium text-muted-foreground">
+                <Linkedin className="h-3.5 w-3.5" /> LinkedIn
+              </div>
+              {personalInfo.linkedin ? (
+                <a
+                  className="block truncate text-sm font-medium text-primary hover:underline"
+                  href={/^https?:\/\//i.test(personalInfo.linkedin) ? personalInfo.linkedin : `https://${personalInfo.linkedin}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  title={personalInfo.linkedin}
+                >
+                  {personalInfo.linkedin}
+                </a>
+              ) : <div className="text-sm font-medium">Not provided</div>}
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+      </div>
+
+      <Tabs
+        value={workflowTab}
+        onValueChange={(value) => setWorkflowTab(value as "resume" | "questions")}
+        className="order-2 min-w-0 gap-4"
+      >
+        <TabsList className="grid h-auto w-full grid-cols-2 gap-1 rounded-xl p-1.5">
+          <TabsTrigger
+            value="resume"
+            className="h-auto min-w-0 flex-col items-start gap-1 whitespace-normal rounded-lg px-4 py-3 text-left"
+          >
+            <span className="flex items-center gap-2 font-semibold">
+              <span className="flex h-6 w-6 items-center justify-center rounded-full bg-primary text-xs text-primary-foreground">
+                {resumeData ? <Check className="h-3.5 w-3.5" /> : "1"}
+              </span>
+              <Briefcase className="h-4 w-4" />
+              Resume Generation
+            </span>
+            <span className="hidden pl-8 text-xs font-normal text-muted-foreground sm:block">
+              Scan the job, generate files, and review the result
+            </span>
+          </TabsTrigger>
+          <TabsTrigger
+            value="questions"
+            className="h-auto min-w-0 flex-col items-start gap-1 whitespace-normal rounded-lg px-4 py-3 text-left"
+          >
+            <span className="flex items-center gap-2 font-semibold">
+              <span className="flex h-6 w-6 items-center justify-center rounded-full bg-primary text-xs text-primary-foreground">
+                {applicationAnswers.length ? <Check className="h-3.5 w-3.5" /> : "2"}
+              </span>
+              <MessagesSquare className="h-4 w-4" />
+              Application Questions
+            </span>
+            <span className="hidden pl-8 text-xs font-normal text-muted-foreground sm:block">
+              Scan questions, write answers, and fill the application
+            </span>
+          </TabsTrigger>
+        </TabsList>
+
+      <TabsContent value="resume" className="mt-0">
+      <Card>
         <CardHeader>
           <div className="flex items-start justify-between gap-4">
             <div className="min-w-0">
               <CardTitle className="flex items-center gap-2">
                 <Briefcase className="h-5 w-5" />
-                Job Description
+                Job Description & Resume
               </CardTitle>
               <CardDescription className="mt-2">
                 Scanned from the active job page when possible. You can always edit or paste it manually.
@@ -719,6 +948,15 @@ export function ProfileWorkspace({
             <RefreshCw className={`h-4 w-4 mr-2 ${isScanningPage ? "animate-spin" : ""}`} />
             {isScanningPage ? "Scanning Page..." : "Scan Current Page"}
           </Button>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => void handleLoadLastApplication()}
+            disabled={!profile.workspaceId || isLoadingLastApplication || isGenerating}
+          >
+            <History className={`h-4 w-4 mr-2 ${isLoadingLastApplication ? "animate-spin" : ""}`} />
+            {isLoadingLastApplication ? "Loading..." : "Load Last Application"}
+          </Button>
           {pageScanMessage && <p className="text-sm text-muted-foreground">{pageScanMessage}</p>}
         </div>
 
@@ -740,12 +978,18 @@ export function ProfileWorkspace({
           >
           Preview Resume
           </Button>
+          {resumeData && (
+            <Button variant="secondary" onClick={() => setWorkflowTab("questions")}>
+              Continue to Application Questions
+              <MessagesSquare className="h-4 w-4" />
+            </Button>
+          )}
         </div>
         </CardContent>
       </Card>
-      </div>
+      </TabsContent>
 
-      <div className="order-2 min-w-0">
+      <TabsContent value="questions" className="mt-0">
       <Card>
         <CardHeader>
           <CardTitle>Application Questions</CardTitle>
@@ -754,6 +998,22 @@ export function ProfileWorkspace({
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
+          {!resumeData && (
+            <Alert>
+              <AlertCircle className="h-4 w-4" />
+              <AlertDescription>
+                You can scan questions now. Generate or load a resume in Step 1 before asking AI to write answers.
+              </AlertDescription>
+            </Alert>
+          )}
+          {resumeData && !conversationId && (
+            <Alert>
+              <AlertCircle className="h-4 w-4" />
+              <AlertDescription>
+                The resume is available, but its answer conversation has expired. Generate a new resume to write new answers.
+              </AlertDescription>
+            </Alert>
+          )}
           <Textarea
             placeholder="Why are you interested in this role?\nDescribe a relevant project or achievement."
             value={applicationQuestions}
@@ -815,7 +1075,8 @@ export function ProfileWorkspace({
           )}
         </CardContent>
       </Card>
-      </div>
+      </TabsContent>
+      </Tabs>
       </div>
       <FunnyLoadingBar isLoading={isGenerating || isGeneratingAnswers} profileName={tabLabel || profile.name || undefined} />
       </div>

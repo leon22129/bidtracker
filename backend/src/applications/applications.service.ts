@@ -177,6 +177,56 @@ export class ApplicationsService {
     }
   }
 
+  /** Restores the most recent generation owned by the signed-in user in this workspace. */
+  async getLatestGenerated(user: AuthUser, workspaceId: string) {
+    if (!workspaceId?.trim()) throw new BadRequestException('workspace_id is required');
+    await this.access.assertCanView(user, workspaceId);
+
+    const row = await this.prisma.jobApplication.findFirst({
+      where: {
+        workspace_id: workspaceId,
+        created_by_user_id: user.id,
+        generated_resume_json: { not: null },
+      },
+      select: {
+        id: true,
+        url: true,
+        job_title: true,
+        company_name: true,
+        generated_resume_json: true,
+        resume_template: true,
+        resume_generated_at: true,
+        job_description: true,
+        conversation_id: true,
+        cover_letter_text: true,
+        cover_letter_template: true,
+      },
+      orderBy: [
+        { resume_generated_at: 'desc' },
+        { created_at: 'desc' },
+      ],
+    });
+    if (!row) throw new NotFoundException('No generated application found');
+
+    try {
+      return {
+        id: row.id,
+        url: row.url,
+        job_title: row.job_title,
+        company_name: row.company_name,
+        resume: JSON.parse(row.generated_resume_json!),
+        template: row.resume_template || 'classic',
+        generated_at: row.resume_generated_at,
+        job_description: row.job_description,
+        conversation_id: row.conversation_id,
+        cover_letter_text: row.cover_letter_text,
+        cover_letter_template: row.cover_letter_template || 'classic',
+      };
+    } catch {
+      throw new BadRequestException('The saved resume is corrupted');
+    }
+  }
+
   // -------------------------------------------------------------------------
   // Write — single row
   // -------------------------------------------------------------------------
