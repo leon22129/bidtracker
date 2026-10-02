@@ -29,7 +29,10 @@ describe('ApplicationsService generated-application duplicate-click protection',
 
   function setup() {
     const prisma = {
+      $transaction: jest.fn(async (operations) => Promise.all(operations)),
       jobApplication: {
+        count: jest.fn(),
+        findMany: jest.fn(),
         findUnique: jest.fn(),
         findFirst: jest.fn(),
         create: jest.fn(),
@@ -60,6 +63,55 @@ describe('ApplicationsService generated-application duplicate-click protection',
     );
     return { service, prisma, numbering, duplicates, slackNotifications };
   }
+
+  it('uses a forward cursor without recounting the result set', async () => {
+    const { service, prisma } = setup();
+    prisma.jobApplication.findMany.mockResolvedValue([existing]);
+
+    await expect(service.findAll(user, {
+      workspace_id: dto.workspace_id,
+      page_size: 200,
+      cursor_after: 'previous-row',
+      include_total: false,
+      sort_by: 'job_title',
+      sort_dir: 'asc',
+    })).resolves.toMatchObject({
+      total: null,
+      start_cursor: existing.id,
+      end_cursor: existing.id,
+    });
+
+    expect(prisma.jobApplication.count).not.toHaveBeenCalled();
+    expect(prisma.jobApplication.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      cursor: { id: 'previous-row' },
+      skip: 1,
+      take: 200,
+      orderBy: [
+        { job_title: 'asc' },
+        { date: 'asc' },
+        { number: 'asc' },
+        { id: 'asc' },
+      ],
+    }));
+  });
+
+  it('uses a negative take for backward cursor pagination', async () => {
+    const { service, prisma } = setup();
+    prisma.jobApplication.findMany.mockResolvedValue([existing]);
+
+    await service.findAll(user, {
+      workspace_id: dto.workspace_id,
+      page_size: 200,
+      cursor_before: 'next-row',
+      include_total: false,
+    });
+
+    expect(prisma.jobApplication.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      cursor: { id: 'next-row' },
+      skip: 1,
+      take: -200,
+    }));
+  });
 
   it('treats an existing identical URL in the workspace as a successful retry', async () => {
     const { service, prisma, numbering, duplicates } = setup();
@@ -194,6 +246,14 @@ describe('ApplicationsService generated-application duplicate-click protection',
       conversation_id: 'conversation-1',
       cover_letter_text: 'Recovered cover letter',
       cover_letter_template: 'minimal',
+      application_questions_json: JSON.stringify([{
+        question: 'Why this role?',
+        options: [],
+      }]),
+      application_answers_json: JSON.stringify([{
+        question: 'Why this role?',
+        answer: 'It matches my experience.',
+      }]),
     });
 
     await expect(service.getLatestGenerated(user, dto.workspace_id)).resolves.toMatchObject({
@@ -201,6 +261,8 @@ describe('ApplicationsService generated-application duplicate-click protection',
       url: dto.url,
       resume: { summary: 'Recovered resume', personalInfo: {} },
       conversation_id: 'conversation-1',
+      questions: [{ question: 'Why this role?', options: [] }],
+      answers: [{ question: 'Why this role?', answer: 'It matches my experience.' }],
     });
     expect(prisma.jobApplication.findFirst).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({

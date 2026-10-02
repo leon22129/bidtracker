@@ -199,6 +199,7 @@ export function ProfileWorkspace({
   const [applicationQuestions, setApplicationQuestions] = useState("");
   const [scannedQuestions, setScannedQuestions] = useState<PageQuestion[]>([]);
   const [applicationAnswers, setApplicationAnswers] = useState<Array<{ question: string; answer: string }>>([]);
+  const [answersReadOnly, setAnswersReadOnly] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isGeneratingAnswers, setIsGeneratingAnswers] = useState(false);
   const [isScanningPage, setIsScanningPage] = useState(false);
@@ -269,6 +270,7 @@ export function ProfileWorkspace({
     setConversationId(null);
     setCompanyName("");
     setApplicationAnswers([]);
+    setAnswersReadOnly(false);
     setIsGenerating(true);
 
     const shouldGenerateCoverLetter = profile.generateCoverLetter ?? generateCoverLetter;
@@ -379,6 +381,7 @@ export function ProfileWorkspace({
       }
       setConversationId(data.conversationId);
       setApplicationAnswers(data.answers ?? []);
+      setAnswersReadOnly(false);
 
       if (shouldAutoDownload) {
         await handleDownloadPDF(
@@ -425,9 +428,12 @@ export function ProfileWorkspace({
       setCompanyName(saved.company_name ?? "");
       setConversationId(saved.conversation_id);
       setCoverLetterText(saved.cover_letter_text);
-      let restoredHistory = { questions: [] as ApplicationQuestionInput[], answers: [] as Array<{ question: string; answer: string }> };
+      let restoredHistory = {
+        questions: saved.questions ?? [],
+        answers: saved.answers ?? [],
+      };
       let historyRestoreFailed = false;
-      if (saved.conversation_id) {
+      if ((!saved.questions || !saved.answers) && saved.conversation_id) {
         try {
           restoredHistory = await window.aiProfiles.loadConversationAnswers(saved.conversation_id);
         } catch {
@@ -443,6 +449,7 @@ export function ProfileWorkspace({
       setApplicationQuestions(restoredQuestions.map(formatQuestionEditorLine).join("\n"));
       setScannedQuestions(restoredQuestions);
       setApplicationAnswers(restoredHistory.answers);
+      setAnswersReadOnly(true);
       if (restoredHistory.answers.length) setWorkflowTab("questions");
       setApplicationError("");
       if (saved.template) setSelectedTemplate(saved.template as TemplateId);
@@ -459,13 +466,13 @@ export function ProfileWorkspace({
         // Standalone mode has no active browser tab to compare.
       }
 
-      const conversationNote = !saved.conversation_id
-        ? " The saved documents were restored, but the application-answer conversation has expired."
-        : historyRestoreFailed
+      const conversationNote = restoredHistory.answers.length
+        ? ` Restored ${restoredHistory.answers.length} saved application answer${restoredHistory.answers.length === 1 ? "" : "s"}.`
+        : !saved.conversation_id
+          ? " The saved documents were restored, but no application answers were saved."
+          : historyRestoreFailed
           ? " The documents were restored, but conversation history could not be retrieved."
-          : restoredHistory.answers.length
-            ? ` Restored ${restoredHistory.answers.length} application answer${restoredHistory.answers.length === 1 ? "" : "s"}; you can continue from the conversation.`
-            : " The conversation is available, but it does not contain application answers yet.";
+          : " The conversation is available, but it does not contain application answers yet.";
       const description = mismatch
         ? `The active page URL does not match the restored application (${saved.company_name || saved.job_title || saved.url}).${conversationNote}`
         : `Restored ${saved.company_name || saved.job_title || "your last generated application"}.${conversationNote}`;
@@ -509,6 +516,7 @@ export function ProfileWorkspace({
       setApplicationQuestions(safeQuestions.map(formatQuestionEditorLine).join("\n"));
       setScannedQuestions(safeQuestions);
       setApplicationAnswers([]);
+      setAnswersReadOnly(false);
       setApplicationError("");
       setPageFillMessage("");
 
@@ -595,6 +603,7 @@ export function ProfileWorkspace({
         throw new Error("The AI returned an incomplete set of application answers.");
       }
       setApplicationAnswers(answers);
+      setAnswersReadOnly(false);
     } catch (err) {
       const msg = getFriendlyErrorMessage(err, "Failed to generate application answers.");
       setApplicationError(msg);
@@ -1064,7 +1073,8 @@ export function ProfileWorkspace({
                   <div className="font-medium">{item.question}</div>
                   <Textarea
                     value={item.answer}
-                    className="min-h-28"
+                    className={`min-h-28 ${answersReadOnly ? "bg-muted" : ""}`}
+                    readOnly={answersReadOnly}
                     onChange={(event) => setApplicationAnswers((current) => current.map((answer, answerIndex) =>
                       answerIndex === index ? { ...answer, answer: event.target.value } : answer,
                     ))}

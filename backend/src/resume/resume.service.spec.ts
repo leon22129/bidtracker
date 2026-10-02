@@ -29,6 +29,7 @@ describe('ApplicationGenerationService application metadata eligibility', () => 
 
   function setup() {
     const prisma = {
+      $transaction: jest.fn(async (operations) => Promise.all(operations)),
       workspace: { findUnique: jest.fn().mockResolvedValue({
         id: dto.workspace_id,
         owner_user_id: user.id,
@@ -43,7 +44,9 @@ describe('ApplicationGenerationService application metadata eligibility', () => 
       },
       jobApplication: {
         findUnique: jest.fn(),
+        findFirst: jest.fn(),
         update: jest.fn().mockResolvedValue({}),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
     };
     const access = { assertCanEdit: jest.fn().mockResolvedValue(undefined) };
@@ -189,6 +192,43 @@ describe('ApplicationGenerationService application metadata eligibility', () => 
       expect.objectContaining({ conversationId: 'conv_openai_1' }),
     );
     expect(openAi.mock.calls[0][0]).not.toContain(dto.job_description);
+    expect(prisma.jobApplication.updateMany).toHaveBeenCalledWith({
+      where: { conversation_id: 'conversation-1' },
+      data: {
+        application_questions_json: JSON.stringify([{ question: 'Why this role?', options: [] }]),
+        application_answers_json: JSON.stringify([{
+          question: 'Why this role?',
+          answer: 'It aligns with my experience.',
+        }]),
+      },
+    });
+  });
+
+  it('restores saved application answers without calling the provider', async () => {
+    const { service, prisma } = setup();
+    prisma.resumeConversation.findUnique.mockResolvedValue({
+      id: 'conversation-1',
+      user_id: user.id,
+      workspace_id: dto.workspace_id,
+      openai_conversation_id: 'conv_openai_1',
+    });
+    prisma.jobApplication.findFirst.mockResolvedValue({
+      application_questions_json: JSON.stringify([{
+        question: 'Are you authorized?',
+        options: ['Yes', 'No'],
+      }]),
+      application_answers_json: JSON.stringify([{
+        question: 'Are you authorized?',
+        answer: 'Yes',
+      }]),
+    });
+    const provider = jest.spyOn(service as any, 'openAiRequest');
+
+    await expect(service.getConversationAnswers(user, 'conversation-1')).resolves.toEqual({
+      questions: [{ question: 'Are you authorized?', options: ['Yes', 'No'] }],
+      answers: [{ question: 'Are you authorized?', answer: 'Yes' }],
+    });
+    expect(provider).not.toHaveBeenCalled();
   });
 
   it('restores the latest application questions and answers from conversation items', async () => {
@@ -224,6 +264,7 @@ describe('ApplicationGenerationService application metadata eligibility', () => 
       questions: [{ question: 'Are you authorized?', options: ['Yes', 'No'] }],
       answers: [{ question: 'Are you authorized?', answer: 'Yes' }],
     });
+    expect(prisma.jobApplication.updateMany).toHaveBeenCalled();
   });
 
   it('seeds answer conversations with real candidate profile values', async () => {

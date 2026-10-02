@@ -105,6 +105,8 @@ export type SavedGeneratedApplication = {
   conversation_id: string | null
   cover_letter_text: string | null
   cover_letter_template: string
+  questions: ApplicationQuestionInput[] | null
+  answers: Array<{ question: string; answer: string }> | null
 }
 
 export type SavedConversationAnswers = {

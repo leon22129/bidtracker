@@ -150,6 +150,7 @@ model ResumeConversation {
   @@index([user_id])
   @@index([workspace_id])
   @@index([profile_id])
+  @@index([updated_at])
   @@map("resume_conversations")
 }
 
@@ -185,6 +186,8 @@ model JobApplication {
   resume_generated_at   DateTime?
   cover_letter_text     String?
   cover_letter_template String?
+  application_questions_json String?
+  application_answers_json   String?
 
   // Immutable payment subject: the bidder who created/performed this application.
   created_by_user_id String
@@ -197,19 +200,23 @@ model JobApplication {
   conversation  ResumeConversation? @relation(fields: [conversation_id], references: [id], onDelete: SetNull)
 
   // Guarantees the "number resets per date" invariant at the storage layer, and doubles as the
-  // covering index for the default table sort (date desc, number desc).
+  // covering index for the default table sort (date desc, number asc).
   @@unique([workspace_id, date, number])
-  @@index([workspace_id, application_status])
-  @@index([workspace_id, pipeline_status])
-  @@index([workspace_id, job_source])
-  @@index([workspace_id, paid])
+  @@index([workspace_id, application_status, date, number, id], map: "job_applications_sort_application_status_idx")
+  @@index([workspace_id, pipeline_status, date, number, id], map: "job_applications_sort_pipeline_status_idx")
+  @@index([workspace_id, job_source, date, number, id], map: "job_applications_sort_job_source_idx")
+  @@index([workspace_id, paid, date, number, id], map: "job_applications_sort_paid_idx")
+  @@index([workspace_id, number, date, id], map: "job_applications_sort_number_idx")
+  @@index([workspace_id, job_title, date, number, id], map: "job_applications_sort_job_title_idx")
+  @@index([workspace_id, company_name, date, number, id], map: "job_applications_sort_company_name_idx")
   @@index([workspace_id, normalized_url])
   @@index([workspace_id, job_fingerprint, created_at])
   @@index([date])
-  @@index([workspace_id, created_at])
+  @@index([workspace_id, created_at, date, number, id], map: "job_applications_sort_created_at_idx")
   @@index([created_by_user_id, created_at])
   @@index([conversation_id])
-  @@index([application_status, paid, date, created_by_user_id, workspace_id], map: "job_applications_payment_lookup_idx")
+  // Payment and latest-generated lookups use smaller partial indexes defined in SQL.
+  // Prisma cannot represent partial indexes in schema syntax.
   @@index([workspace_id, date(sort: Desc), number(sort: Asc)], map: "job_applications_workspace_date_desc_number_asc_idx")
   @@map("job_applications")
 }
@@ -233,6 +240,7 @@ model PaymentReport {
 
   @@index([bidder_id, start_date, end_date])
   @@index([processed_at])
+  @@index([processed_by, processed_at(sort: Desc)])
   @@map("payment_reports")
 }
 

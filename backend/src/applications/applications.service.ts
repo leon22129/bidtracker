@@ -30,6 +30,7 @@ import {
   UpdateApplicationDto, UpdatePipelineDto,
 } from './dto/application.dto';
 import { SlackNotificationService } from './slack-notification.service';
+import { parseApplicationHistory } from '../common/utils/application-history.util';
 
 const ROW_SELECT = {
   id: true, workspace_id: true, date: true, number: true, job_title: true, company_name: true,
@@ -57,36 +58,50 @@ export class ApplicationsService {
   // -------------------------------------------------------------------------
 
   /**
-   * Server-side paginated / filtered / sorted list.
-   *
-   * Offset pagination (not cursor) because the virtualised grid needs *random access* — the scrollbar
-   * can jump straight to row 43,000, which a cursor cannot express. `page_size` is capped at 500 so a
-   * single request stays bounded regardless of what the client asks for.
+   * Cursor pagination serves adjacent virtual-grid pages without scanning skipped rows. Page/offset
+   * remains a bounded fallback when the scrollbar jumps to a page whose neighbouring cursor is unknown.
    */
   async findAll(user: AuthUser, query: QueryApplicationsDto) {
     await this.access.assertCanView(user, query.workspace_id);
+    if (query.cursor_after && query.cursor_before) {
+      throw new BadRequestException('Use either cursor_after or cursor_before, not both');
+    }
 
     const where = this.buildWhere(query);
     const page = Math.max(1, query.page ?? 1);
     const pageSize = Math.min(query.page_size ?? DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE);
-
-    const [total, items] = await this.prisma.$transaction([
-      this.prisma.jobApplication.count({ where }),
-      this.prisma.jobApplication.findMany({
-        where,
-        select: ROW_SELECT,
-        orderBy: this.buildOrderBy(query),
-        skip: (page - 1) * pageSize,
-        take: pageSize,
-      }),
-    ]);
+    const cursor = query.cursor_after ?? query.cursor_before;
+    const itemsQuery = this.prisma.jobApplication.findMany({
+      where,
+      select: ROW_SELECT,
+      orderBy: this.buildOrderBy(query),
+      ...(cursor
+        ? {
+            cursor: { id: cursor },
+            skip: 1,
+            take: query.cursor_before ? -pageSize : pageSize,
+          }
+        : {
+            skip: (page - 1) * pageSize,
+            take: pageSize,
+          }),
+    });
+    const includeTotal = query.include_total !== false;
+    const [total, items] = includeTotal
+      ? await this.prisma.$transaction([
+          this.prisma.jobApplication.count({ where }),
+          itemsQuery,
+        ])
+      : [null, await itemsQuery] as const;
 
     return {
       items,
       total,
       page,
       page_size: pageSize,
-      total_pages: Math.ceil(total / pageSize) || 1,
+      total_pages: total === null ? null : Math.ceil(total / pageSize) || 1,
+      start_cursor: items[0]?.id ?? null,
+      end_cursor: items[items.length - 1]?.id ?? null,
     };
   }
 
@@ -154,12 +169,18 @@ export class ApplicationsService {
         conversation_id: true,
         cover_letter_text: true,
         cover_letter_template: true,
+        application_questions_json: true,
+        application_answers_json: true,
       },
     });
     if (!row) throw new NotFoundException('Application not found');
     if (!row.generated_resume_json) throw new NotFoundException('No saved resume for this application');
 
     try {
+      const history = parseApplicationHistory(
+        row.application_questions_json,
+        row.application_answers_json,
+      );
       return {
         id: row.id,
         job_title: row.job_title,
@@ -171,6 +192,8 @@ export class ApplicationsService {
         cover_letter_text: row.cover_letter_text,
         cover_letter_template: row.cover_letter_template || 'classic',
         conversation_available: Boolean(row.conversation_id),
+        questions: history?.questions ?? [],
+        answers: history?.answers ?? [],
       };
     } catch {
       throw new BadRequestException('The saved resume is corrupted');
@@ -200,6 +223,8 @@ export class ApplicationsService {
         conversation_id: true,
         cover_letter_text: true,
         cover_letter_template: true,
+        application_questions_json: true,
+        application_answers_json: true,
       },
       orderBy: [
         { resume_generated_at: 'desc' },
@@ -209,6 +234,10 @@ export class ApplicationsService {
     if (!row) throw new NotFoundException('No generated application found');
 
     try {
+      const history = parseApplicationHistory(
+        row.application_questions_json,
+        row.application_answers_json,
+      );
       return {
         id: row.id,
         url: row.url,
@@ -221,6 +250,8 @@ export class ApplicationsService {
         conversation_id: row.conversation_id,
         cover_letter_text: row.cover_letter_text,
         cover_letter_template: row.cover_letter_template || 'classic',
+        questions: history?.questions ?? null,
+        answers: history?.answers ?? null,
       };
     } catch {
       throw new BadRequestException('The saved resume is corrupted');
@@ -892,8 +923,8 @@ export class ApplicationsService {
     // Date is the primary grouping; application numbers always increase within each date so the
     // per-day sequence reads #1, #2, #3. The tiebreaker also keeps virtualised pages stable.
     if (field === 'date') return [{ date: dir }, { number: 'asc' }];
-    if (field === 'number') return [{ number: dir }, { date: dir }];
-    return [{ [field]: dir } as any, { date: 'desc' }, { number: 'desc' }];
+    if (field === 'number') return [{ number: dir }, { date: dir }, { id: dir }];
+    return [{ [field]: dir } as any, { date: dir }, { number: dir }, { id: dir }];
   }
 }
 

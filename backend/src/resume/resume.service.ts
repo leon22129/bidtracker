@@ -24,6 +24,11 @@ import { BannedUrlService } from '../applications/banned-url.service';
 import { ApplicationsService } from '../applications/applications.service';
 import { WorkspacesService } from '../workspaces/workspaces.service';
 import { OpenAiUsage, openAiUsageFields } from './openai-telemetry';
+import {
+  parseApplicationHistory,
+  serializeApplicationHistory,
+  type SavedApplicationAnswer,
+} from '../common/utils/application-history.util';
 
 const OPENAI_API_BASE = 'https://api.openai.com/v1';
 const MODEL = process.env.OPENAI_MODEL || 'gpt-5.6-sol';
@@ -280,10 +285,7 @@ export class ApplicationGenerationService {
         ? await this.prisma.resumeProfile.findUnique({ where: { id: conversation.profile_id } })
         : null,
     );
-    await this.prisma.resumeConversation.update({
-      where: { id: conversation.id },
-      data: { updated_at: new Date() },
-    });
+    await this.persistApplicationHistory(conversation.id, dto.questions, answers.answers);
     return answers;
   }
 
@@ -296,6 +298,30 @@ export class ApplicationGenerationService {
     }
     if (conversation.workspace_id) {
       await this.access.assertCanEdit(user, conversation.workspace_id);
+    }
+
+    const savedApplication = await this.prisma.jobApplication.findFirst({
+      where: {
+        conversation_id: conversation.id,
+        application_questions_json: { not: null },
+        application_answers_json: { not: null },
+      },
+      select: {
+        application_questions_json: true,
+        application_answers_json: true,
+      },
+      orderBy: { updated_at: 'desc' },
+    });
+    if (savedApplication) {
+      try {
+        const saved = parseApplicationHistory(
+          savedApplication.application_questions_json,
+          savedApplication.application_answers_json,
+        );
+        if (saved) return saved;
+      } catch {
+        // Fall through to provider history and repair the local snapshot below.
+      }
     }
 
     const history = await this.openAiRequest(
@@ -318,15 +344,49 @@ export class ApplicationGenerationService {
       const questions = questionItem
         ? this.parseConversationQuestions(this.conversationItemText(questionItem))
         : [];
-      return {
+      const restored = {
         questions: questions.length
           ? questions
           : answers.map((item) => ({ question: item.question, options: [] })),
         answers,
       };
+      await this.persistApplicationHistory(
+        conversation.id,
+        restored.questions,
+        restored.answers,
+      );
+      return restored;
     }
 
     return { questions: [], answers: [] };
+  }
+
+  private async persistApplicationHistory(
+    conversationId: string,
+    questions: ApplicationQuestionInput[],
+    answers: SavedApplicationAnswer[],
+  ) {
+    let serialized: ReturnType<typeof serializeApplicationHistory>;
+    try {
+      serialized = serializeApplicationHistory(questions, answers);
+    } catch (error) {
+      throw new BadRequestException(
+        error instanceof Error ? error.message : 'Unable to save application answers',
+      );
+    }
+    await this.prisma.$transaction([
+      this.prisma.resumeConversation.update({
+        where: { id: conversationId },
+        data: { updated_at: new Date() },
+      }),
+      this.prisma.jobApplication.updateMany({
+        where: { conversation_id: conversationId },
+        data: {
+          application_questions_json: serialized.questionsJson,
+          application_answers_json: serialized.answersJson,
+        },
+      }),
+    ]);
   }
 
   private async findAccessibleProfile(user: AuthUser, profileId: string) {

@@ -28,6 +28,7 @@ interface Props {
   onDownloadResume: (row: JobApplication) => void;
   onDownloadJobDescription: (row: JobApplication) => void;
   onDownloadCoverLetter: (row: JobApplication) => void;
+  onViewApplicationAnswers: (row: JobApplication) => void;
 }
 
 /**
@@ -49,7 +50,7 @@ export function ApplicationsTable(props: Props) {
   const {
     user, total, loading, getRow, ensureRange, filters, onSortChange,
     selectedIds, onToggleSelect, onSelectAllVisible, onEditCell,
-    onDownloadResume, onDownloadJobDescription, onDownloadCoverLetter,
+    onDownloadResume, onDownloadJobDescription, onDownloadCoverLetter, onViewApplicationAnswers,
   } = props;
 
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -336,6 +337,7 @@ export function ApplicationsTable(props: Props) {
                         onDownloadResume={onDownloadResume}
                         onDownloadJobDescription={onDownloadJobDescription}
                         onDownloadCoverLetter={onDownloadCoverLetter}
+                        onViewApplicationAnswers={onViewApplicationAnswers}
                       />
                     </div>
                   ))}

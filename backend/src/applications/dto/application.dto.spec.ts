@@ -6,8 +6,21 @@ import {
   BulkUpdatePatchDto,
   CreateGeneratedApplicationDto,
   CreateManualApplicationDto,
+  QueryApplicationsDto,
   UpdatePipelineDto,
 } from './application.dto';
+
+describe('QueryApplicationsDto cursor pagination', () => {
+  it('accepts cursors and transforms include_total', async () => {
+    const value = plainToInstance(QueryApplicationsDto, {
+      workspace_id: 'workspace-1',
+      cursor_after: 'application-1',
+      include_total: 'false',
+    });
+    await expect(validate(value)).resolves.toHaveLength(0);
+    expect(value.include_total).toBe(false);
+  });
+});
 
 describe('BulkUpdateApplicationsDto', () => {
   it('loads runtime decorator metadata and validates its nested patch DTO', async () => {

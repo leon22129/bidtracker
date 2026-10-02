@@ -6,12 +6,15 @@ import { useParams } from 'next/navigation';
 import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 import { useApplications } from '@/lib/use-applications';
-import type { ApplicationFilters, JobApplication, Workspace, WorkspaceSummary } from '@/lib/types';
+import type {
+  ApplicationFilters, JobApplication, ResumeArtifact, Workspace, WorkspaceSummary,
+} from '@/lib/types';
 import { ApplicationsTable } from '@/components/table/applications-table';
 import { BulkActionsBar } from '@/components/table/bulk-actions';
 import { TableToolbar } from '@/components/table/toolbar';
 import { useToast } from '@/components/ui/toast';
 import { ADMIN_ONLY_FIELDS } from '@/lib/permissions';
+import { ApplicationAnswersModal } from '@/components/table/application-answers-modal';
 import {
   downloadCoverLetterPdf,
   downloadJobDescription as downloadSavedJobDescription,
@@ -40,6 +43,7 @@ export default function WorkspaceTablePage() {
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [summary, setSummary] = useState<WorkspaceSummary | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [answersArtifact, setAnswersArtifact] = useState<ResumeArtifact | null>(null);
 
   const [filters, setFilters] = useState<ApplicationFilters>({
     sort_by: 'date',
@@ -239,6 +243,14 @@ export default function WorkspaceTablePage() {
     }
   }, [toast]);
 
+  const viewApplicationAnswers = useCallback(async (row: JobApplication) => {
+    try {
+      setAnswersArtifact(await api.getApplicationResume(row.id));
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not load application answers');
+    }
+  }, [toast]);
+
   // ---- render --------------------------------------------------------------
   if (loadError) {
     return (
@@ -297,6 +309,7 @@ export default function WorkspaceTablePage() {
           onDownloadResume={downloadResume}
           onDownloadJobDescription={downloadJobDescription}
           onDownloadCoverLetter={downloadCoverLetter}
+          onViewApplicationAnswers={viewApplicationAnswers}
         />
       </div>
 
@@ -308,6 +321,12 @@ export default function WorkspaceTablePage() {
         onBulkPatch={onBulkPatch}
         onBulkDelete={onBulkDelete}
       />
+      {answersArtifact && (
+        <ApplicationAnswersModal
+          artifact={answersArtifact}
+          onClose={() => setAnswersArtifact(null)}
+        />
+      )}
     </div>
   );
 }

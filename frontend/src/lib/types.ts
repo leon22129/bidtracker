@@ -123,10 +123,12 @@ export interface JobApplication {
 
 export interface Paginated<T> {
   items: T[];
-  total: number;
+  total: number | null;
   page: number;
   page_size: number;
-  total_pages: number;
+  total_pages: number | null;
+  start_cursor: string | null;
+  end_cursor: string | null;
 }
 
 export interface ApplicationFilters {
@@ -239,6 +241,8 @@ export interface ResumeArtifact {
   cover_letter_text: string | null;
   cover_letter_template: string;
   conversation_available: boolean;
+  questions: Array<{ question: string; options: string[] }>;
+  answers: Array<{ question: string; answer: string }>;
 }
 
 export interface UpcomingInterview {

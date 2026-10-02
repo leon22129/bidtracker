@@ -170,12 +170,20 @@ export const api = {
     page: number,
     pageSize: number,
     filters: ApplicationFilters = {},
+    pagination: {
+      cursorAfter?: string;
+      cursorBefore?: string;
+      includeTotal?: boolean;
+    } = {},
   ) =>
     request<Paginated<JobApplication>>(
       `/applications${qs({
         workspace_id: workspaceId,
         page,
         page_size: pageSize,
+        cursor_after: pagination.cursorAfter,
+        cursor_before: pagination.cursorBefore,
+        include_total: pagination.includeTotal,
         search: filters.search,
         application_status: filters.application_status,
         pipeline_status: filters.pipeline_status,
