@@ -319,6 +319,11 @@ export function buildJobEligibilityPrompt(jobDescription: string, jobUrl: string
 {
   "company_name": "",
   "job_title": "",
+  "location": "",
+  "workplace": "",
+  "department": "",
+  "employment_type": "",
+  "salary": "",
   "requires_clearance": false,
   "requires_public_trust": false,
   "is_us_job": true,
@@ -331,6 +336,11 @@ export function buildJobEligibilityPrompt(jobDescription: string, jobUrl: string
 Rules:
 - Set company_name to the employer name explicitly identified in the job description. Do not infer it from the industry, product, recruiter, staffing client, or candidate information. Use an empty string when the employer is not stated.
 - Set job_title to the primary role title explicitly identified in the job description, including stated seniority. Remove only requisition, grade, and posting identifiers. Use an empty string when no role title is stated.
+- Extract location, workplace, department, employment_type, and salary using only facts stated for this opening. Use an empty string when a field is not supported.
+- Treat placeholder values such as "UNAVAILABLE", "Unknown", "N/A", or "Not specified" as missing, including combinations such as "UNAVAILABLE, US".
+- For location, prioritize role-specific narrative restrictions and eligible work regions over a contradictory placeholder or generic company address. Preserve all stated eligible cities, states, provinces, or countries concisely.
+- For workplace, use the stated arrangement, such as Remote, Hybrid, On-site, or Remote or Hybrid. Do not infer it from company policy alone.
+- For salary, preserve the stated currency symbol/code, minimum, maximum, and pay period. Do not estimate or convert compensation.
 - Set requires_clearance to true only when the job explicitly requires a security clearance, clearance eligibility, or the ability to obtain a clearance. Do not infer clearance from government, defense, public-sector, or background-check language alone.
 - Set requires_public_trust to true when the job explicitly requires Public Trust, a public-trust suitability determination, or a named public-trust level such as BI, 6C, or T4. Treat this as disqualifying even when the clearance level is None.
 - Determine is_us_job in this order:

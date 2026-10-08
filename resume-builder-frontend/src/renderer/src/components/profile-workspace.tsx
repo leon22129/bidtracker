@@ -289,6 +289,7 @@ export function ProfileWorkspace({
         jobDescription,
         kind: "resume",
       });
+      if (data.jobDescription?.trim()) setJobDescription(data.jobDescription.trim());
       if (data.duplicate) {
         const existing = data.existingApplication;
         const location = existing
@@ -503,7 +504,7 @@ export function ProfileWorkspace({
     if (questionsOnly) setQuestionScanMessage("");
     else setPageScanMessage("");
     try {
-      const context = await getCurrentPageContext();
+      const context = await getCurrentPageContext({ includeQuestions: questionsOnly });
       const nonSensitiveQuestions = context.questions.filter((item) => !item.sensitive);
       const safeQuestions = nonSensitiveQuestions.slice(0, 50);
       const sensitiveCount = context.questions.length - nonSensitiveQuestions.length;
@@ -514,24 +515,26 @@ export function ProfileWorkspace({
         setJobDescription(context.jobDescription.trim());
         setError("");
       }
-      setApplicationQuestions(safeQuestions.map(formatQuestionEditorLine).join("\n"));
-      setScannedQuestions(safeQuestions);
-      setApplicationAnswers([]);
-      setAnswersReadOnly(false);
-      setApplicationError("");
-      setPageFillMessage("");
+      if (questionsOnly) {
+        setApplicationQuestions(safeQuestions.map(formatQuestionEditorLine).join("\n"));
+        setScannedQuestions(safeQuestions);
+        setApplicationAnswers([]);
+        setAnswersReadOnly(false);
+        setApplicationError("");
+        setPageFillMessage("");
+      }
 
       const parts = [
         ...(!questionsOnly ? [context.jobDescription.trim()
           ? "Job description found"
           : "No job description was identified; paste it manually"] : []),
-        safeQuestions.length
+        ...(questionsOnly ? [safeQuestions.length
           ? `${safeQuestions.length} application question${safeQuestions.length === 1 ? "" : "s"} found`
-          : "no application questions found on this page",
+          : "no application questions found on this page"] : []),
       ];
-      if (sensitiveCount) parts.push(`${sensitiveCount} sensitive field${sensitiveCount === 1 ? " was" : "s were"} excluded from AI and will use saved profile values when available`);
-      if (choiceCount) parts.push(`allowed choices captured for ${choiceCount} question${choiceCount === 1 ? "" : "s"}`);
-      if (omittedCount) parts.push(`${omittedCount} extra field${omittedCount === 1 ? " was" : "s were"} omitted from the 50-question limit`);
+      if (questionsOnly && sensitiveCount) parts.push(`${sensitiveCount} sensitive field${sensitiveCount === 1 ? " was" : "s were"} excluded from AI and will use saved profile values when available`);
+      if (questionsOnly && choiceCount) parts.push(`allowed choices captured for ${choiceCount} question${choiceCount === 1 ? "" : "s"}`);
+      if (questionsOnly && omittedCount) parts.push(`${omittedCount} extra field${omittedCount === 1 ? " was" : "s were"} omitted from the 50-question limit`);
       const message = `${parts.join("; ")}.`;
       if (questionsOnly) setQuestionScanMessage(message);
       else setPageScanMessage(message);

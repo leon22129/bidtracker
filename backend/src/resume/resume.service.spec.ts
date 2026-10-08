@@ -83,6 +83,11 @@ describe('ApplicationGenerationService application metadata eligibility', () => 
   const eligible = (overrides: Record<string, unknown> = {}) => JSON.stringify({
     company_name: 'Acme',
     job_title: 'Software Engineer',
+    location: 'United States',
+    workplace: 'Remote',
+    department: 'Engineering',
+    employment_type: 'Full-time',
+    salary: '$140,000-$180,000 per year',
     requires_clearance: false,
     requires_public_trust: false,
     is_us_job: true,
@@ -111,6 +116,31 @@ describe('ApplicationGenerationService application metadata eligibility', () => 
     expect(duplicates.findRecentJobMatch).not.toHaveBeenCalled();
   });
 
+  it('normalizes job information within the single eligibility call for a skipped non-US job', async () => {
+    const { service } = setup();
+    const openAi = jest.spyOn(service as any, 'openAi').mockResolvedValue(eligible({
+      company_name: 'Trinnex',
+      job_title: 'Senior Full Stack Developer',
+      location: 'Canada (British Columbia, Alberta, Manitoba, or Ontario)',
+      workplace: 'Remote or Hybrid',
+      department: 'Digital Solutions',
+      salary: '$120,411-$210,704 per year',
+      is_us_job: false,
+      work_arrangement_is_remote_only: false,
+    }));
+
+    await expect(service.generate(user, {
+      ...dto,
+      url: 'https://careers-trinnex.icims.com/jobs/4706/senior-full-stack-developer/job',
+      job_description: 'Location: UNAVAILABLE, US\nCandidates must reside and work in specified Canadian provinces.',
+    })).resolves.toMatchObject({
+      success: false,
+      eligible: false,
+      job_description: expect.stringContaining('Location: Canada (British Columbia, Alberta, Manitoba, or Ontario)'),
+    });
+    expect(openAi).toHaveBeenCalledTimes(1);
+  });
+
   it('checks the company/title fingerprint before generating the resume', async () => {
     const { service, duplicates } = setup();
     const existing = { id: 'application-1', company_name: 'Acme', job_title: 'Software Engineer' };
@@ -133,7 +163,7 @@ describe('ApplicationGenerationService application metadata eligibility', () => 
 
   it('uses eligibility metadata and automatically saves the generated application', async () => {
     const { service, applications } = setup();
-    jest.spyOn(service as any, 'openAi')
+    const openAi = jest.spyOn(service as any, 'openAi')
       .mockResolvedValueOnce(eligible())
       .mockResolvedValueOnce(JSON.stringify({
         target_company: 'Different AI spelling',
@@ -157,7 +187,7 @@ describe('ApplicationGenerationService application metadata eligibility', () => 
         url: dto.url,
         company_name: 'Acme',
         job_title: 'Software Engineer',
-        job_description: dto.job_description,
+        job_description: expect.stringContaining('Location: United States'),
         conversation_id: 'conversation-1',
         generated_resume: expect.objectContaining({
           summary: 'Tailored summary',
@@ -165,6 +195,10 @@ describe('ApplicationGenerationService application metadata eligibility', () => 
         }),
       }),
     );
+    expect(openAi).toHaveBeenCalledTimes(2);
+    expect(openAi.mock.calls[0][0]).toContain('"salary": ""');
+    expect(openAi.mock.calls[1][0]).toContain('Job Information\nTitle: Software Engineer');
+    expect(openAi.mock.calls[1][0]).toContain('Salary: $140,000-$180,000 per year');
   });
 
   it('answers from an owned compact conversation without resending the JD or resume', async () => {

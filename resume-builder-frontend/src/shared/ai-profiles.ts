@@ -70,6 +70,7 @@ export type GenerateResumeResult = {
   answers?: Array<{ question: string; answer: string }>
   eligible?: boolean
   reason?: string
+  jobDescription?: string
   banned?: boolean
   duplicate?: boolean
   duplicateType?: string | null

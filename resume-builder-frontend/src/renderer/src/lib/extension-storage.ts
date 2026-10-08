@@ -527,8 +527,11 @@ async function fillAdpPageWorld(profile: PageAutofillProfile) {
   }
 }
 
-export async function getCurrentPageContext(): Promise<CurrentPageContext> {
-  const { tabUrl, responses } = await sendToCurrentPageFrames<CurrentPageContext>({ type: "RESUME_AI_EXTRACT_PAGE" });
+export async function getCurrentPageContext({ includeQuestions = true }: { includeQuestions?: boolean } = {}): Promise<CurrentPageContext> {
+  const { tabUrl, responses } = await sendToCurrentPageFrames<CurrentPageContext>({
+    type: "RESUME_AI_EXTRACT_PAGE",
+    includeQuestions,
+  });
   const contexts = responses.filter(({ value }) => value && Array.isArray(value.questions));
   if (!contexts.length) throw new Error("No readable job or application content was found on this page.");
 

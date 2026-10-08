@@ -93,6 +93,34 @@ function requestText(body: unknown) {
   return parts.join('\n');
 }
 
+function usableJobInfo(value: unknown) {
+  const cleaned = typeof value === 'string' ? value.trim() : '';
+  return /^(?:unavailable|unknown|n\/?a|not specified)(?:\s*,.*)?$/i.test(cleaned) ? '' : cleaned;
+}
+
+function normalizedJobDescription(value: string, info: EligibilityResult) {
+  const marker = '\n\nJob Description\n';
+  const markerIndex = value.indexOf(marker);
+  const description = markerIndex >= 0 ? value.slice(markerIndex + marker.length).trim() : value.trim();
+  const fields = [
+    ['Title', info.job_title],
+    ['Company', info.company_name],
+    ['Location', info.location],
+    ['Workplace', info.workplace],
+    ['Department', info.department],
+    ['Employment Type', info.employment_type],
+    ['Salary', info.salary],
+  ] as const;
+  const lines = fields.flatMap(([label, rawValue]) => {
+    const fieldValue = usableJobInfo(rawValue);
+    return fieldValue ? [`${label}: ${fieldValue}`] : [];
+  });
+  const sections: string[] = [];
+  if (lines.length) sections.push(`Job Information\n${lines.join('\n')}`);
+  if (description) sections.push(`Job Description\n${description}`);
+  return sections.join('\n\n');
+}
+
 @Injectable()
 export class ApplicationGenerationService {
   private readonly logger = new Logger(ApplicationGenerationService.name);
@@ -145,6 +173,7 @@ export class ApplicationGenerationService {
     const jobTitle = typeof eligibilityJson.job_title === 'string'
       ? eligibilityJson.job_title.trim()
       : '';
+    const normalizedDescription = normalizedJobDescription(jobDescription, eligibilityJson);
     if (!companyName || !jobTitle) {
       const missing = [
         !companyName ? 'company name' : null,
@@ -156,6 +185,7 @@ export class ApplicationGenerationService {
         url: dto.url,
         reason: `Need ${missing} in the JD.`,
         eligibility: eligibilityJson,
+        job_description: normalizedDescription,
       };
     }
 
@@ -180,16 +210,16 @@ export class ApplicationGenerationService {
     if (!eligibilityJson.work_arrangement_is_remote_only) rejectionReasons.push('is not explicitly fully remote');
     if (eligibilityJson.requires_in_person_interview) rejectionReasons.push('requires an in-person interview');
     if (eligibilityJson.requires_onsite_onboarding) rejectionReasons.push('requires onsite onboarding');
-    if (rejectionReasons.length) return { success: false, eligible: false, url: dto.url, reason: `Skipped because it ${rejectionReasons.join(', ')}.`, eligibility: eligibilityJson };
+    if (rejectionReasons.length) return { success: false, eligible: false, url: dto.url, reason: `Skipped because it ${rejectionReasons.join(', ')}.`, eligibility: eligibilityJson, job_description: normalizedDescription };
 
-    const resume = this.parseJson(await this.openAi(this.resumePrompt(profile, jobDescription), {
+    const resume = this.parseJson(await this.openAi(this.resumePrompt(profile, normalizedDescription), {
       operation: 'resume_generation',
     }));
     const conversation = await this.createAnswerConversation(
       user,
       profile,
       workspace.id,
-      jobDescription,
+      normalizedDescription,
       resume,
     );
     const coverLetterText = profile.generate_cover_letter && typeof resume.coverletter === 'string'
@@ -201,7 +231,7 @@ export class ApplicationGenerationService {
       job_title: jobTitle,
       company_name: companyName,
       generated_resume: this.buildResumeSnapshot(profile, resume),
-      job_description: jobDescription,
+      job_description: normalizedDescription,
       conversation_id: conversation.id,
       resume_template: profile.template || 'classic',
       cover_letter_text: coverLetterText,
@@ -216,6 +246,7 @@ export class ApplicationGenerationService {
       eligible: true,
       application: saved.application,
       resume,
+      job_description: normalizedDescription,
       conversation_id: conversation.id,
       full_name: profile.full_name,
     };
@@ -748,6 +779,15 @@ ${JSON.stringify(resume)}`;
 
   private parseEligibility(value: string): EligibilityResult {
     const parsed = this.parseJson(value);
+    const stringFields = [
+      'company_name',
+      'job_title',
+      'location',
+      'workplace',
+      'department',
+      'employment_type',
+      'salary',
+    ] as const;
     const booleanFields = [
       'requires_clearance',
       'requires_public_trust',
@@ -757,8 +797,7 @@ ${JSON.stringify(resume)}`;
       'requires_onsite_onboarding',
     ] as const;
     if (
-      typeof parsed.company_name !== 'string' ||
-      typeof parsed.job_title !== 'string' ||
+      stringFields.some((field) => typeof parsed[field] !== 'string') ||
       booleanFields.some((field) => typeof parsed[field] !== 'boolean')
     ) {
       throw new BadGatewayException('OpenAI returned an invalid eligibility response');
@@ -781,6 +820,11 @@ ${JSON.stringify(resume)}`;
 interface EligibilityResult extends Record<string, unknown> {
   company_name: string;
   job_title: string;
+  location: string;
+  workplace: string;
+  department: string;
+  employment_type: string;
+  salary: string;
   requires_clearance: boolean;
   requires_public_trust: boolean;
   is_us_job: boolean;

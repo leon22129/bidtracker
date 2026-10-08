@@ -148,7 +148,7 @@ const webAiProfiles: AiProfilesApi = {
             resume: input.resume,
           }),
     })
-    const data = await response.json().catch(() => null) as { tailored_resume?: string; full_name?: string; conversation_id?: string; error?: string; message?: string; eligible?: boolean; reason?: string; banned?: boolean; resume?: unknown; answers?: unknown; application?: GenerateResumeResult["application"]; duplicate?: boolean; duplicate_type?: string | null; existing_application?: GenerateResumeResult["existingApplication"] } | null
+    const data = await response.json().catch(() => null) as { tailored_resume?: string; full_name?: string; conversation_id?: string; job_description?: string; error?: string; message?: string; eligible?: boolean; reason?: string; banned?: boolean; resume?: unknown; answers?: unknown; application?: GenerateResumeResult["application"]; duplicate?: boolean; duplicate_type?: string | null; existing_application?: GenerateResumeResult["existingApplication"] } | null
     if (!response.ok) throw new Error(data?.message || data?.error || `Generation failed (${response.status}).`)
     if (conversationAnswers) {
       if (!Array.isArray(data?.answers)) throw new Error("The AI provider returned an empty response.")
@@ -175,9 +175,9 @@ const webAiProfiles: AiProfilesApi = {
         full_name: data.full_name,
       }
       if (data?.banned) return { banned: true, tailored_resume: "" }
-      if (data?.eligible === false) return { eligible: false, reason: data.reason, tailored_resume: "" }
+      if (data?.eligible === false) return { eligible: false, reason: data.reason, jobDescription: data.job_description, tailored_resume: "" }
       if (!data?.resume) throw new Error("The AI provider returned an empty response.")
-      return { eligible: true, tailored_resume: JSON.stringify(data.resume), full_name: data.full_name, conversationId: data.conversation_id, application: data.application, answers }
+      return { eligible: true, tailored_resume: JSON.stringify(data.resume), full_name: data.full_name, conversationId: data.conversation_id, jobDescription: data.job_description, application: data.application, answers }
     }
     if (!data?.tailored_resume) throw new Error("The AI provider returned an empty response.")
     return { tailored_resume: data.tailored_resume, full_name: data.full_name, conversationId: data.conversation_id }
