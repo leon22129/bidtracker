@@ -51,7 +51,14 @@ export default function UsersPage() {
     ? ROLES.filter((role) => role === 'admin')
     : ROLES.filter((role) => role === 'bidder' || role === 'bidder_manager');
 
-  async function patch(u: User, data: Partial<{ role: Role; is_active: boolean; username: string }>) {
+  const bidderManagers = users.filter((u) => u.role === 'bidder_manager' && u.is_active);
+
+  async function patch(u: User, data: Partial<{
+    role: Role;
+    is_active: boolean;
+    username: string;
+    manager_user_id: string | null;
+  }>) {
     try {
       await api.updateUser(u.id, data);
       toast.success(`Updated ${u.username}`);
@@ -106,6 +113,7 @@ export default function UsersPage() {
                 <th className="px-3 py-2 font-medium">User</th>
                 <th className="px-3 py-2 font-medium">Role</th>
                 <th className="px-3 py-2 font-medium">Workspaces</th>
+                <th className="px-3 py-2 font-medium">Manager</th>
                 <th className="px-3 py-2 font-medium">Status</th>
                 <th className="px-3 py-2 text-right font-medium">Actions</th>
               </tr>
@@ -141,6 +149,27 @@ export default function UsersPage() {
                     </td>
                     <td className="px-3 py-2 tabular-nums text-gray-600">
                       {u.owned_workspace_count ?? 0} owned
+                    </td>
+                    <td className="px-3 py-2">
+                      {u.role === 'bidder' ? (
+                        <select
+                          className="input w-40 py-1 text-xs"
+                          value={u.manager_user_id ?? ''}
+                          onChange={(e) => void patch(u, { manager_user_id: e.target.value || null })}
+                          aria-label={`Manager for ${u.username}`}
+                        >
+                          <option value="">Unassigned</option>
+                          {bidderManagers.map((manager) => (
+                            <option key={manager.id} value={manager.id}>{manager.username}</option>
+                          ))}
+                        </select>
+                      ) : u.role === 'bidder_manager' ? (
+                        <span className="text-gray-600">
+                          {u.managed_bidder_count ?? 0} bidder{u.managed_bidder_count === 1 ? '' : 's'}
+                        </span>
+                      ) : (
+                        <span className="text-gray-400">—</span>
+                      )}
                     </td>
                     <td className="px-3 py-2">
                       <span
@@ -197,6 +226,7 @@ export default function UsersPage() {
       {showCreate && (
         <CreateUserModal
           allowedRoles={addableRoles}
+          bidderManagers={bidderManagers}
           onClose={() => setShowCreate(false)}
           onCreated={async () => {
             setShowCreate(false);
@@ -214,10 +244,12 @@ export default function UsersPage() {
 
 function CreateUserModal({
   allowedRoles,
+  bidderManagers,
   onClose,
   onCreated,
 }: {
   allowedRoles: Role[];
+  bidderManagers: User[];
   onClose: () => void;
   onCreated: () => Promise<void>;
 }) {
@@ -226,13 +258,20 @@ function CreateUserModal({
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [role, setRole] = useState<Role>(allowedRoles[0]);
+  const [managerUserId, setManagerUserId] = useState('');
   const [busy, setBusy] = useState(false);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setBusy(true);
     try {
-      await api.createUser({ username: username.trim(), email: email.trim(), password, role });
+      await api.createUser({
+        username: username.trim(),
+        email: email.trim(),
+        password,
+        role,
+        ...(role === 'bidder' ? { manager_user_id: managerUserId || null } : {}),
+      });
       toast.success(`Created ${username.trim()}`);
       await onCreated();
     } catch (err) {
@@ -269,6 +308,22 @@ function CreateUserModal({
             ))}
           </select>
         </div>
+        {role === 'bidder' && (
+          <div>
+            <label className="label" htmlFor="cu-manager">Bidder manager</label>
+            <select
+              id="cu-manager"
+              className="input"
+              value={managerUserId}
+              onChange={(e) => setManagerUserId(e.target.value)}
+            >
+              <option value="">Unassigned</option>
+              {bidderManagers.map((manager) => (
+                <option key={manager.id} value={manager.id}>{manager.username}</option>
+              ))}
+            </select>
+          </div>
+        )}
         <div className="flex justify-end gap-2 pt-2">
           <button type="button" className="btn-secondary" onClick={onClose}>Cancel</button>
           <button type="submit" className="btn-primary" disabled={busy}>

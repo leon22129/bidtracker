@@ -120,11 +120,11 @@ export const api = {
 
   // ---- users (admin) ----
   listUsers: () => request<User[]>('/users'),
-  createUser: (data: { username: string; email: string; password: string; role: Role }) =>
+  createUser: (data: { username: string; email: string; password: string; role: Role; manager_user_id?: string | null }) =>
     request<User>('/users', { method: 'POST', body: JSON.stringify(data) }),
   updateUser: (
     id: string,
-    data: Partial<{ username: string; email: string; role: Role; is_active: boolean }>,
+    data: Partial<{ username: string; email: string; role: Role; is_active: boolean; manager_user_id: string | null }>,
   ) => request<User>(`/users/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   resetUserPassword: (id: string, newPassword: string) =>
     request<{ success: boolean }>(`/users/${id}/reset-password`, {

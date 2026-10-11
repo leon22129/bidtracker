@@ -24,6 +24,7 @@ export default function WorkspacesPage() {
   const [newOwner, setNewOwner] = useState('');
   const [reassigning, setReassigning] = useState<Workspace | null>(null);
   const [editingProfile, setEditingProfile] = useState<Workspace | null>(null);
+  const [viewingProfile, setViewingProfile] = useState<Workspace | null>(null);
   const [workspaceFilter, setWorkspaceFilter] = useState<WorkspaceFilter>('active');
   const [selectedBidderId, setSelectedBidderId] = useState('all');
 
@@ -328,12 +329,25 @@ export default function WorkspacesPage() {
                     Edit profile
                   </button>
                 )}
-                <Link href={`/workspaces/${w.id}/add`} className="btn-primary btn-xs">
-                  Add application
-                </Link>
-                <Link href={`/workspaces/${w.id}/import`} className="btn-secondary btn-xs">
-                  Import Excel/CSV
-                </Link>
+                {user?.role === 'bidder_manager' && w.profile && (
+                  <button
+                    type="button"
+                    className="btn-secondary btn-xs"
+                    onClick={() => setViewingProfile(w)}
+                  >
+                    View profile
+                  </button>
+                )}
+                {w.can_edit && (
+                  <>
+                    <Link href={`/workspaces/${w.id}/add`} className="btn-primary btn-xs">
+                      Add application
+                    </Link>
+                    <Link href={`/workspaces/${w.id}/import`} className="btn-secondary btn-xs">
+                      Import Excel/CSV
+                    </Link>
+                  </>
+                )}
                 {admin && (
                   <>
                     <button
@@ -376,7 +390,78 @@ export default function WorkspacesPage() {
       {editingProfile && (
         <ProfileModal workspace={editingProfile} onClose={() => setEditingProfile(null)} onChanged={load} />
       )}
+      {viewingProfile && (
+        <ProfileViewModal workspace={viewingProfile} onClose={() => setViewingProfile(null)} />
+      )}
     </main>
+  );
+}
+
+function ProfileViewModal({ workspace, onClose }: { workspace: Workspace; onClose: () => void }) {
+  const profile = workspace.profile;
+  if (!profile) return null;
+  const personal = profile.personal_info;
+  const details = [
+    ['Full name', personal.fullName], ['Title', personal.title], ['Email', personal.email],
+    ['Phone', personal.phone], ['Location', personal.location], ['Country', personal.country],
+    ['Address', [personal.address1, personal.city, personal.county, personal.state, personal.zip].filter(Boolean).join(', ')],
+    ['LinkedIn', personal.linkedin], ['U.S. work status', personal.usWorkStatus],
+    ['Requires sponsorship', personal.requiresSponsorship],
+    ['Authorized to work in U.S.', personal.legallyAuthorizedUs], ['Gender', personal.gender],
+    ['Hispanic/Latino', personal.hispanicLatino], ['Race / ethnicity', personal.ethnicity],
+  ].filter(([, value]) => Boolean(value));
+
+  return (
+    <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/30 p-4">
+      <div className="card max-h-[90vh] w-full max-w-2xl overflow-y-auto p-5">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h2 className="text-sm font-semibold">Resume profile — {workspace.owner.username}</h2>
+            <p className="mt-0.5 text-2xs text-gray-500">Read-only · {profile.name}</p>
+          </div>
+          <button type="button" className="text-gray-400 hover:text-gray-700" onClick={onClose} aria-label="Close">×</button>
+        </div>
+
+        <dl className="mt-4 grid gap-x-6 gap-y-3 sm:grid-cols-2">
+          {details.map(([label, value]) => (
+            <div key={label}>
+              <dt className="text-2xs font-medium uppercase tracking-wide text-gray-500">{label}</dt>
+              <dd className="mt-0.5 whitespace-pre-wrap text-xs text-gray-900">{value}</dd>
+            </div>
+          ))}
+        </dl>
+
+        <section className="mt-5">
+          <h3 className="text-xs font-semibold">Career path</h3>
+          <p className="mt-1 whitespace-pre-wrap rounded bg-gray-50 p-3 text-xs text-gray-700">
+            {profile.career_path || 'Not provided'}
+          </p>
+        </section>
+
+        <section className="mt-5 grid gap-5 sm:grid-cols-2">
+          <div>
+            <h3 className="text-xs font-semibold">Education</h3>
+            {profile.education.length ? profile.education.map((item, index) => (
+              <p key={index} className="mt-1 text-xs text-gray-700">
+                {[item.degree, item.school, item.year].filter(Boolean).join(' · ')}
+              </p>
+            )) : <p className="mt-1 text-xs text-gray-500">Not provided</p>}
+          </div>
+          <div>
+            <h3 className="text-xs font-semibold">Certifications</h3>
+            {profile.certifications.length ? profile.certifications.map((item, index) => (
+              <p key={index} className="mt-1 text-xs text-gray-700">
+                {[item.name, item.issuer, item.year].filter(Boolean).join(' · ')}
+              </p>
+            )) : <p className="mt-1 text-xs text-gray-500">Not provided</p>}
+          </div>
+        </section>
+
+        <div className="mt-5 flex justify-end">
+          <button type="button" className="btn-secondary" onClick={onClose}>Close</button>
+        </div>
+      </div>
+    </div>
   );
 }
 

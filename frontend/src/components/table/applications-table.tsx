@@ -29,6 +29,7 @@ interface Props {
   onDownloadJobDescription: (row: JobApplication) => void;
   onDownloadCoverLetter: (row: JobApplication) => void;
   onViewApplicationAnswers: (row: JobApplication) => void;
+  readOnly?: boolean;
 }
 
 /**
@@ -51,6 +52,7 @@ export function ApplicationsTable(props: Props) {
     user, total, loading, getRow, ensureRange, filters, onSortChange,
     selectedIds, onToggleSelect, onSelectAllVisible, onEditCell,
     onDownloadResume, onDownloadJobDescription, onDownloadCoverLetter, onViewApplicationAnswers,
+    readOnly = false,
   } = props;
 
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -168,6 +170,7 @@ export function ApplicationsTable(props: Props) {
                 aria-label="Select all loaded rows"
                 className="h-3.5 w-3.5 accent-gray-900"
                 checked={allVisibleSelected}
+                disabled={readOnly}
                 onChange={(e) => onSelectAllVisible(visibleIds, e.target.checked)}
               />
             </div>
@@ -302,6 +305,7 @@ export function ApplicationsTable(props: Props) {
                       aria-label={`Select row ${row.number}`}
                       className="h-3.5 w-3.5 accent-gray-900"
                       checked={selected}
+                      disabled={readOnly}
                       onChange={(e) =>
                         onToggleSelect(
                           row.id,
@@ -331,7 +335,7 @@ export function ApplicationsTable(props: Props) {
                       <Cell
                         row={row}
                         column={col}
-                        user={user}
+                        user={readOnly ? null : user}
                         boundary={col.key === 'date' ? (weekBoundary ? 'week' : dayStart ? 'day' : undefined) : undefined}
                         onCommit={(field, value) => onEditCell(row, field, value)}
                         onDownloadResume={onDownloadResume}
@@ -367,7 +371,7 @@ export function ApplicationsTable(props: Props) {
         </div>
         <span className="ml-auto text-gray-400">
           {stickyCount} pinned column{stickyCount === 1 ? '' : 's'} · drag a header edge to resize ·
-          click a cell to edit
+          {readOnly ? 'read-only manager view' : 'click a cell to edit'}
         </span>
       </div>
     </div>

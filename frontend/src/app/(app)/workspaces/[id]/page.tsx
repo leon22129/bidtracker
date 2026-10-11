@@ -288,6 +288,7 @@ export default function WorkspaceTablePage() {
           reload();
           void refreshSummary();
         }}
+        canEdit={workspace.can_edit}
       />
 
       <div className="min-h-0 flex-1">
@@ -310,17 +311,20 @@ export default function WorkspaceTablePage() {
           onDownloadJobDescription={downloadJobDescription}
           onDownloadCoverLetter={downloadCoverLetter}
           onViewApplicationAnswers={viewApplicationAnswers}
+          readOnly={!workspace.can_edit}
         />
       </div>
 
-      <BulkActionsBar
-        user={user}
-        selectedIds={[...selectedIds]}
-        selectedRows={selectedRows}
-        onClear={clearSelection}
-        onBulkPatch={onBulkPatch}
-        onBulkDelete={onBulkDelete}
-      />
+      {workspace.can_edit && (
+        <BulkActionsBar
+          user={user}
+          selectedIds={[...selectedIds]}
+          selectedRows={selectedRows}
+          onClear={clearSelection}
+          onBulkPatch={onBulkPatch}
+          onBulkDelete={onBulkDelete}
+        />
+      )}
       {answersArtifact && (
         <ApplicationAnswersModal
           artifact={answersArtifact}

@@ -24,6 +24,7 @@ creator, so reassignment cannot move earlier work to another bidder.
 | `email` | TEXT UNIQUE | login identity, stored lowercase |
 | `password_hash` | TEXT | bcrypt, cost 10. Never selected into any API response. |
 | `role` | TEXT | `super_admin` \| `admin` \| `bidder_manager` \| `bidder` |
+| `manager_user_id` | TEXT FK nullable | For bidder rows, the assigned `bidder_manager`; deleting the manager clears the assignment |
 | `is_active` | BOOL | deactivation instead of delete when the user has payment history |
 | `created_at` / `updated_at` | DATETIME | |
 

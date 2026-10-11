@@ -65,6 +65,9 @@ export class WorkspacesService {
       created_at: w.created_at,
       updated_at: w.updated_at,
       profile: w.resumeProfile ? this.toProfile(w.resumeProfile) : null,
+      can_edit: user.role === 'super_admin'
+        || (user.role === 'admin' && w.created_by_user_id === user.id)
+        || (user.role !== 'admin' && w.owner_user_id === user.id),
       application_count: w._count.applications,
       applied_today_by_user: todayGroups
         .filter((group) => group.workspace_id === w.id)

@@ -34,6 +34,9 @@ export interface User {
   created_at: string;
   updated_at: string;
   owned_workspace_count?: number;
+  manager_user_id?: string | null;
+  manager?: { id: string; username: string } | null;
+  managed_bidder_count?: number;
 }
 
 export interface BannedUrlPattern {
@@ -56,6 +59,7 @@ export interface Workspace {
   created_at: string;
   updated_at: string;
   profile: ResumeProfile | null;
+  can_edit: boolean;
 }
 
 export interface ResumeProfile {

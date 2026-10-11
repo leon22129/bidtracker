@@ -28,6 +28,7 @@ model User {
   created_at         DateTime @default(now())
   updated_at         DateTime @updatedAt
   created_by_user_id String?
+  manager_user_id    String?
   slack_webhook_url  String?
   slack_user_id      String?
   slack_milestone_day DateTime?
@@ -36,6 +37,7 @@ model User {
   ownedWorkspaces          Workspace[]          @relation("WorkspaceOwner")
   createdWorkspaces        Workspace[]          @relation("WorkspaceCreator")
   createdUsers             User[]               @relation("UserCreator")
+  managedBidders          User[]               @relation("BidderManagerAssignments")
   resumeProfiles           ResumeProfile[]
   createdResumeProfiles    ResumeProfile[]      @relation("ResumeProfileCreator")
   createdApplications      JobApplication[]     @relation("CreatedBy")
@@ -44,9 +46,11 @@ model User {
   createdBannedUrlPatterns BannedUrlPattern[]   @relation("BannedUrlPatternCreator")
   resumeConversations      ResumeConversation[]
   creator                  User?                @relation("UserCreator", fields: [created_by_user_id], references: [id], onDelete: SetNull)
+  manager                  User?                @relation("BidderManagerAssignments", fields: [manager_user_id], references: [id], onDelete: SetNull)
 
   @@index([role])
   @@index([created_by_user_id])
+  @@index([manager_user_id])
   @@map("users")
 }
 

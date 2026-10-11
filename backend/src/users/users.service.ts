@@ -13,6 +13,8 @@ const PUBLIC_SELECT = {
   username: true,
   email: true,
   role: true,
+  manager_user_id: true,
+  manager: { select: { id: true, username: true } },
   is_active: true,
   created_at: true,
   updated_at: true,
@@ -30,13 +32,14 @@ export class UsersService {
       where: this.visibilityWhere(actingUser),
       select: {
         ...PUBLIC_SELECT,
-        _count: { select: { ownedWorkspaces: true } },
+        _count: { select: { ownedWorkspaces: true, managedBidders: true } },
       },
       orderBy: [{ role: 'asc' }, { username: 'asc' }],
     });
     return users.map(({ _count, ...u }) => ({
       ...u,
       owned_workspace_count: _count.ownedWorkspaces,
+      managed_bidder_count: _count.managedBidders,
     }));
   }
 
@@ -68,6 +71,11 @@ export class UsersService {
     const username = dto.username.trim();
 
     await this.assertUnique(email, username);
+    const managerUserId = await this.validateManagerAssignment(
+      dto.role,
+      dto.manager_user_id,
+      actingUser,
+    );
 
     return this.prisma.user.create({
       data: {
@@ -75,6 +83,7 @@ export class UsersService {
         email,
         password_hash: await hashPassword(dto.password),
         role: dto.role,
+        manager_user_id: managerUserId,
         created_by_user_id: actingUser.role === 'super_admin' ? null : actingUser.id,
       },
       select: PUBLIC_SELECT,
@@ -119,16 +128,38 @@ export class UsersService {
     const username = dto.username?.trim();
     await this.assertUnique(email, username, id);
 
-    return this.prisma.user.update({
+    const effectiveRole = dto.role ?? user.role;
+    const managerUserId = dto.manager_user_id !== undefined || effectiveRole !== 'bidder'
+      ? await this.validateManagerAssignment(
+        effectiveRole,
+        effectiveRole === 'bidder' ? dto.manager_user_id : null,
+        actingUser,
+      )
+      : undefined;
+
+    const update = this.prisma.user.update({
       where: { id },
       data: {
         ...(username !== undefined ? { username } : {}),
         ...(email !== undefined ? { email } : {}),
         ...(dto.role !== undefined ? { role: dto.role } : {}),
         ...(dto.is_active !== undefined ? { is_active: dto.is_active } : {}),
+        ...(managerUserId !== undefined ? { manager_user_id: managerUserId } : {}),
       },
       select: PUBLIC_SELECT,
     });
+
+    if (user.role === 'bidder_manager' && effectiveRole !== 'bidder_manager') {
+      const [, updated] = await this.prisma.$transaction([
+        this.prisma.user.updateMany({
+          where: { manager_user_id: id },
+          data: { manager_user_id: null },
+        }),
+        update,
+      ]);
+      return updated;
+    }
+    return update;
   }
 
   async resetPassword(id: string, dto: ResetPasswordDto, actingUser: AuthUser) {
@@ -194,6 +225,38 @@ export class UsersService {
         throw new ConflictException('That username is already taken');
       }
     }
+  }
+
+  private async validateManagerAssignment(
+    role: string,
+    managerUserId: string | null | undefined,
+    actingUser: AuthUser,
+  ): Promise<string | null | undefined> {
+    if (managerUserId === undefined) return undefined;
+    if (role !== 'bidder') {
+      if (managerUserId !== null) {
+        throw new BadRequestException('Only bidders can be assigned to a bidder manager');
+      }
+      return null;
+    }
+    if (managerUserId === null || managerUserId.trim() === '') return null;
+    if (actingUser.role !== 'admin') {
+      throw new BadRequestException('Only an admin can assign bidder managers');
+    }
+
+    const manager = await this.prisma.user.findFirst({
+      where: {
+        id: managerUserId,
+        role: 'bidder_manager',
+        is_active: true,
+        created_by_user_id: actingUser.id,
+      },
+      select: { id: true },
+    });
+    if (!manager) {
+      throw new BadRequestException('Manager must be an active bidder manager created by this admin');
+    }
+    return manager.id;
   }
 
   private visibilityWhere(actingUser: AuthUser) {
