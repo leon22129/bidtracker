@@ -3,6 +3,7 @@
 import { pdf } from '@react-pdf/renderer';
 import type React from 'react';
 import type { ResumeArtifact, ResumeData } from './types';
+import { downloadBlob } from './artifact-download';
 import {
   AcademicTemplate,
   BoldTemplate,
@@ -40,28 +41,11 @@ const coverLetterTemplates = {
   minimal: MinimalCoverLetterTemplate,
 } satisfies Record<CoverLetterTemplateId, React.ComponentType<any>>;
 
-function downloadBlob(blob: Blob, filename: string) {
-  const url = URL.createObjectURL(blob);
-  try {
-    const anchor = document.createElement('a');
-    anchor.href = url;
-    anchor.download = filename;
-    anchor.click();
-  } finally {
-    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-  }
-}
-
 export async function downloadResumePdf(artifact: ResumeArtifact) {
   const template = artifact.template in templates ? artifact.template as TemplateId : 'classic';
   const Template = templates[template];
   const blob = await pdf(<Template data={artifact.resume} />).toBlob();
   downloadBlob(blob, 'resume.pdf');
-}
-
-export function downloadJobDescription(artifact: ResumeArtifact) {
-  if (!artifact.job_description?.trim()) throw new Error('No job description was saved.');
-  downloadBlob(new Blob([artifact.job_description], { type: 'text/plain;charset=utf-8' }), 'jd.txt');
 }
 
 export async function downloadCoverLetterPdf(artifact: ResumeArtifact) {

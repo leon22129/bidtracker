@@ -15,11 +15,7 @@ import { TableToolbar } from '@/components/table/toolbar';
 import { useToast } from '@/components/ui/toast';
 import { ADMIN_ONLY_FIELDS } from '@/lib/permissions';
 import { ApplicationAnswersModal } from '@/components/table/application-answers-modal';
-import {
-  downloadCoverLetterPdf,
-  downloadJobDescription as downloadSavedJobDescription,
-  downloadResumePdf,
-} from '@/lib/resume-pdf';
+import { downloadJobDescription as downloadSavedJobDescription } from '@/lib/artifact-download';
 
 /**
  * The workspace grid page — the app's primary screen.
@@ -215,7 +211,10 @@ export default function WorkspaceTablePage() {
 
   const downloadResume = useCallback(async (row: JobApplication) => {
     try {
-      const artifact = await api.getApplicationResume(row.id);
+      const [artifact, { downloadResumePdf }] = await Promise.all([
+        api.getApplicationResume(row.id),
+        import('@/lib/resume-pdf'),
+      ]);
       await downloadResumePdf(artifact);
       toast.success('Resume downloaded.');
     } catch (err) {
@@ -235,7 +234,10 @@ export default function WorkspaceTablePage() {
 
   const downloadCoverLetter = useCallback(async (row: JobApplication) => {
     try {
-      const artifact = await api.getApplicationResume(row.id);
+      const [artifact, { downloadCoverLetterPdf }] = await Promise.all([
+        api.getApplicationResume(row.id),
+        import('@/lib/resume-pdf'),
+      ]);
       await downloadCoverLetterPdf(artifact);
       toast.success('Cover letter downloaded.');
     } catch (err) {
