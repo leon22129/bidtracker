@@ -7,6 +7,8 @@ import { canManageUsers, roleLabel } from '@/lib/permissions';
 import { ROLES, type Role, type User } from '@/lib/types';
 import { useToast } from '@/components/ui/toast';
 
+type UserStatusFilter = 'active' | 'deactivated' | 'all';
+
 /**
  * User administration — admin only.
  *
@@ -21,6 +23,7 @@ export default function UsersPage() {
   const [loading, setLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
   const [resetting, setResetting] = useState<User | null>(null);
+  const [statusFilter, setStatusFilter] = useState<UserStatusFilter>('active');
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -52,6 +55,15 @@ export default function UsersPage() {
     : ROLES.filter((role) => role === 'bidder' || role === 'bidder_manager');
 
   const bidderManagers = users.filter((u) => u.role === 'bidder_manager' && u.is_active);
+  const userCounts = {
+    active: users.filter((u) => u.is_active).length,
+    deactivated: users.filter((u) => !u.is_active).length,
+    all: users.length,
+  };
+  const filteredUsers = users.filter((u) => (
+    statusFilter === 'all'
+    || (statusFilter === 'active' ? u.is_active : !u.is_active)
+  ));
 
   async function patch(u: User, data: Partial<{
     role: Role;
@@ -103,6 +115,24 @@ export default function UsersPage() {
         </button>
       </div>
 
+      <div className="mb-4 flex flex-wrap gap-1.5" role="group" aria-label="Filter users by status">
+        {([
+          ['active', 'Active'],
+          ['deactivated', 'Deactivated'],
+          ['all', 'All'],
+        ] as const).map(([value, label]) => (
+          <button
+            key={value}
+            type="button"
+            className={statusFilter === value ? 'btn-primary btn-xs' : 'btn-secondary btn-xs'}
+            onClick={() => setStatusFilter(value)}
+            aria-pressed={statusFilter === value}
+          >
+            {label} ({userCounts[value]})
+          </button>
+        ))}
+      </div>
+
       {loading ? (
         <p className="text-sm text-gray-500">Loading…</p>
       ) : (
@@ -119,7 +149,7 @@ export default function UsersPage() {
               </tr>
             </thead>
             <tbody>
-              {users.map((u) => {
+              {filteredUsers.map((u) => {
                 const isMe = u.id === me?.id;
                 const lastAdmin = u.role === 'admin' && adminCount <= 1;
                 const roleOptions = [...new Set([u.role, ...addableRoles])];
@@ -215,6 +245,11 @@ export default function UsersPage() {
               })}
             </tbody>
           </table>
+          {filteredUsers.length === 0 && (
+            <p className="p-6 text-center text-xs text-gray-500">
+              No {statusFilter === 'all' ? '' : `${statusFilter} `}users found.
+            </p>
+          )}
         </div>
       )}
 
