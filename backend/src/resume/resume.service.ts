@@ -104,6 +104,13 @@ function usableJobInfo(value: unknown) {
   return /^(?:unavailable|unknown|n\/?a|not specified)(?:\s*,.*)?$/i.test(cleaned) ? '' : cleaned;
 }
 
+function workArrangementRejectionReason(workplace: unknown) {
+  const normalized = typeof workplace === 'string' ? workplace.trim().toLowerCase() : '';
+  if (/\bhybrid\b/.test(normalized)) return 'it is hybrid';
+  if (/\bon[\s-]?site\b/.test(normalized)) return 'it is onsite';
+  return 'it is not explicitly fully remote';
+}
+
 function normalizedJobDescription(value: string, info: EligibilityResult) {
   const marker = '\n\nJob Description\n';
   const markerIndex = value.indexOf(marker);
@@ -150,6 +157,11 @@ export class ApplicationGenerationService {
       throw new BadRequestException('The selected profile is not assigned to this workspace');
     }
 
+    if (await this.bannedUrls.matches(dto.url)) {
+      const application = await this.applications.createBannedApplication(user, workspace.id, dto.url);
+      return { success: false, banned: true, url: dto.url, application };
+    }
+
     const duplicate = (await this.duplicates.classifyBatch(workspace.id, [dto.url]))[0];
     if (duplicate.is_duplicate) {
       return {
@@ -161,11 +173,6 @@ export class ApplicationGenerationService {
           ? { existing_application: duplicate.existing }
           : {}),
       };
-    }
-
-    if (await this.bannedUrls.matches(dto.url)) {
-      const application = await this.applications.createBannedApplication(user, workspace.id, dto.url);
-      return { success: false, banned: true, url: dto.url, application };
     }
 
     const jobDescription = dto.job_description.trim();
@@ -212,13 +219,34 @@ export class ApplicationGenerationService {
     }
 
     const rejectionReasons: string[] = [];
-    if (eligibilityJson.requires_clearance) rejectionReasons.push('requires security clearance');
-    if (eligibilityJson.requires_public_trust) rejectionReasons.push('requires public trust');
-    if (!eligibilityJson.is_us_job) rejectionReasons.push('is not clearly a US job');
-    if (!eligibilityJson.work_arrangement_is_remote_only) rejectionReasons.push('is not explicitly fully remote');
-    if (eligibilityJson.requires_in_person_interview) rejectionReasons.push('requires an in-person interview');
-    if (eligibilityJson.requires_onsite_onboarding) rejectionReasons.push('requires onsite onboarding');
-    if (rejectionReasons.length) return { success: false, eligible: false, url: dto.url, reason: `Skipped because it ${rejectionReasons.join(', ')}.`, eligibility: eligibilityJson, job_description: normalizedDescription };
+    if (eligibilityJson.requires_clearance) rejectionReasons.push('it requires clearance');
+    if (eligibilityJson.requires_public_trust) rejectionReasons.push('it requires public trust');
+    if (!eligibilityJson.is_us_job) rejectionReasons.push('it is not clearly a US job');
+    if (!eligibilityJson.work_arrangement_is_remote_only) {
+      rejectionReasons.push(workArrangementRejectionReason(eligibilityJson.workplace));
+    }
+    if (eligibilityJson.requires_in_person_interview) rejectionReasons.push('it requires an in-person interview');
+    if (eligibilityJson.requires_onsite_onboarding) rejectionReasons.push('it requires onsite onboarding');
+    if (rejectionReasons.length) {
+      const note = `job eligibility check failed - ${rejectionReasons.join('; ')}`;
+      const application = await this.applications.createEligibilityRejectedApplication(user, {
+        workspace_id: workspace.id,
+        url: dto.url.trim(),
+        job_title: jobTitle,
+        company_name: companyName,
+        job_description: normalizedDescription,
+        note,
+      });
+      return {
+        success: false,
+        eligible: false,
+        url: dto.url,
+        reason: `Skipped because ${rejectionReasons.join(', ')}.`,
+        eligibility: eligibilityJson,
+        job_description: normalizedDescription,
+        application,
+      };
+    }
 
     let resumeUsage: OpenAiUsage | undefined;
     const resume = this.parseJson(await this.openAi(this.resumePrompt(profile, normalizedDescription), {

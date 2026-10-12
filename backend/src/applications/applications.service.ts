@@ -757,8 +757,12 @@ export class ApplicationsService {
     const normalizedUrl = normalizeUrl(url);
     const [verdict] = await this.duplicates.classifyBatch(workspaceId, [url]);
     if (verdict.is_duplicate && verdict.existing?.same_workspace) {
-      return this.prisma.jobApplication.findUnique({
+      return this.prisma.jobApplication.update({
         where: { id: verdict.existing.id },
+        data: {
+          application_status: 'Rejected',
+          note: BANNED_URL_NOTE,
+        },
         select: ROW_SELECT,
       });
     }
@@ -774,6 +778,55 @@ export class ApplicationsService {
           job_source: detectJobSource(url),
           application_status: 'Rejected',
           note: BANNED_URL_NOTE,
+          created_by_user_id: user.id,
+        },
+        select: ROW_SELECT,
+      }),
+    );
+    await this.slackNotifications.notifyApplicationCreated(user.id);
+    return application;
+  }
+
+  /** Records a job rejected by the AI eligibility gate without creating resume artifacts. */
+  async createEligibilityRejectedApplication(
+    user: AuthUser,
+    input: {
+      workspace_id: string;
+      url: string;
+      job_title: string;
+      company_name: string;
+      job_description: string;
+      note: string;
+    },
+  ) {
+    await this.access.assertCanEdit(user, input.workspace_id);
+    const url = input.url.trim();
+    const normalizedUrl = normalizeUrl(url);
+    const [verdict] = await this.duplicates.classifyBatch(input.workspace_id, [url]);
+    if (verdict.is_duplicate && verdict.existing?.same_workspace) {
+      return this.prisma.jobApplication.findUnique({
+        where: { id: verdict.existing.id },
+        select: ROW_SELECT,
+      });
+    }
+
+    const date = toDayStart(new Date());
+    const application = await this.numbering.withNextNumber(input.workspace_id, date, (number) =>
+      this.prisma.jobApplication.create({
+        data: {
+          workspace_id: input.workspace_id,
+          date,
+          number,
+          url,
+          normalized_url: normalizedUrl,
+          job_source: detectJobSource(url),
+          application_status: 'Rejected',
+          pipeline_status: 'Not Started',
+          company_name: input.company_name,
+          job_title: input.job_title,
+          job_fingerprint: createJobFingerprint(input.company_name, input.job_title),
+          job_description: input.job_description,
+          note: input.note,
           created_by_user_id: user.id,
         },
         select: ROW_SELECT,

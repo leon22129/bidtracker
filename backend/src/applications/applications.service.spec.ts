@@ -196,6 +196,65 @@ describe('ApplicationsService generated-application duplicate-click protection',
     expect(duplicates.findRecentJobMatch).not.toHaveBeenCalled();
   });
 
+  it('persists an eligibility rejection with its note and job details', async () => {
+    const { service, prisma, duplicates, slackNotifications } = setup();
+    duplicates.classifyBatch.mockResolvedValue([{
+      normalized_url: existing.normalized_url,
+      is_duplicate: false,
+    }]);
+    prisma.jobApplication.create.mockResolvedValue({
+      ...existing,
+      application_status: 'Rejected',
+      note: 'job eligibility check failed - it requires clearance',
+    });
+
+    await expect(service.createEligibilityRejectedApplication(user, {
+      ...dto,
+      job_description: 'A remote engineering role that requires clearance.',
+      note: 'job eligibility check failed - it requires clearance',
+    })).resolves.toMatchObject({ application_status: 'Rejected' });
+
+    expect(prisma.jobApplication.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        application_status: 'Rejected',
+        pipeline_status: 'Not Started',
+        company_name: dto.company_name,
+        job_title: dto.job_title,
+        job_description: 'A remote engineering role that requires clearance.',
+        note: 'job eligibility check failed - it requires clearance',
+        created_by_user_id: user.id,
+      }),
+    }));
+    expect(slackNotifications.notifyApplicationCreated).toHaveBeenCalledWith(user.id);
+  });
+
+  it('marks an existing banned URL rejected and saves the banned-list note', async () => {
+    const { service, prisma, duplicates } = setup();
+    duplicates.classifyBatch.mockResolvedValue([{
+      normalized_url: existing.normalized_url,
+      is_duplicate: true,
+      existing,
+    }]);
+    prisma.jobApplication.update.mockResolvedValue({
+      ...existing,
+      application_status: 'Rejected',
+      note: 'this job is in banned list',
+    });
+
+    await expect(service.createBannedApplication(user, dto.workspace_id, dto.url))
+      .resolves.toMatchObject({
+        application_status: 'Rejected',
+        note: 'this job is in banned list',
+      });
+    expect(prisma.jobApplication.update).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: existing.id },
+      data: {
+        application_status: 'Rejected',
+        note: 'this job is in banned list',
+      },
+    }));
+  });
+
   it('persists the reviewed resume, JD, template, and owned conversation', async () => {
     const { service, prisma, duplicates } = setup();
     duplicates.classifyBatch.mockResolvedValue([{

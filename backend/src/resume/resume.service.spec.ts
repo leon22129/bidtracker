@@ -55,6 +55,16 @@ describe('ApplicationGenerationService application metadata eligibility', () => 
       findRecentJobMatch: jest.fn().mockResolvedValue(null),
     };
     const applications = {
+      createBannedApplication: jest.fn().mockResolvedValue({
+        id: 'banned-application-1',
+        application_status: 'Rejected',
+        note: 'this job is in banned list',
+      }),
+      createEligibilityRejectedApplication: jest.fn().mockImplementation(async (_user, application) => ({
+        id: 'rejected-application-1',
+        application_status: 'Rejected',
+        ...application,
+      })),
       createGenerated: jest.fn().mockImplementation(async (_user, application) => ({
         success: true,
         already_added: false,
@@ -65,11 +75,12 @@ describe('ApplicationGenerationService application metadata eligibility', () => 
         },
       })),
     };
+    const bannedUrls = { matches: jest.fn().mockResolvedValue(false) };
     const service = new ApplicationGenerationService(
       prisma as any,
       access as any,
       duplicates as any,
-      { matches: jest.fn().mockResolvedValue(false) } as any,
+      bannedUrls as any,
       applications as any,
       {} as any,
     );
@@ -77,7 +88,7 @@ describe('ApplicationGenerationService application metadata eligibility', () => 
       id: 'conversation-1',
       openai_conversation_id: 'conv_openai_1',
     });
-    return { service, duplicates, prisma, access, applications };
+    return { service, duplicates, prisma, access, applications, bannedUrls };
   }
 
   const eligible = (overrides: Record<string, unknown> = {}) => JSON.stringify({
@@ -96,6 +107,29 @@ describe('ApplicationGenerationService application metadata eligibility', () => 
     requires_onsite_onboarding: false,
     reason: '',
     ...overrides,
+  });
+
+  it('records a banned URL before duplicate or eligibility checks', async () => {
+    const { service, applications, bannedUrls, duplicates } = setup();
+    bannedUrls.matches.mockResolvedValue(true);
+    const openAi = jest.spyOn(service as any, 'openAi');
+
+    await expect(service.generate(user, dto)).resolves.toMatchObject({
+      success: false,
+      banned: true,
+      application: {
+        application_status: 'Rejected',
+        note: 'this job is in banned list',
+      },
+    });
+
+    expect(applications.createBannedApplication).toHaveBeenCalledWith(
+      user,
+      dto.workspace_id,
+      dto.url,
+    );
+    expect(duplicates.classifyBatch).not.toHaveBeenCalled();
+    expect(openAi).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -117,7 +151,7 @@ describe('ApplicationGenerationService application metadata eligibility', () => 
   });
 
   it('normalizes job information within the single eligibility call for a skipped non-US job', async () => {
-    const { service } = setup();
+    const { service, applications } = setup();
     const openAi = jest.spyOn(service as any, 'openAi').mockResolvedValue(eligible({
       company_name: 'Trinnex',
       job_title: 'Senior Full Stack Developer',
@@ -139,6 +173,76 @@ describe('ApplicationGenerationService application metadata eligibility', () => 
       job_description: expect.stringContaining('Location: Canada (British Columbia, Alberta, Manitoba, or Ontario)'),
     });
     expect(openAi).toHaveBeenCalledTimes(1);
+    expect(applications.createEligibilityRejectedApplication).toHaveBeenCalledWith(
+      user,
+      expect.objectContaining({
+        company_name: 'Trinnex',
+        job_title: 'Senior Full Stack Developer',
+        note: 'job eligibility check failed - it is not clearly a US job; it is hybrid',
+      }),
+    );
+  });
+
+  it('records a clearance rejection with the requested note', async () => {
+    const { service, applications } = setup();
+    const openAi = jest.spyOn(service as any, 'openAi').mockResolvedValue(eligible({
+      requires_clearance: true,
+    }));
+
+    await expect(service.generate(user, dto)).resolves.toMatchObject({
+      success: false,
+      eligible: false,
+      application: {
+        id: 'rejected-application-1',
+        application_status: 'Rejected',
+      },
+    });
+    expect(openAi).toHaveBeenCalledTimes(1);
+    expect(applications.createEligibilityRejectedApplication).toHaveBeenCalledWith(user, {
+      workspace_id: dto.workspace_id,
+      url: dto.url,
+      job_title: 'Software Engineer',
+      company_name: 'Acme',
+      job_description: expect.stringContaining('Job Information'),
+      note: 'job eligibility check failed - it requires clearance',
+    });
+  });
+
+  it.each([
+    [
+      'onsite work',
+      { workplace: 'On-site', work_arrangement_is_remote_only: false },
+      'job eligibility check failed - it is onsite',
+    ],
+    [
+      'hybrid work',
+      { workplace: 'Hybrid', work_arrangement_is_remote_only: false },
+      'job eligibility check failed - it is hybrid',
+    ],
+    [
+      'onsite onboarding',
+      { requires_onsite_onboarding: true },
+      'job eligibility check failed - it requires onsite onboarding',
+    ],
+    [
+      'an in-person interview',
+      { requires_in_person_interview: true },
+      'job eligibility check failed - it requires an in-person interview',
+    ],
+  ])('records %s eligibility rejection in the applications table', async (_label, overrides, note) => {
+    const { service, applications } = setup();
+    const openAi = jest.spyOn(service as any, 'openAi').mockResolvedValue(eligible(overrides));
+
+    await expect(service.generate(user, dto)).resolves.toMatchObject({
+      success: false,
+      eligible: false,
+      application: { application_status: 'Rejected' },
+    });
+    expect(openAi).toHaveBeenCalledTimes(1);
+    expect(applications.createEligibilityRejectedApplication).toHaveBeenCalledWith(
+      user,
+      expect.objectContaining({ note }),
+    );
   });
 
   it('checks the company/title fingerprint before generating the resume', async () => {
