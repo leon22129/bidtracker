@@ -710,10 +710,14 @@ descriptions. Set `AI_LOG_CONTENT=true` to include previews, bounded by
 provider request IDs are logged regardless. Set `OPENAI_INPUT_COST_PER_1M_TOKENS`,
 `OPENAI_CACHED_INPUT_COST_PER_1M_TOKENS`, and `OPENAI_OUTPUT_COST_PER_1M_TOKENS` to the current
 rates for `OPENAI_MODEL` to add separate input/output and total estimated USD costs.
+For each successfully generated application, the launcher also prints a compact comparison of the
+resume-only usage and the combined eligibility-plus-resume usage. Later application-answer calls
+are logged separately and are not included in that initial generation total.
 
-Logs continue to appear in the terminal and are also stored as newline-delimited JSON in
-`backend/logs/YYYY-MM-DD.log`. Filesystem writes are queued asynchronously, and files older than
-`LOG_RETENTION_DAYS` (default 30) are removed during startup and daily rotation.
+The launcher prints a compact AI usage/cost comparison after each generated application. Detailed
+service output is redirected under `%TEMP%\bidtracker`, and structured events are stored as
+newline-delimited JSON in `backend/logs/YYYY-MM-DD.log`. Filesystem writes are queued asynchronously,
+and files older than `LOG_RETENTION_DAYS` (default 30) are removed during startup and daily rotation.
 
 ### Resume generation
 

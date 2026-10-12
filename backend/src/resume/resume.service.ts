@@ -23,7 +23,12 @@ import {
 import { BannedUrlService } from '../applications/banned-url.service';
 import { ApplicationsService } from '../applications/applications.service';
 import { WorkspacesService } from '../workspaces/workspaces.service';
-import { OpenAiUsage, openAiUsageFields } from './openai-telemetry';
+import {
+  combineOpenAiUsage,
+  OpenAiUsage,
+  openAiUsageFields,
+  prefixedOpenAiUsageFields,
+} from './openai-telemetry';
 import {
   parseApplicationHistory,
   serializeApplicationHistory,
@@ -52,6 +57,7 @@ type OpenAiOptions = {
   instructions?: string;
   maxOutputTokens?: number;
   operation?: string;
+  onUsage?: (usage: OpenAiUsage | undefined) => void;
 };
 
 function envEnabled(name: string) {
@@ -163,8 +169,10 @@ export class ApplicationGenerationService {
     }
 
     const jobDescription = dto.job_description.trim();
+    let eligibilityUsage: OpenAiUsage | undefined;
     const eligibility = await this.openAi(buildJobEligibilityPrompt(jobDescription, dto.url), {
       operation: 'job_eligibility',
+      onUsage: (usage) => { eligibilityUsage = usage; },
     });
     const eligibilityJson = this.parseEligibility(eligibility);
     const companyName = typeof eligibilityJson.company_name === 'string'
@@ -212,8 +220,10 @@ export class ApplicationGenerationService {
     if (eligibilityJson.requires_onsite_onboarding) rejectionReasons.push('requires onsite onboarding');
     if (rejectionReasons.length) return { success: false, eligible: false, url: dto.url, reason: `Skipped because it ${rejectionReasons.join(', ')}.`, eligibility: eligibilityJson, job_description: normalizedDescription };
 
+    let resumeUsage: OpenAiUsage | undefined;
     const resume = this.parseJson(await this.openAi(this.resumePrompt(profile, normalizedDescription), {
       operation: 'resume_generation',
+      onUsage: (usage) => { resumeUsage = usage; },
     }));
     const conversation = await this.createAnswerConversation(
       user,
@@ -239,7 +249,19 @@ export class ApplicationGenerationService {
         ? profile.cover_letter_template || 'classic'
         : undefined,
     });
-    if (!saved.success) return saved;
+    if (!saved.success || !saved.application) return saved;
+
+    logEvent(this.logger, 'log', 'application_generation_usage', {
+      model: MODEL,
+      application_id: saved.application.id,
+      scope: 'eligibility_and_resume_generation',
+      ...prefixedOpenAiUsageFields('eligibility', eligibilityUsage),
+      ...prefixedOpenAiUsageFields('resume', resumeUsage),
+      ...prefixedOpenAiUsageFields(
+        'application',
+        combineOpenAiUsage([eligibilityUsage, resumeUsage]),
+      ),
+    });
 
     return {
       success: true,
@@ -668,6 +690,7 @@ ${JSON.stringify(resume)}`;
       ...(options.conversationId ? { conversation: options.conversationId } : {}),
       ...(options.instructions ? { instructions: options.instructions } : {}),
     }, 'POST', options.operation || 'response_generation') as OpenAiResponse;
+    options.onUsage?.(data.usage);
     const text = responseText(data);
     if (!text?.trim()) throw new BadGatewayException('OpenAI returned an empty response');
     return text.trim();

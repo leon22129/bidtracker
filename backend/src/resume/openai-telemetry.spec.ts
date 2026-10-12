@@ -1,4 +1,8 @@
-import { openAiUsageFields } from './openai-telemetry';
+import {
+  combineOpenAiUsage,
+  openAiUsageFields,
+  prefixedOpenAiUsageFields,
+} from './openai-telemetry';
 
 describe('openAiUsageFields', () => {
   const rateNames = [
@@ -52,6 +56,42 @@ describe('openAiUsageFields', () => {
       output_cost_usd: null,
       estimated_total_cost_usd: null,
       pricing_rates_configured: false,
+    });
+  });
+
+  it('combines component usage for an application total', () => {
+    expect(combineOpenAiUsage([
+      {
+        input_tokens: 2000,
+        input_tokens_details: { cached_tokens: 500 },
+        output_tokens: 400,
+        output_tokens_details: { reasoning_tokens: 100 },
+        total_tokens: 2400,
+      },
+      {
+        input_tokens: 7000,
+        input_tokens_details: { cached_tokens: 1000 },
+        output_tokens: 4500,
+        output_tokens_details: { reasoning_tokens: 1500 },
+        total_tokens: 11500,
+      },
+    ])).toEqual({
+      input_tokens: 9000,
+      input_tokens_details: { cached_tokens: 1500 },
+      output_tokens: 4900,
+      output_tokens_details: { reasoning_tokens: 1600 },
+      total_tokens: 13900,
+    });
+  });
+
+  it('prefixes component fields for one comparison event', () => {
+    expect(prefixedOpenAiUsageFields('resume', {
+      input_tokens: 10,
+      output_tokens: 5,
+    })).toMatchObject({
+      resume_input_tokens: 10,
+      resume_output_tokens: 5,
+      resume_total_tokens: 15,
     });
   });
 });
