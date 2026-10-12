@@ -696,7 +696,7 @@ Full annotated list in [.env.example](.env.example). The ones worth knowing:
 | `DISABLE_CONVERSATION_CLEANUP`                    | `false`               | Disables provider conversation retention cleanup when explicitly required.             |
 | `ALLOW_BIDDER_PENDING_TO_REJECTED`                 | `false`               | Adds one extra transition beyond the spec's two.                                       |
 | `OPENAI_API_KEY`                                    | —                    | Server-only key used by `POST /api/applications/generate`; never send it to the browser. |
-| `OPENAI_MODEL`                                      | `gpt-5.6-sol`        | OpenAI Responses API model used for eligibility, resume, and answer generation.        |
+| `OPENAI_MODEL`                                      | `gpt-5.6-terra`      | OpenAI Responses API model used for eligibility, resume, and answer generation.        |
 
 ### Logging and AI cost variables
 
