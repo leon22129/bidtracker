@@ -8,6 +8,42 @@ import { ROLES, type Role, type User } from '@/lib/types';
 import { useToast } from '@/components/ui/toast';
 
 type UserStatusFilter = 'active' | 'deactivated' | 'all';
+type UserRow = { user: User; isManagedBidder: boolean };
+
+function groupUsersByManager(users: User[]): UserRow[] {
+  const visibleUserIds = new Set(users.map((user) => user.id));
+  const biddersByManager = new Map<string, User[]>();
+  const groupedBidderIds = new Set<string>();
+
+  for (const user of users) {
+    if (
+      user.role !== 'bidder'
+      || !user.manager_user_id
+      || !visibleUserIds.has(user.manager_user_id)
+    ) continue;
+
+    const managerBidders = biddersByManager.get(user.manager_user_id) ?? [];
+    managerBidders.push(user);
+    biddersByManager.set(user.manager_user_id, managerBidders);
+    groupedBidderIds.add(user.id);
+  }
+
+  const rows: UserRow[] = [];
+  for (const manager of users.filter((user) => user.role === 'bidder_manager')) {
+    rows.push({ user: manager, isManagedBidder: false });
+    for (const bidder of biddersByManager.get(manager.id) ?? []) {
+      rows.push({ user: bidder, isManagedBidder: true });
+    }
+  }
+
+  for (const user of users) {
+    if (user.role !== 'bidder_manager' && !groupedBidderIds.has(user.id)) {
+      rows.push({ user, isManagedBidder: false });
+    }
+  }
+
+  return rows;
+}
 
 /**
  * User administration. Admins manage their account; bidder managers manage their own bidders.
@@ -67,6 +103,7 @@ export default function UsersPage() {
     statusFilter === 'all'
     || (statusFilter === 'active' ? u.is_active : !u.is_active)
   ));
+  const userRows = groupUsersByManager(filteredUsers);
 
   async function patch(u: User, data: Partial<{
     role: Role;
@@ -154,18 +191,30 @@ export default function UsersPage() {
               </tr>
             </thead>
             <tbody>
-              {filteredUsers.map((u) => {
+              {userRows.map(({ user: u, isManagedBidder }) => {
                 const isMe = u.id === me?.id;
                 const lastAdmin = u.role === 'admin' && adminCount <= 1;
                 const roleOptions = [...new Set([u.role, ...addableRoles])];
                 return (
-                  <tr key={u.id} className={`border-t border-gray-100 ${u.is_active ? '' : 'bg-gray-50 text-gray-500'}`}>
+                  <tr
+                    key={u.id}
+                    className={`border-t border-gray-100 ${
+                      u.is_active ? '' : 'bg-gray-50 text-gray-500'
+                    } ${u.role === 'bidder_manager' ? 'bg-slate-50/60' : ''}`}
+                  >
                     <td className="px-3 py-2">
-                      <div className="font-medium">
-                        {u.username}
-                        {isMe && <span className="ml-1.5 text-2xs text-gray-500">(you)</span>}
+                      <div className={isManagedBidder ? 'flex items-start pl-5' : ''}>
+                        {isManagedBidder && (
+                          <span className="mr-2 text-gray-300" aria-hidden="true">&#8627;</span>
+                        )}
+                        <div>
+                          <div className="font-medium">
+                            {u.username}
+                            {isMe && <span className="ml-1.5 text-2xs text-gray-500">(you)</span>}
+                          </div>
+                          <div className="text-2xs text-gray-500">{u.email}</div>
+                        </div>
                       </div>
-                      <div className="text-2xs text-gray-500">{u.email}</div>
                     </td>
                     <td className="px-3 py-2">
                       <select
