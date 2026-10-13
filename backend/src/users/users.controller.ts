@@ -7,10 +7,10 @@ import { Roles } from '../common/decorators/roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { AuthUser, CurrentUser } from '../common/decorators/current-user.decorator';
 
-/** Entire controller is admin-only: user management is not delegated to bidder managers. */
+/** Admins manage their account; bidder managers manage only bidders allocated to them. */
 @Controller('users')
 @UseGuards(RolesGuard)
-@Roles('admin', 'super_admin')
+@Roles('admin', 'super_admin', 'bidder_manager')
 export class UsersController {
   constructor(private readonly users: UsersService) {}
 

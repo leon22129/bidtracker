@@ -22,9 +22,17 @@ export class PaymentsService {
     // immutable application creator instead, so reassignment does not hide their historical work.
     const workspaceIds = admin ? await this.access.visibleWorkspaceIds(user) : null;
     if (workspaceIds?.length === 0) {
-      return { start_date: range.start, end_date: range.end, bidders: [], total_applied: 0 };
+      return { start_date: range.start, end_date: range.end, bidders: [], managers: [], total_applied: 0 };
     }
-    const bidderId = admin ? period.bidder_id : user.id;
+    const bidderId = admin
+      ? period.bidder_id
+      : user.role === 'bidder' ? user.id : undefined;
+    const creatorScope = user.role === 'bidder_manager'
+      ? {
+        role: { in: [...PAYABLE_ROLES] },
+        OR: [{ id: user.id }, { manager_user_id: user.id }],
+      }
+      : { role: { in: [...PAYABLE_ROLES] } };
 
     const counts = await this.prisma.jobApplication.groupBy({
       by: ['created_by_user_id', 'workspace_id'],
@@ -34,7 +42,7 @@ export class PaymentsService {
         date: { gte: range.start, lte: endOfDay(range.end) },
         ...(workspaceIds ? { workspace_id: { in: workspaceIds } } : {}),
         ...(bidderId ? { created_by_user_id: bidderId } : {}),
-        createdByUser: { is: { role: { in: [...PAYABLE_ROLES] } } },
+        createdByUser: { is: creatorScope },
       },
       _count: { _all: true },
     });
@@ -45,11 +53,16 @@ export class PaymentsService {
       ? await Promise.all([
         this.prisma.workspace.findMany({
           where: { id: { in: counts.map((row) => row.workspace_id) } },
-          select: { id: true, name: true },
+          select: { id: true, name: true, resumeProfile: { select: { name: true } } },
         }),
         this.prisma.user.findMany({
           where: { id: { in: creatorIds } },
-          select: { id: true, username: true },
+          select: {
+            id: true,
+            username: true,
+            role: true,
+            manager: { select: { id: true, username: true } },
+          },
         }),
       ])
       : [[], []];
@@ -57,6 +70,18 @@ export class PaymentsService {
     const creatorById = new Map(creators.map((creator) => [creator.id, creator]));
 
     const bidders = new Map<string, { bidder_id: string; bidder_username: string; applied_count: number; workspaces: Array<{ workspace_id: string; workspace_name: string; applied_count: number }> }>();
+    const managers = new Map<string, {
+      manager_id: string | null;
+      manager_username: string;
+      applied_count: number;
+      profiles: Array<{
+        workspace_id: string;
+        profile_name: string;
+        bidder_id: string;
+        bidder_username: string;
+        applied_count: number;
+      }>;
+    }>();
     for (const row of counts) {
       const workspace = workspaceById.get(row.workspace_id);
       const creatorId = row.created_by_user_id;
@@ -66,12 +91,45 @@ export class PaymentsService {
       bidder.applied_count += row._count._all;
       bidder.workspaces.push({ workspace_id: workspace.id, workspace_name: workspace.name, applied_count: row._count._all });
       bidders.set(creatorId, bidder);
+
+      const managerId = creator.role === 'bidder_manager'
+        ? creator.id
+        : creator.manager?.id ?? null;
+      const managerUsername = creator.role === 'bidder_manager'
+        ? creator.username
+        : creator.manager?.username ?? 'Unassigned';
+      const managerKey = managerId ?? 'unassigned';
+      const manager = managers.get(managerKey) ?? {
+        manager_id: managerId,
+        manager_username: managerUsername,
+        applied_count: 0,
+        profiles: [],
+      };
+      manager.applied_count += row._count._all;
+      manager.profiles.push({
+        workspace_id: workspace.id,
+        profile_name: workspace.resumeProfile?.name ?? workspace.name,
+        bidder_id: creator.id,
+        bidder_username: creator.username,
+        applied_count: row._count._all,
+      });
+      managers.set(managerKey, manager);
     }
     const bidderRows = [...bidders.values()].sort((a, b) => b.applied_count - a.applied_count);
+    const managerRows = [...managers.values()]
+      .map((manager) => ({
+        ...manager,
+        profiles: manager.profiles.sort((a, b) => (
+          a.profile_name.localeCompare(b.profile_name)
+          || a.bidder_username.localeCompare(b.bidder_username)
+        )),
+      }))
+      .sort((a, b) => b.applied_count - a.applied_count || a.manager_username.localeCompare(b.manager_username));
     return {
       start_date: range.start,
       end_date: range.end,
       bidders: bidderRows,
+      managers: managerRows,
       total_applied: bidderRows.reduce((total, bidder) => total + bidder.applied_count, 0),
     };
   }

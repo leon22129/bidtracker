@@ -171,7 +171,7 @@ describe('WorkspacesService', () => {
     });
   });
 
-  it('blocks non-admin users from changing workspace ownership', async () => {
+  it('blocks bidders from changing workspace ownership', async () => {
     const service = new WorkspacesService(prisma as never, access as never, conversationCleanup as never);
     prisma.workspace.findUnique.mockResolvedValue({
       id: 'w-1', name: 'Workspace', owner_user_id: 'u-1',
@@ -180,40 +180,135 @@ describe('WorkspacesService', () => {
     await expect(service.update('w-1', { owner_user_id: 'u-2' }, {
       id: 'u-1', username: 'bidder', email: 'bidder@example.com', role: 'bidder',
     })).rejects.toEqual(
-      new ForbiddenException('Only an admin can change workspace ownership or archive state'),
+      new ForbiddenException('Only the assigned bidder manager can choose who works on a profile'),
     );
 
     expect(prisma.workspace.update).not.toHaveBeenCalled();
   });
 
-  it('keeps the workspace-owned profile during workspace owner reassignment', async () => {
-    const profile = { id: 'profile-1', workspace_id: 'workspace-1', name: 'Workspace profile' };
-    const tx = {
-      resumeProfile: {
-        findUnique: jest.fn().mockResolvedValue(profile), create: jest.fn(), update: jest.fn(),
-      },
-      workspace: { update: jest.fn().mockResolvedValue({ id: 'workspace-1' }) },
-    };
+  it('blocks admins from assigning a profile directly to a bidder', async () => {
+    const service = new WorkspacesService(prisma as never, access as never, conversationCleanup as never);
+    prisma.workspace.findUnique.mockResolvedValue({
+      id: 'workspace-1', name: 'Workspace', owner_user_id: 'manager-1',
+    });
+
+    await expect(service.update('workspace-1', { owner_user_id: 'bidder-1' }, {
+      id: 'admin-1', username: 'admin', email: 'admin@example.com', role: 'admin',
+    })).rejects.toEqual(
+      new ForbiddenException('Only the assigned bidder manager can choose who works on a profile'),
+    );
+    expect(prisma.workspace.update).not.toHaveBeenCalled();
+  });
+
+  it('requires admins to create profiles under a bidder manager', async () => {
     const localPrisma = {
-      workspace: { findUnique: jest.fn().mockResolvedValue({
-        id: 'workspace-1', name: 'Workspace', owner_user_id: 'old-owner',
-        created_by_user_id: 'admin-1',
-      }) },
-      user: { findUnique: jest.fn().mockResolvedValue({ id: 'new-owner', role: 'bidder' }) },
-      $transaction: jest.fn((callback) => callback(tx)),
+      user: { findUnique: jest.fn().mockResolvedValue({ id: 'bidder-1', role: 'bidder' }) },
     };
     const service = new WorkspacesService(
       localPrisma as never, access as never, conversationCleanup as never,
     );
 
-    await service.update('workspace-1', { owner_user_id: 'new-owner' }, {
+    await expect(service.create({ name: 'Profile', owner_user_id: 'bidder-1' }, {
       id: 'admin-1', username: 'admin', email: 'admin@example.com', role: 'admin',
-    });
+    })).rejects.toThrow('Admins must assign new profiles to a bidder manager');
+  });
 
-    expect(tx.resumeProfile.create).not.toHaveBeenCalled();
-    expect(tx.resumeProfile.update).not.toHaveBeenCalled();
-    expect(tx.workspace.update).toHaveBeenCalledWith(expect.objectContaining({
-      data: expect.objectContaining({ owner_user_id: 'new-owner' }),
+  it('lets a manager assign only one of their active bidders to an allocated profile', async () => {
+    const localPrisma = {
+      workspace: {
+        findFirst: jest.fn().mockResolvedValue({ id: 'workspace-1' }),
+        update: jest.fn().mockResolvedValue({ id: 'workspace-1', owner_user_id: 'bidder-1' }),
+      },
+      user: { findFirst: jest.fn().mockResolvedValue({ id: 'bidder-1' }) },
+    };
+    const service = new WorkspacesService(
+      localPrisma as never, access as never, conversationCleanup as never,
+    );
+    const manager = {
+      id: 'manager-1', username: 'manager', email: 'manager@example.com', role: 'bidder_manager' as const,
+    };
+
+    await expect(service.assignBidder('workspace-1', 'bidder-1', manager))
+      .resolves.toMatchObject({ owner_user_id: 'bidder-1' });
+    expect(localPrisma.workspace.findFirst).toHaveBeenCalledWith({
+      where: { id: 'workspace-1', manager_user_id: manager.id },
+      select: { id: true },
+    });
+    expect(localPrisma.user.findFirst).toHaveBeenCalledWith({
+      where: {
+        id: 'bidder-1', role: 'bidder', is_active: true, manager_user_id: manager.id,
+      },
+      select: { id: true },
+    });
+  });
+
+  it('lets a manager reclaim a profile to work on it themselves', async () => {
+    const localPrisma = {
+      workspace: {
+        findFirst: jest.fn().mockResolvedValue({ id: 'workspace-1' }),
+        update: jest.fn().mockResolvedValue({ id: 'workspace-1', owner_user_id: 'manager-1' }),
+      },
+      user: { findFirst: jest.fn() },
+    };
+    const service = new WorkspacesService(
+      localPrisma as never, access as never, conversationCleanup as never,
+    );
+    const manager = {
+      id: 'manager-1', username: 'manager', email: 'manager@example.com', role: 'bidder_manager' as const,
+    };
+
+    await expect(service.assignBidder('workspace-1', manager.id, manager))
+      .resolves.toMatchObject({ owner_user_id: manager.id });
+    expect(localPrisma.user.findFirst).not.toHaveBeenCalled();
+    expect(localPrisma.workspace.update).toHaveBeenCalledWith(expect.objectContaining({
+      data: { owner_user_id: manager.id },
+    }));
+  });
+
+  it('returns only manager-owned profiles to the extension', async () => {
+    const localPrisma = {
+      resumeProfile: { findMany: jest.fn().mockResolvedValue([]) },
+    };
+    access.visibleWorkspaceIds.mockResolvedValue(['manager-profile', 'bidder-profile']);
+    const service = new WorkspacesService(
+      localPrisma as never, access as never, conversationCleanup as never,
+    );
+    const manager = {
+      id: 'manager-1', username: 'manager', email: 'manager@example.com', role: 'bidder_manager' as const,
+    };
+
+    await service.listProfiles(manager);
+
+    expect(localPrisma.resumeProfile.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: {
+        workspace: {
+          is_archived: false,
+          owner_user_id: manager.id,
+          manager_user_id: manager.id,
+        },
+      },
+    }));
+  });
+
+  it('moves an admin-assigned profile into the manager extension queue', async () => {
+    const localPrisma = {
+      user: { findFirst: jest.fn().mockResolvedValue({ id: 'manager-1' }) },
+      workspace: { update: jest.fn().mockResolvedValue({
+        id: 'workspace-1', manager_user_id: 'manager-1', owner_user_id: 'manager-1',
+      }) },
+    };
+    const service = new WorkspacesService(
+      localPrisma as never, access as never, conversationCleanup as never,
+    );
+    const admin = {
+      id: 'admin-1', username: 'admin', email: 'admin@example.com', role: 'admin' as const,
+    };
+
+    await service.assignManager('workspace-1', 'manager-1', admin);
+
+    expect(localPrisma.workspace.update).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: 'workspace-1' },
+      data: { manager_user_id: 'manager-1', owner_user_id: 'manager-1' },
     }));
   });
 });

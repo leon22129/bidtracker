@@ -51,8 +51,10 @@ export interface Workspace {
   id: string;
   name: string;
   owner_user_id: string;
+  manager_user_id?: string | null;
   created_by_user_id?: string;
   owner: { id: string; username: string; email: string };
+  manager?: { id: string; username: string; email: string } | null;
   is_archived: boolean;
   application_count: number;
   applied_today_by_user: Array<{ user_id: string; username: string; count: number }>;
@@ -175,6 +177,18 @@ export interface PaymentReportResult {
     bidder_username: string;
     applied_count: number;
     workspaces: Array<{ workspace_id: string; workspace_name: string; applied_count: number }>;
+  }>;
+  managers: Array<{
+    manager_id: string | null;
+    manager_username: string;
+    applied_count: number;
+    profiles: Array<{
+      workspace_id: string;
+      profile_name: string;
+      bidder_id: string;
+      bidder_username: string;
+      applied_count: number;
+    }>;
   }>;
 }
 

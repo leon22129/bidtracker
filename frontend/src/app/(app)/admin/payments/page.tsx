@@ -80,15 +80,65 @@ export default function PaymentsPage() {
       </section>
 
       {loading ? <p className="text-sm text-gray-500">Loading...</p> : (
-        <section className="card overflow-hidden">
-          <table className="w-full text-xs">
-            <thead className="bg-gray-50 text-left text-2xs uppercase tracking-wide text-gray-500"><tr><th className="px-3 py-2">Bidder</th><th className="px-3 py-2">Workspaces</th><th className="px-3 py-2 text-right">Applied</th>{isAdmin(user) && <th className="px-3 py-2 text-right">Action</th>}</tr></thead>
-            <tbody>
-              {data?.bidders.map((bidder) => <tr key={bidder.bidder_id} className="border-t border-gray-100"><td className="px-3 py-2 font-medium">{bidder.bidder_username}</td><td className="px-3 py-2 text-gray-600">{bidder.workspaces.map((workspace) => `${workspace.workspace_name} (${workspace.applied_count})`).join(', ')}</td><td className="px-3 py-2 text-right font-semibold tabular-nums">{bidder.applied_count.toLocaleString()}</td>{isAdmin(user) && <td className="px-3 py-2 text-right"><button type="button" className="btn-primary btn-xs" disabled={processing !== null} onClick={() => void processPayment(bidder.bidder_id, bidder.bidder_username, bidder.applied_count)}>{processing === bidder.bidder_id ? 'Processing...' : 'Process Payment'}</button></td>}</tr>)}
-            </tbody>
-          </table>
-          {data?.bidders.length === 0 && <p className="p-6 text-center text-xs text-gray-500">No unpaid Applied applications in this period.</p>}
-        </section>
+        <>
+          <section className="space-y-4">
+            {data?.managers.map((manager) => (
+              <div key={manager.manager_id ?? 'unassigned'} className="card overflow-hidden">
+                <div className="flex items-center justify-between bg-gray-50 px-4 py-3 text-sm font-semibold">
+                  <span>{manager.manager_username} (manager)</span>
+                  <span className="tabular-nums">total {manager.applied_count.toLocaleString()}</span>
+                </div>
+                <div className="divide-y divide-gray-100">
+                  {manager.profiles.map((profile) => (
+                    <div
+                      key={`${profile.workspace_id}:${profile.bidder_id}`}
+                      className="flex items-center justify-between px-4 py-2.5 text-xs"
+                    >
+                      <span>{profile.profile_name} ({profile.bidder_username})</span>
+                      <span className="font-semibold tabular-nums">{profile.applied_count.toLocaleString()}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+            {data?.managers.length === 0 && (
+              <div className="card p-6 text-center text-xs text-gray-500">
+                No unpaid Applied applications in this period.
+              </div>
+            )}
+          </section>
+
+          {isAdmin(user) && Boolean(data?.bidders.length) && (
+            <section className="mt-6">
+              <h2 className="mb-2 text-sm font-semibold">Payment processing</h2>
+              <div className="card overflow-hidden">
+                <table className="w-full text-xs">
+                  <thead className="bg-gray-50 text-left text-2xs uppercase tracking-wide text-gray-500">
+                    <tr><th className="px-3 py-2">Bidder</th><th className="px-3 py-2 text-right">Applied</th><th className="px-3 py-2 text-right">Action</th></tr>
+                  </thead>
+                  <tbody>
+                    {data?.bidders.map((bidder) => (
+                      <tr key={bidder.bidder_id} className="border-t border-gray-100">
+                        <td className="px-3 py-2 font-medium">{bidder.bidder_username}</td>
+                        <td className="px-3 py-2 text-right font-semibold tabular-nums">{bidder.applied_count.toLocaleString()}</td>
+                        <td className="px-3 py-2 text-right">
+                          <button
+                            type="button"
+                            className="btn-primary btn-xs"
+                            disabled={processing !== null}
+                            onClick={() => void processPayment(bidder.bidder_id, bidder.bidder_username, bidder.applied_count)}
+                          >
+                            {processing === bidder.bidder_id ? 'Processing...' : 'Process Payment'}
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          )}
+        </>
       )}
 
       {isAdmin(user) && <section className="mt-8">

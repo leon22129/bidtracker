@@ -137,7 +137,7 @@ export const api = {
   listWorkspaces: (includeArchived = false) =>
     request<Workspace[]>(`/workspaces${qs({ includeArchived: includeArchived || undefined })}`),
   getWorkspace: (id: string) => request<Workspace>(`/workspaces/${id}`),
-  createWorkspace: (data: { name: string; owner_user_id: string }) =>
+  createWorkspace: (data: { name: string; owner_user_id: string; manager_user_id?: string }) =>
     request<Workspace>('/workspaces', { method: 'POST', body: JSON.stringify(data) }),
   updateWorkspace: (
     id: string,
@@ -160,6 +160,14 @@ export const api = {
     }>,
   ) => request<Workspace>(`/workspaces/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   assignedProfiles: () => request<Array<{ id: string; name: string }>>('/workspaces/profiles/assigned'),
+  assignWorkspaceManager: (id: string, managerUserId: string | null) =>
+    request<Workspace>(`/workspaces/${id}/manager`, {
+      method: 'PATCH', body: JSON.stringify({ manager_user_id: managerUserId }),
+    }),
+  assignWorkspaceBidder: (id: string, ownerUserId: string) =>
+    request<Workspace>(`/workspaces/${id}/bidder`, {
+      method: 'PATCH', body: JSON.stringify({ owner_user_id: ownerUserId }),
+    }),
   deleteWorkspace: (id: string) =>
     request<{ success: boolean; deleted_applications: number }>(`/workspaces/${id}`, {
       method: 'DELETE',

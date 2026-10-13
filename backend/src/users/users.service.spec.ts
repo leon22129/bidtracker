@@ -11,6 +11,7 @@ describe('UsersService bidder manager assignments', () => {
       user: {
         findUnique: jest.fn(),
         findFirst: jest.fn(),
+        create: jest.fn(),
         update: jest.fn(),
       },
     };
@@ -62,5 +63,31 @@ describe('UsersService bidder manager assignments', () => {
         new BadRequestException('Manager must be an active bidder manager created by this admin'),
       );
     expect(prisma.user.update).not.toHaveBeenCalled();
+  });
+
+  it('allocates a bidder created by a bidder manager to that manager', async () => {
+    const { service } = setup();
+    const manager = {
+      id: 'manager-1', username: 'manager', email: 'manager@example.com', role: 'bidder_manager' as const,
+    };
+
+    await expect((service as any).validateManagerAssignment('bidder', manager.id, manager))
+      .resolves.toBe(manager.id);
+  });
+
+  it('lets a bidder manager deactivate only an allocated bidder', async () => {
+    const { prisma, service } = setup();
+    const manager = {
+      id: 'manager-1', username: 'manager', email: 'manager@example.com', role: 'bidder_manager' as const,
+    };
+    prisma.user.findUnique.mockResolvedValue({ id: 'bidder-1', role: 'bidder' });
+    prisma.user.findFirst.mockResolvedValue({ id: 'bidder-1' });
+    prisma.user.update.mockResolvedValue({ id: 'bidder-1', is_active: false });
+
+    await expect(service.update('bidder-1', { is_active: false }, manager))
+      .resolves.toMatchObject({ is_active: false });
+    expect(prisma.user.update).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: 'bidder-1' }, data: { is_active: false },
+    }));
   });
 });

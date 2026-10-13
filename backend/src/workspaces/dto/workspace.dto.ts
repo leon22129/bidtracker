@@ -9,6 +9,10 @@ export class CreateWorkspaceDto {
   /** The bidder who gets paid for this tab. */
   @IsString()
   owner_user_id: string;
+
+  @IsOptional()
+  @IsString()
+  manager_user_id?: string;
 }
 
 export class UpdateWorkspaceDto {
@@ -21,6 +25,10 @@ export class UpdateWorkspaceDto {
   @IsOptional()
   @IsString()
   owner_user_id?: string;
+
+  @IsOptional()
+  @IsString()
+  manager_user_id?: string | null;
 
   @IsOptional()
   @IsBoolean()

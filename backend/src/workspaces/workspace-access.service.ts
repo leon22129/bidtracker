@@ -21,6 +21,7 @@ export class WorkspaceAccessService {
       select: {
         id: true,
         owner_user_id: true,
+        manager_user_id: true,
         created_by_user_id: true,
         owner: { select: { manager_user_id: true } },
       },
@@ -41,7 +42,7 @@ export class WorkspaceAccessService {
   async assertCanView(user: AuthUser, workspaceId: string): Promise<void> {
     const workspace = await this.workspaceAccessRecord(workspaceId);
     const canViewAssignedBidder = user.role === 'bidder_manager'
-      && workspace.owner.manager_user_id === user.id;
+      && (workspace.manager_user_id === user.id || workspace.owner.manager_user_id === user.id);
     if (!this.canEditRecord(user, workspace) && !canViewAssignedBidder) {
       throw new NotFoundException('Workspace not found');
     }
@@ -62,6 +63,7 @@ export class WorkspaceAccessService {
       return {
         OR: [
           { owner_user_id: user.id },
+          { manager_user_id: user.id },
           { owner: { is: { manager_user_id: user.id } } },
         ],
       };

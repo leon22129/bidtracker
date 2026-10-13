@@ -15,25 +15,26 @@ datasource db {
 // User
 // ---------------------------------------------------------------------------
 model User {
-  id                 String   @id @default(cuid())
-  username           String   @unique
-  email              String   @unique
-  password_hash      String
-  role               String   @default("bidder") // super_admin | admin | bidder_manager | bidder
-  is_active          Boolean  @default(true)
-  created_at         DateTime @default(now())
-  updated_at         DateTime @updatedAt
-  created_by_user_id String?
-  manager_user_id    String?
-  slack_webhook_url  String?
-  slack_user_id      String?
-  slack_milestone_day DateTime?
-  slack_last_milestone Int    @default(0)
+  id                   String    @id @default(cuid())
+  username             String    @unique
+  email                String    @unique
+  password_hash        String
+  role                 String    @default("bidder") // super_admin | admin | bidder_manager | bidder
+  is_active            Boolean   @default(true)
+  created_at           DateTime  @default(now())
+  updated_at           DateTime  @updatedAt
+  created_by_user_id   String?
+  manager_user_id      String?
+  slack_webhook_url    String?
+  slack_user_id        String?
+  slack_milestone_day  DateTime?
+  slack_last_milestone Int       @default(0)
 
   ownedWorkspaces          Workspace[]          @relation("WorkspaceOwner")
+  managedWorkspaces        Workspace[]          @relation("WorkspaceManager")
   createdWorkspaces        Workspace[]          @relation("WorkspaceCreator")
   createdUsers             User[]               @relation("UserCreator")
-  managedBidders          User[]               @relation("BidderManagerAssignments")
+  managedBidders           User[]               @relation("BidderManagerAssignments")
   createdApplications      JobApplication[]     @relation("CreatedBy")
   processedPaymentReports  PaymentReport[]      @relation("ProcessedBy")
   bidderPaymentReports     PaymentReport[]      @relation("BidderPaymentReports")
@@ -56,6 +57,7 @@ model Workspace {
   id                 String   @id @default(cuid())
   name               String   @unique
   owner_user_id      String
+  manager_user_id    String?
   created_by_user_id String?
   is_archived        Boolean  @default(false)
   created_at         DateTime @default(now())
@@ -63,12 +65,14 @@ model Workspace {
 
   // Restrict: a user who owns a workspace cannot be deleted — payment attribution must survive.
   owner               User                 @relation("WorkspaceOwner", fields: [owner_user_id], references: [id], onDelete: Restrict)
+  manager             User?                @relation("WorkspaceManager", fields: [manager_user_id], references: [id], onDelete: SetNull)
   creator             User?                @relation("WorkspaceCreator", fields: [created_by_user_id], references: [id], onDelete: SetNull)
   applications        JobApplication[]
   resumeProfile       ResumeProfile?
   resumeConversations ResumeConversation[]
 
   @@index([owner_user_id])
+  @@index([manager_user_id])
   @@index([created_by_user_id])
   @@index([is_archived])
   @@map("workspaces")
@@ -173,13 +177,13 @@ model JobApplication {
 
   // Durable generation artifacts. The conversation is temporary and may be deleted by retention;
   // the resume snapshot and JD remain so the exact files can be downloaded later.
-  conversation_id       String?
-  job_description       String?
-  generated_resume_json String?
-  resume_template       String?
-  resume_generated_at   DateTime?
-  cover_letter_text     String?
-  cover_letter_template String?
+  conversation_id            String?
+  job_description            String?
+  generated_resume_json      String?
+  resume_template            String?
+  resume_generated_at        DateTime?
+  cover_letter_text          String?
+  cover_letter_template      String?
   application_questions_json String?
   application_answers_json   String?
 

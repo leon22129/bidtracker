@@ -158,6 +158,65 @@ describe('PaymentsService', () => {
     expect(prisma.jobApplication.groupBy.mock.calls[0][0].where).not.toHaveProperty('workspace_id');
   });
 
+  it('groups profile and bidder counts under their bidder manager', async () => {
+    const prisma = {
+      jobApplication: {
+        groupBy: jest.fn().mockResolvedValue([
+          { workspace_id: 'rock-profile', created_by_user_id: 'richard', _count: { _all: 100 } },
+          { workspace_id: 'hao-profile', created_by_user_id: 'jacob', _count: { _all: 100 } },
+        ]),
+      },
+      workspace: {
+        findMany: jest.fn().mockResolvedValue([
+          { id: 'rock-profile', name: 'Rock workspace', resumeProfile: { name: 'rock' } },
+          { id: 'hao-profile', name: 'Hao workspace', resumeProfile: { name: 'hao' } },
+        ]),
+      },
+      user: {
+        findMany: jest.fn().mockResolvedValue([
+          { id: 'richard', username: 'Richard', role: 'bidder', manager: { id: 'rock-manager', username: 'rock' } },
+          { id: 'jacob', username: 'Jacob', role: 'bidder', manager: { id: 'rock-manager', username: 'rock' } },
+        ]),
+      },
+    };
+    const access = { visibleWorkspaceIds: jest.fn().mockResolvedValue(null) };
+    const service = new PaymentsService(prisma as never, access as never);
+
+    await expect(service.report(
+      { id: 'admin-1', username: 'admin', email: 'admin@example.com', role: 'admin' },
+      { start_date: '2026-09-01', end_date: '2026-09-07' },
+    )).resolves.toMatchObject({
+      managers: [{
+        manager_id: 'rock-manager',
+        manager_username: 'rock',
+        applied_count: 200,
+        profiles: [
+          { profile_name: 'hao', bidder_username: 'Jacob', applied_count: 100 },
+          { profile_name: 'rock', bidder_username: 'Richard', applied_count: 100 },
+        ],
+      }],
+    });
+  });
+
+  it('shows bidder managers their own and their allocated bidders counts', async () => {
+    const prisma = { jobApplication: { groupBy: jest.fn().mockResolvedValue([]) } };
+    const service = new PaymentsService(prisma as never, { visibleWorkspaceIds: jest.fn() } as never);
+
+    await service.report(
+      { id: 'manager-1', username: 'rock', email: 'rock@example.com', role: 'bidder_manager' },
+      { start_date: '2026-09-01', end_date: '2026-09-07' },
+    );
+
+    expect(prisma.jobApplication.groupBy).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        createdByUser: { is: {
+          role: { in: ['bidder', 'bidder_manager'] },
+          OR: [{ id: 'manager-1' }, { manager_user_id: 'manager-1' }],
+        } },
+      }),
+    }));
+  });
+
   it('rejects payment processing for a non-bidder creator', async () => {
     const tx = {
       user: { findFirst: jest.fn().mockResolvedValue(null) },

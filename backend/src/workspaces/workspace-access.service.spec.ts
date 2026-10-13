@@ -76,8 +76,22 @@ describe('WorkspaceAccessService', () => {
     expect(service.visibilityWhere(user('manager-1', 'bidder_manager'))).toEqual({
       OR: [
         { owner_user_id: 'manager-1' },
+        { manager_user_id: 'manager-1' },
         { owner: { is: { manager_user_id: 'manager-1' } } },
       ],
     });
+  });
+
+  it('lets a bidder manager view a profile explicitly assigned by an admin', async () => {
+    const service = new WorkspaceAccessService(prisma as never);
+    prisma.workspace.findUnique.mockResolvedValue({
+      id: 'w-1', owner_user_id: 'bidder-2', manager_user_id: 'manager-1',
+      created_by_user_id: 'admin-1', owner: { manager_user_id: 'manager-2' },
+    });
+
+    await expect(service.assertCanView(user('manager-1', 'bidder_manager'), 'w-1'))
+      .resolves.toBeUndefined();
+    await expect(service.assertCanEdit(user('manager-1', 'bidder_manager'), 'w-1'))
+      .rejects.toEqual(new NotFoundException('Workspace not found'));
   });
 });

@@ -10,7 +10,7 @@ import { useToast } from '@/components/ui/toast';
 type UserStatusFilter = 'active' | 'deactivated' | 'all';
 
 /**
- * User administration — admin only.
+ * User administration. Admins manage their account; bidder managers manage their own bidders.
  *
  * The backend refuses to demote or deactivate the last remaining admin and refuses to delete a user who
  * owns workspaces or has created applications (payment attribution would be destroyed). This page surfaces those constraints
@@ -44,7 +44,7 @@ export default function UsersPage() {
   if (!canManageUsers(me)) {
     return (
       <main className="mx-auto max-w-lg px-4 py-16 text-center">
-        <p className="text-sm text-gray-600">User management is restricted to administrators.</p>
+        <p className="text-sm text-gray-600">You do not have access to user management.</p>
       </main>
     );
   }
@@ -52,9 +52,12 @@ export default function UsersPage() {
   const adminCount = users.filter((u) => u.role === 'admin' && u.is_active).length;
   const addableRoles = me?.role === 'super_admin'
     ? ROLES.filter((role) => role === 'admin')
-    : ROLES.filter((role) => role === 'bidder' || role === 'bidder_manager');
+    : me?.role === 'bidder_manager'
+      ? ROLES.filter((role) => role === 'bidder')
+      : ROLES.filter((role) => role === 'bidder' || role === 'bidder_manager');
 
   const bidderManagers = users.filter((u) => u.role === 'bidder_manager' && u.is_active);
+  const isManager = me?.role === 'bidder_manager';
   const userCounts = {
     active: users.filter((u) => u.is_active).length,
     deactivated: users.filter((u) => !u.is_active).length,
@@ -107,7 +110,9 @@ export default function UsersPage() {
         <div>
           <h1 className="text-lg font-semibold">Users</h1>
           <p className="mt-0.5 text-xs text-gray-500">
-            Roles decide what a person can do; workspace ownership decides which workspace they use.
+            {isManager
+              ? 'Add bidders to your team and deactivate access when needed.'
+              : 'Roles decide what a person can do; profile ownership decides which workspace they use.'}
           </p>
         </div>
         <button type="button" className="btn-primary" onClick={() => setShowCreate(true)}>
@@ -166,7 +171,7 @@ export default function UsersPage() {
                       <select
                         className="input w-40 py-1 text-xs"
                         value={u.role}
-                        disabled={lastAdmin}
+                        disabled={lastAdmin || isManager}
                         title={lastAdmin ? 'This is the only active admin — promote someone else first' : undefined}
                         onChange={(e) => void patch(u, { role: e.target.value as Role })}
                       >
@@ -181,7 +186,7 @@ export default function UsersPage() {
                       {u.owned_workspace_count ?? 0} owned
                     </td>
                     <td className="px-3 py-2">
-                      {u.role === 'bidder' ? (
+                      {u.role === 'bidder' && !isManager ? (
                         <select
                           className="input w-40 py-1 text-xs"
                           value={u.manager_user_id ?? ''}
@@ -193,6 +198,8 @@ export default function UsersPage() {
                             <option key={manager.id} value={manager.id}>{manager.username}</option>
                           ))}
                         </select>
+                      ) : isManager ? (
+                        <span className="text-gray-600">You</span>
                       ) : u.role === 'bidder_manager' ? (
                         <span className="text-gray-600">
                           {u.managed_bidder_count ?? 0} bidder{u.managed_bidder_count === 1 ? '' : 's'}
@@ -214,13 +221,15 @@ export default function UsersPage() {
                     </td>
                     <td className="px-3 py-2">
                       <div className="flex justify-end gap-1.5">
-                        <button
-                          type="button"
-                          className="btn-secondary btn-xs"
-                          onClick={() => setResetting(u)}
-                        >
-                          Reset password
-                        </button>
+                        {!isManager && (
+                          <button
+                            type="button"
+                            className="btn-secondary btn-xs"
+                            onClick={() => setResetting(u)}
+                          >
+                            Reset password
+                          </button>
+                        )}
                         <button
                           type="button"
                           className="btn-secondary btn-xs"
@@ -230,14 +239,16 @@ export default function UsersPage() {
                         >
                           {u.is_active ? 'Deactivate' : 'Reactivate'}
                         </button>
-                        <button
-                          type="button"
-                          className="btn-danger btn-xs"
-                          disabled={isMe || lastAdmin}
-                          onClick={() => void remove(u)}
-                        >
-                          Delete
-                        </button>
+                        {!isManager && (
+                          <button
+                            type="button"
+                            className="btn-danger btn-xs"
+                            disabled={isMe || lastAdmin}
+                            onClick={() => void remove(u)}
+                          >
+                            Delete
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -262,6 +273,7 @@ export default function UsersPage() {
         <CreateUserModal
           allowedRoles={addableRoles}
           bidderManagers={bidderManagers}
+          managerMode={isManager}
           onClose={() => setShowCreate(false)}
           onCreated={async () => {
             setShowCreate(false);
@@ -280,11 +292,13 @@ export default function UsersPage() {
 function CreateUserModal({
   allowedRoles,
   bidderManagers,
+  managerMode,
   onClose,
   onCreated,
 }: {
   allowedRoles: Role[];
   bidderManagers: User[];
+  managerMode: boolean;
   onClose: () => void;
   onCreated: () => Promise<void>;
 }) {
@@ -343,7 +357,7 @@ function CreateUserModal({
             ))}
           </select>
         </div>
-        {role === 'bidder' && (
+        {role === 'bidder' && !managerMode && (
           <div>
             <label className="label" htmlFor="cu-manager">Bidder manager</label>
             <select

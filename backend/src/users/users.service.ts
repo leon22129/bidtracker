@@ -1,5 +1,5 @@
 import {
-  BadRequestException, ConflictException, Injectable, NotFoundException,
+  BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { hashPassword } from '../auth/auth.service';
@@ -59,12 +59,16 @@ export class UsersService {
   async create(dto: CreateUserDto, actingUser: AuthUser) {
     const allowedRoles = actingUser.role === 'super_admin'
       ? ['admin']
-      : ['bidder', 'bidder_manager'];
+      : actingUser.role === 'bidder_manager'
+        ? ['bidder']
+        : ['bidder', 'bidder_manager'];
     if (!allowedRoles.includes(dto.role)) {
       throw new BadRequestException(
         actingUser.role === 'super_admin'
           ? 'Super admins can only add admins'
-          : 'Admins can only add bidders and bidder managers',
+          : actingUser.role === 'bidder_manager'
+            ? 'Bidder managers can only add bidders'
+            : 'Admins can only add bidders and bidder managers',
       );
     }
     const email = dto.email.trim().toLowerCase();
@@ -73,7 +77,7 @@ export class UsersService {
     await this.assertUnique(email, username);
     const managerUserId = await this.validateManagerAssignment(
       dto.role,
-      dto.manager_user_id,
+      actingUser.role === 'bidder_manager' ? actingUser.id : dto.manager_user_id,
       actingUser,
     );
 
@@ -94,6 +98,21 @@ export class UsersService {
     const user = await this.prisma.user.findUnique({ where: { id } });
     if (!user) throw new NotFoundException('User not found');
     await this.assertCanManage(id, actingUser);
+
+    if (actingUser.role === 'bidder_manager') {
+      const requestedFields = Object.entries(dto)
+        .filter(([, value]) => value !== undefined)
+        .map(([key]) => key);
+      if (requestedFields.some((field) => field !== 'is_active')) {
+        throw new ForbiddenException('Bidder managers can only activate or deactivate their bidders');
+      }
+      if (dto.is_active === undefined) return this.findOne(id, actingUser);
+      return this.prisma.user.update({
+        where: { id },
+        data: { is_active: dto.is_active },
+        select: PUBLIC_SELECT,
+      });
+    }
 
     if (dto.role) {
       const allowedRoles = actingUser.role === 'super_admin'
@@ -150,8 +169,12 @@ export class UsersService {
     });
 
     if (user.role === 'bidder_manager' && effectiveRole !== 'bidder_manager') {
-      const [, updated] = await this.prisma.$transaction([
+      const [, , updated] = await this.prisma.$transaction([
         this.prisma.user.updateMany({
+          where: { manager_user_id: id },
+          data: { manager_user_id: null },
+        }),
+        this.prisma.workspace.updateMany({
           where: { manager_user_id: id },
           data: { manager_user_id: null },
         }),
@@ -163,6 +186,9 @@ export class UsersService {
   }
 
   async resetPassword(id: string, dto: ResetPasswordDto, actingUser: AuthUser) {
+    if (actingUser.role === 'bidder_manager') {
+      throw new ForbiddenException('Only an admin can reset another user\'s password');
+    }
     const user = await this.prisma.user.findUnique({ where: { id } });
     if (!user) throw new NotFoundException('User not found');
     await this.assertCanManage(id, actingUser);
@@ -179,6 +205,9 @@ export class UsersService {
    * part of the payment audit trail. Deactivate instead; restrictive FKs are the second line of defence.
    */
   async remove(id: string, actingUser: AuthUser) {
+    if (actingUser.role === 'bidder_manager') {
+      throw new ForbiddenException('Bidder managers can deactivate bidders but cannot delete them');
+    }
     if (id === actingUser.id) throw new BadRequestException('You cannot delete your own account');
 
     const user = await this.prisma.user.findUnique({
@@ -240,6 +269,12 @@ export class UsersService {
       return null;
     }
     if (managerUserId === null || managerUserId.trim() === '') return null;
+    if (actingUser.role === 'bidder_manager') {
+      if (managerUserId !== actingUser.id) {
+        throw new BadRequestException('Bidder managers can only allocate bidders to themselves');
+      }
+      return actingUser.id;
+    }
     if (actingUser.role !== 'admin') {
       throw new BadRequestException('Only an admin can assign bidder managers');
     }
@@ -261,9 +296,16 @@ export class UsersService {
 
   private visibilityWhere(actingUser: AuthUser) {
     if (actingUser.role === 'super_admin') return undefined;
+    if (actingUser.role === 'bidder_manager') {
+      return { role: 'bidder', manager_user_id: actingUser.id };
+    }
     return {
       role: { in: ['bidder', 'bidder_manager'] },
-      created_by_user_id: actingUser.id,
+      OR: [
+        { created_by_user_id: actingUser.id },
+        { creator: { is: { created_by_user_id: actingUser.id } } },
+        { manager: { is: { created_by_user_id: actingUser.id } } },
+      ],
     };
   }
 

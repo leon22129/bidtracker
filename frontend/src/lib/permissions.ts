@@ -70,7 +70,7 @@ export function canDeleteApplications(
 }
 
 export function canManageUsers(user: Pick<User, 'role'> | null): boolean {
-  return isAdmin(user);
+  return isAdmin(user) || user?.role === 'bidder_manager';
 }
 
 export function canManageWorkspaces(user: Pick<User, 'role'> | null): boolean {
