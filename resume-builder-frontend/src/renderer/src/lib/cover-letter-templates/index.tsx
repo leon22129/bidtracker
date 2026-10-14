@@ -6,6 +6,7 @@ import { ModernCoverLetterTemplate } from "./modern"
 import { MinimalCoverLetterTemplate } from "./minimal"
 import { downloadBlob } from "@/lib/chrome-downloads"
 import { getProfileDirectoryHandle } from "@/lib/extension-storage"
+import { stripTrailingCoverLetterSigner } from "./text"
 
 export { COVER_LETTER_TEMPLATES, DEFAULT_COVER_LETTER_TEMPLATE } from "./types"
 export type { CoverLetterTemplateId, CoverLetterTemplateInfo, CoverLetterData } from "./types"
@@ -26,7 +27,11 @@ export async function generateCoverLetterPDF(
   downloadPath?: string,
 ): Promise<void> {
   const TemplateComponent = templateComponents[templateId]
-  const blob = await pdf(<TemplateComponent data={data} />).toBlob()
+  const templateData = {
+    ...data,
+    text: stripTrailingCoverLetterSigner(data.text, data.personalInfo.fullName),
+  }
+  const blob = await pdf(<TemplateComponent data={templateData} />).toBlob()
 
   const chromeApi = (globalThis as { chrome?: { downloads?: unknown } }).chrome
   const savedDirectoryHandle = saveInFolder && profileId ? await getProfileDirectoryHandle(profileId) : null

@@ -57,6 +57,7 @@ import {
   DEFAULT_COVER_LETTER_TEMPLATE,
   type CoverLetterTemplateId,
 } from "@/lib/cover-letter-templates";
+import { stripTrailingCoverLetterSigner } from "@/lib/cover-letter-templates/text";
 import { DEFAULT_TEMPLATE, type TemplateId } from "@/lib/pdf-templates";
 import {
   getFriendlyErrorMessage,
@@ -295,9 +296,11 @@ export function ProfileWorkspace({
         const location = existing
           ? ` It already exists in ${existing.workspace_name} as application #${existing.number}.`
           : "";
-        const reason = data.duplicateType === "job_fingerprint"
-          ? `A recent application has the same company and job title.${location}`
-          : `This job URL has already been added.${location}`;
+        const reason = data.duplicateType === "career_history"
+          ? `Resume generation is blocked because ${data.companyName || "the target company"} is already listed as a previous employer in this profile's career path.`
+          : data.duplicateType === "company"
+            ? `This profile already applied to that company within the last 90 days.${location}`
+            : `This job URL has already been added.${location}`;
         setError(reason);
         if (isActive) toast({ title: "Duplicate job", description: reason });
         return;
@@ -356,7 +359,9 @@ export function ProfileWorkspace({
       };
       if (generatedPersonalInfo !== personalInfo) setPersonalInfo(generatedPersonalInfo);
 
-      const effectiveCoverLetterText = shouldGenerateCoverLetter ? (parsed.coverletter ?? null) : null;
+      const effectiveCoverLetterText = shouldGenerateCoverLetter && parsed.coverletter
+        ? stripTrailingCoverLetterSigner(parsed.coverletter, generatedPersonalInfo.fullName) || null
+        : null;
       setCoverLetterText(effectiveCoverLetterText);
       const workexperience = (parsed.workexperience || []).map((experience) => ({
         ...experience,
@@ -429,7 +434,10 @@ export function ProfileWorkspace({
       setCertifications(loadedResume.certifications ?? []);
       setCompanyName(saved.company_name ?? "");
       setConversationId(saved.conversation_id);
-      setCoverLetterText(saved.cover_letter_text);
+      const savedCoverLetterText = saved.cover_letter_text
+        ? stripTrailingCoverLetterSigner(saved.cover_letter_text, loadedResume.personalInfo.fullName)
+        : saved.cover_letter_text;
+      setCoverLetterText(savedCoverLetterText);
       let restoredHistory = {
         questions: saved.questions ?? [],
         answers: saved.answers ?? [],
@@ -458,7 +466,7 @@ export function ProfileWorkspace({
       if (saved.cover_letter_template) {
         setCoverLetterTemplate(saved.cover_letter_template as CoverLetterTemplateId);
       }
-      if (saved.cover_letter_text) setGenerateCoverLetter(true);
+      if (savedCoverLetterText) setGenerateCoverLetter(true);
 
       let mismatch = false;
       try {
@@ -857,7 +865,7 @@ export function ProfileWorkspace({
         <TabsList className="grid h-auto w-full grid-cols-2 gap-1 rounded-xl p-1.5">
           <TabsTrigger
             value="resume"
-            className="h-auto min-w-0 flex-col items-start gap-1 whitespace-normal rounded-lg px-4 py-3 text-left"
+            className="group h-auto min-w-0 flex-col items-start gap-1 whitespace-normal rounded-lg px-4 py-3 text-left data-[state=active]:border-blue-800 data-[state=active]:bg-blue-700 data-[state=active]:text-white data-[state=active]:shadow-md dark:data-[state=active]:border-blue-300 dark:data-[state=active]:bg-blue-700 dark:data-[state=active]:text-white"
           >
             <span className="flex items-center gap-2 font-semibold">
               <span className="flex h-6 w-6 items-center justify-center rounded-full bg-primary text-xs text-primary-foreground">
@@ -866,13 +874,13 @@ export function ProfileWorkspace({
               <Briefcase className="h-4 w-4" />
               Resume Generation
             </span>
-            <span className="hidden pl-8 text-xs font-normal text-muted-foreground sm:block">
+            <span className="hidden pl-8 text-xs font-normal text-muted-foreground group-data-[state=active]:text-blue-100 sm:block">
               Scan the job, generate files, and review the result
             </span>
           </TabsTrigger>
           <TabsTrigger
             value="questions"
-            className="h-auto min-w-0 flex-col items-start gap-1 whitespace-normal rounded-lg px-4 py-3 text-left"
+            className="group h-auto min-w-0 flex-col items-start gap-1 whitespace-normal rounded-lg px-4 py-3 text-left data-[state=active]:border-blue-800 data-[state=active]:bg-blue-700 data-[state=active]:text-white data-[state=active]:shadow-md dark:data-[state=active]:border-blue-300 dark:data-[state=active]:bg-blue-700 dark:data-[state=active]:text-white"
           >
             <span className="flex items-center gap-2 font-semibold">
               <span className="flex h-6 w-6 items-center justify-center rounded-full bg-primary text-xs text-primary-foreground">
@@ -881,7 +889,7 @@ export function ProfileWorkspace({
               <MessagesSquare className="h-4 w-4" />
               Application Questions
             </span>
-            <span className="hidden pl-8 text-xs font-normal text-muted-foreground sm:block">
+            <span className="hidden pl-8 text-xs font-normal text-muted-foreground group-data-[state=active]:text-blue-100 sm:block">
               Scan questions, write answers, and fill the application
             </span>
           </TabsTrigger>

@@ -234,7 +234,7 @@ export class CreateGeneratedApplicationDto {
   @MaxLength(200)
   company_name: string;
 
-  /** User-confirmed override for a recent company/title match. Exact URL matches are never overridden. */
+  /** Deprecated compatibility field. The per-profile company cooldown cannot be overridden. */
   @IsOptional()
   @Transform(toBool)
   @IsBoolean()

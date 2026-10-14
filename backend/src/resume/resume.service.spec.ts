@@ -52,7 +52,7 @@ describe('ApplicationGenerationService application metadata eligibility', () => 
     const access = { assertCanEdit: jest.fn().mockResolvedValue(undefined) };
     const duplicates = {
       classifyBatch: jest.fn().mockResolvedValue([{ is_duplicate: false }]),
-      findRecentJobMatch: jest.fn().mockResolvedValue(null),
+      findRecentCompanyMatch: jest.fn().mockResolvedValue(null),
     };
     const applications = {
       createBannedApplication: jest.fn().mockResolvedValue({
@@ -147,7 +147,7 @@ describe('ApplicationGenerationService application metadata eligibility', () => 
       reason: `Need ${label} in the JD.`,
     });
     expect(openAi).toHaveBeenCalledTimes(1);
-    expect(duplicates.findRecentJobMatch).not.toHaveBeenCalled();
+    expect(duplicates.findRecentCompanyMatch).not.toHaveBeenCalled();
   });
 
   it('normalizes job information within the single eligibility call for a skipped non-US job', async () => {
@@ -245,24 +245,49 @@ describe('ApplicationGenerationService application metadata eligibility', () => 
     );
   });
 
-  it('checks the company/title fingerprint before generating the resume', async () => {
+  it('checks the company cooldown before generating the resume', async () => {
     const { service, duplicates } = setup();
     const existing = { id: 'application-1', company_name: 'Acme', job_title: 'Software Engineer' };
-    duplicates.findRecentJobMatch.mockResolvedValue(existing);
+    duplicates.findRecentCompanyMatch.mockResolvedValue(existing);
     const openAi = jest.spyOn(service as any, 'openAi').mockResolvedValue(eligible());
 
     await expect(service.generate(user, dto)).resolves.toMatchObject({
       success: false,
       duplicate: true,
-      duplicate_type: 'job_fingerprint',
+      duplicate_type: 'company',
       existing_application: existing,
     });
-    expect(duplicates.findRecentJobMatch).toHaveBeenCalledWith(
+    expect(duplicates.findRecentCompanyMatch).toHaveBeenCalledWith(
       dto.workspace_id,
       'Acme',
-      'Software Engineer',
     );
     expect(openAi).toHaveBeenCalledTimes(1);
+  });
+
+  it('blocks resume generation when the target company is a previous employer', async () => {
+    const { service, duplicates, applications } = setup();
+    const openAi = jest.spyOn(service as any, 'openAi').mockResolvedValue(eligible({
+      company_name: 'Visa, Inc.',
+    }));
+    (service as any).prisma.workspace.findUnique.mockResolvedValue({
+      id: dto.workspace_id,
+      owner_user_id: user.id,
+      name: 'Workspace',
+      resumeProfile: {
+        ...profile,
+        career_path: '## Visa\nSenior Software Engineer\n01/2020 - 02/2023',
+      },
+    });
+
+    await expect(service.generate(user, dto)).resolves.toEqual({
+      success: false,
+      duplicate: true,
+      duplicate_type: 'career_history',
+      company_name: 'Visa, Inc.',
+    });
+    expect(openAi).toHaveBeenCalledTimes(1);
+    expect(duplicates.findRecentCompanyMatch).not.toHaveBeenCalled();
+    expect(applications.createGenerated).not.toHaveBeenCalled();
   });
 
   it('uses eligibility metadata and automatically saves the generated application', async () => {
@@ -303,6 +328,39 @@ describe('ApplicationGenerationService application metadata eligibility', () => 
     expect(openAi.mock.calls[0][0]).toContain('"salary": ""');
     expect(openAi.mock.calls[1][0]).toContain('Job Information\nTitle: Software Engineer');
     expect(openAi.mock.calls[1][0]).toContain('Salary: $140,000-$180,000 per year');
+  });
+
+  it('removes an AI signer before saving and returning a generated cover letter', async () => {
+    const { service, applications, prisma } = setup();
+    prisma.workspace.findUnique.mockResolvedValue({
+      id: dto.workspace_id,
+      owner_user_id: user.id,
+      name: 'Workspace',
+      resumeProfile: {
+        ...profile,
+        full_name: 'Jane Candidate',
+        generate_cover_letter: true,
+      },
+    });
+    jest.spyOn(service as any, 'openAi')
+      .mockResolvedValueOnce(eligible())
+      .mockResolvedValueOnce(JSON.stringify({
+        summary: 'Tailored summary',
+        coverletter: 'Thank you for your consideration.\n\nSincerely,\nCandidate',
+      }));
+
+    await expect(service.generate(user, dto)).resolves.toMatchObject({
+      success: true,
+      resume: {
+        coverletter: 'Thank you for your consideration.\n\nSincerely,',
+      },
+    });
+    expect(applications.createGenerated).toHaveBeenCalledWith(
+      user,
+      expect.objectContaining({
+        cover_letter_text: 'Thank you for your consideration.\n\nSincerely,',
+      }),
+    );
   });
 
   it('answers from an owned compact conversation without resending the JD or resume', async () => {

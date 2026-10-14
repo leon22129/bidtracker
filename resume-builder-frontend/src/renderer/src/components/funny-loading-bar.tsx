@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
+import { createPortal } from "react-dom"
 import { Progress } from "@/components/ui/progress"
 import { cn } from "@/lib/utils"
 import { Bot, FileText, Sparkles } from "lucide-react"
@@ -93,8 +94,13 @@ export function FunnyLoadingBar({ isLoading, profileName, className }: FunnyLoad
 
   if (!isLoading) return null
 
-  return (
-    <div className="absolute inset-0 z-10 flex items-center justify-center bg-background/80 backdrop-blur-sm rounded-xl">
+  return createPortal(
+    <div
+      className="fixed inset-0 z-[100] flex items-center justify-center bg-background/80 px-4 backdrop-blur-sm"
+      role="status"
+      aria-live="polite"
+      aria-busy="true"
+    >
       <div className={cn("w-full max-w-md mx-4 bg-card rounded-xl border shadow-lg p-8 space-y-6", className)}>
         <div className="text-center space-y-2">
           <h3 className="text-xl font-semibold text-foreground">
@@ -152,6 +158,7 @@ export function FunnyLoadingBar({ isLoading, profileName, className }: FunnyLoad
           This may take a moment. Good things come to those who wait!
         </p>
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }

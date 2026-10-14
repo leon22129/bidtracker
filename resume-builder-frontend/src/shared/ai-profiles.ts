@@ -74,6 +74,7 @@ export type GenerateResumeResult = {
   banned?: boolean
   duplicate?: boolean
   duplicateType?: string | null
+  companyName?: string
   application?: GeneratedApplication
   existingApplication?: {
     id: string

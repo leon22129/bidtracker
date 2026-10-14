@@ -687,7 +687,7 @@ Full annotated list in [.env.example](.env.example). The ones worth knowing:
 | `JWT_SECRET`                                       | — (**required**) | Signs tokens. Changing it signs everyone out.                                          |
 | `DEFAULT_ADMIN_*`                                  | — (**required**) | First-boot admin; ignored once any admin exists.                                       |
 | `JWT_EXPIRES_IN`                                   | `7d`                  | Session length.                                                                        |
-| `JOB_FINGERPRINT_WINDOW_DAYS`                     | `90`                  | Window for workspace-local company/title cross-site duplicate warnings.                |
+| `COMPANY_APPLICATION_COOLDOWN_DAYS`               | `90`                  | Per-profile cooldown before another application to the same normalized company.        |
 | `MAX_UPLOAD_MB`                                    | `25`                  | Import file ceiling.                                                                   |
 | `MAX_XLSX_EXPANDED_MB`                            | `100`                 | Maximum streamed XLSX expansion before parsing.                                        |
 | `MAX_XLSX_ZIP_ENTRIES`                            | `2000`                | Maximum number of files inside an XLSX archive.                                        |
@@ -799,9 +799,9 @@ The canonical list lives in `COLUMN_ALIASES` at
   URLs, and it overrides whatever the file says. A bidder or manager who tries gets the row imported as
   `Pending` plus an explanatory line in the skip list; only an admin can set it, because it determines
   who gets paid.
-- **Duplicate company names are fine.** A company becomes a possible cross-site duplicate only when
-  its normalized job title also matches a recent row in the same workspace. The user can confirm that
-  it is a different opening.
+- **A company has a 90-day cooldown per profile.** A second row for the same normalized company is
+  marked as a duplicate even when the title or job-board URL differs. Rows that were only skipped as
+  banned or ineligible do not start or extend the cooldown.
 - **`Rejected` is a one-way door.** The transition allow-list is `Pending → Applied` and
   `Applied → Rejected`, and it applies to imports too. Importing `Rejected` directly is fine; getting
   back out of it needs an admin.

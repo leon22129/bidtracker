@@ -29,7 +29,7 @@ describe('ImportService missing company/title warnings', () => {
     const duplicates = {
       classifyBatch: jest.fn(async (_workspaceId, urls: string[]) =>
         urls.map((url) => ({ is_duplicate: false, normalized_url: url }))),
-      classifyJobIdentities: jest.fn(async (_workspaceId, rows: unknown[]) =>
+      classifyCompanyIdentities: jest.fn(async (_workspaceId, rows: unknown[]) =>
         rows.map(() => ({ is_duplicate: false }))),
     };
     const numbering = { reserveBlock: jest.fn().mockResolvedValue(1) };

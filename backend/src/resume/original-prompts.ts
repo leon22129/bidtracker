@@ -245,6 +245,10 @@ Formatting and consistency.
 - No duplicates across categories.
 - Technical Skills categories must contain only skills, tools, languages, frameworks, platforms, and methodologies. Never place certifications, degrees, licenses, or credentials in this section.
 - Skills included here must be genuinely supported by the work experience bullets, including any Format B source facts.
+
+**coverletter**
+- Write the cover letter body and end with a professional closing salutation such as "Sincerely,".
+- Do not include the candidate's name, "Candidate", "Candidate Name", "Your Name", or any other signer placeholder. The rendered document adds the saved full name after this text.
  
 ---
  

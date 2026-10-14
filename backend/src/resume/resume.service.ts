@@ -34,6 +34,8 @@ import {
   serializeApplicationHistory,
   type SavedApplicationAnswer,
 } from '../common/utils/application-history.util';
+import { careerPathIncludesCompany } from '../common/utils/job-fingerprint.util';
+import { stripTrailingCoverLetterSigner } from '../common/utils/cover-letter.util';
 
 const OPENAI_API_BASE = 'https://api.openai.com/v1';
 const MODEL = process.env.OPENAI_MODEL || 'gpt-5.6-terra';
@@ -204,17 +206,25 @@ export class ApplicationGenerationService {
       };
     }
 
-    const similar = await this.duplicates.findRecentJobMatch(
-      workspace.id,
-      companyName,
-      jobTitle,
-    );
-    if (similar) {
+    if (careerPathIncludesCompany(profile.career_path, companyName)) {
       return {
         success: false,
         duplicate: true,
-        duplicate_type: 'job_fingerprint',
-        existing_application: similar,
+        duplicate_type: 'career_history' as const,
+        company_name: companyName,
+      };
+    }
+
+    const recentCompanyApplication = await this.duplicates.findRecentCompanyMatch(
+      workspace.id,
+      companyName,
+    );
+    if (recentCompanyApplication) {
+      return {
+        success: false,
+        duplicate: true,
+        duplicate_type: 'company',
+        existing_application: recentCompanyApplication,
       };
     }
 
@@ -253,6 +263,7 @@ export class ApplicationGenerationService {
       operation: 'resume_generation',
       onUsage: (usage) => { resumeUsage = usage; },
     }));
+    this.normalizeCoverLetter(resume, profile.full_name);
     const conversation = await this.createAnswerConversation(
       user,
       profile,
@@ -319,6 +330,7 @@ export class ApplicationGenerationService {
         operation: 'resume_generation',
       });
       const resume = this.parseJson(tailoredResume);
+      this.normalizeCoverLetter(resume, profile.full_name);
       const conversation = await this.createAnswerConversation(
         user,
         profile,
@@ -327,7 +339,7 @@ export class ApplicationGenerationService {
         resume,
       );
       return {
-        tailored_resume: tailoredResume,
+        tailored_resume: JSON.stringify(resume),
         conversation_id: conversation.id,
         full_name: profile.full_name,
       };
@@ -535,6 +547,12 @@ export class ApplicationGenerationService {
       hourlyRate: typeof generated.hourly_rate === 'string' ? generated.hourly_rate : '',
       rateInJd: typeof generated.rate_in_jd === 'boolean' ? generated.rate_in_jd : undefined,
     };
+  }
+
+  private normalizeCoverLetter(generated: Record<string, unknown>, fullName?: string | null) {
+    if (typeof generated.coverletter === 'string') {
+      generated.coverletter = stripTrailingCoverLetterSigner(generated.coverletter, fullName);
+    }
   }
 
   private async createAnswerConversation(

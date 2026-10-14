@@ -1,126 +1,102 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { normalizeUrl } from '../common/utils/url.util';
-import { createJobFingerprint } from '../common/utils/job-fingerprint.util';
+import { BANNED_URL_NOTE, normalizeUrl } from '../common/utils/url.util';
+import { normalizeCompanyIdentity } from '../common/utils/job-fingerprint.util';
 
-/** Exact URL detection plus a recent workspace-local company/title signal for cross-site jobs. */
+/** Exact URL detection plus a workspace-local cooldown for recent applications at a company. */
 @Injectable()
 export class DuplicateService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async classifyJobIdentities(
+  async classifyCompanyIdentities(
     workspaceId: string,
-    items: Array<{ company_name?: string | null; job_title?: string | null }>,
+    items: Array<{ company_name?: string | null }>,
     excludeIds: string[] = [],
-  ): Promise<JobIdentityVerdict[]> {
-    const fingerprints = items.map((item) => createJobFingerprint(item.company_name, item.job_title));
-    const unique = [...new Set(fingerprints.filter((value): value is string => Boolean(value)))];
-    const requested = new Set(unique);
-    const cutoff = this.fingerprintCutoff();
+  ): Promise<CompanyIdentityVerdict[]> {
+    const identities = items.map((item) => item.company_name?.trim()
+      ? normalizeCompanyIdentity(item.company_name)
+      : null);
+    const requested = new Set(identities.filter((value): value is string => Boolean(value)));
+    const cutoff = this.companyCooldownCutoff();
     const existing = new Map<string, ExistingRef>();
     const select = existingRefSelect();
 
-    for (let i = 0; i < unique.length; i += 400) {
+    if (requested.size) {
       const rows = await this.prisma.jobApplication.findMany({
         where: {
           workspace_id: workspaceId,
-          job_fingerprint: { in: unique.slice(i, i + 400) },
-          created_at: { gte: cutoff },
-          ...(excludeIds.length ? { id: { notIn: excludeIds } } : {}),
-        },
-        select: { ...select, job_fingerprint: true },
-        orderBy: { created_at: 'desc' },
-      });
-      for (const row of rows) {
-        if (row.job_fingerprint && !existing.has(row.job_fingerprint)) {
-          existing.set(row.job_fingerprint, toExistingRef(row));
-        }
-      }
-    }
-
-    if (unique.length) {
-      const legacy = await this.prisma.jobApplication.findMany({
-        where: {
-          workspace_id: workspaceId,
-          job_fingerprint: null,
-          created_at: { gte: cutoff },
+          date: { gte: cutoff },
           company_name: { not: null },
-          job_title: { not: null },
+          application_status: { not: 'Duplicated' },
+          NOT: [
+            { note: BANNED_URL_NOTE },
+            { note: { startsWith: 'job eligibility check failed -' } },
+          ],
           ...(excludeIds.length ? { id: { notIn: excludeIds } } : {}),
         },
         select,
-        orderBy: { created_at: 'desc' },
+        orderBy: [{ date: 'desc' }, { created_at: 'desc' }],
       });
-      for (const row of legacy) {
-        const fingerprint = createJobFingerprint(row.company_name, row.job_title);
-        if (fingerprint && requested.has(fingerprint) && !existing.has(fingerprint)) {
-          existing.set(fingerprint, toExistingRef(row));
+      for (const row of rows) {
+        const identity = row.company_name ? normalizeCompanyIdentity(row.company_name) : null;
+        if (identity && requested.has(identity) && !existing.has(identity)) {
+          existing.set(identity, toExistingRef(row));
         }
       }
     }
 
     const seen = new Set<string>();
-    return fingerprints.map((fingerprint) => {
-      if (!fingerprint) return { fingerprint: null, is_duplicate: false, reason: null };
-      const existingRow = existing.get(fingerprint);
+    return identities.map((companyIdentity) => {
+      if (!companyIdentity) return { company_identity: null, is_duplicate: false, reason: null };
+      const existingRow = existing.get(companyIdentity);
       if (existingRow) {
-        seen.add(fingerprint);
-        return { fingerprint, is_duplicate: true, reason: 'existing' as const, existing: existingRow };
+        seen.add(companyIdentity);
+        return { company_identity: companyIdentity, is_duplicate: true, reason: 'existing' as const, existing: existingRow };
       }
-      if (seen.has(fingerprint)) {
-        return { fingerprint, is_duplicate: true, reason: 'within_batch' as const };
+      if (seen.has(companyIdentity)) {
+        return { company_identity: companyIdentity, is_duplicate: true, reason: 'within_batch' as const };
       }
-      seen.add(fingerprint);
-      return { fingerprint, is_duplicate: false, reason: null };
+      seen.add(companyIdentity);
+      return { company_identity: companyIdentity, is_duplicate: false, reason: null };
     });
   }
 
-  /** Company/title matches are deliberately workspace-local and expire to allow later reposts. */
-  async findRecentJobMatch(
+  /** Company matches are profile/workspace-local and expire after the configured cooldown. */
+  async findRecentCompanyMatch(
     workspaceId: string,
     companyName?: string | null,
-    jobTitle?: string | null,
     excludeId?: string,
   ): Promise<ExistingRef | null> {
-    const fingerprint = createJobFingerprint(companyName, jobTitle);
-    if (!fingerprint) return null;
+    if (!companyName?.trim()) return null;
+    const companyIdentity = normalizeCompanyIdentity(companyName);
+    if (!companyIdentity) return null;
 
-    const cutoff = this.fingerprintCutoff();
-    const select = existingRefSelect();
-
-    const exact = await this.prisma.jobApplication.findFirst({
+    const rows = await this.prisma.jobApplication.findMany({
       where: {
         workspace_id: workspaceId,
-        job_fingerprint: fingerprint,
-        created_at: { gte: cutoff },
-        ...(excludeId ? { id: { not: excludeId } } : {}),
-      },
-      select,
-      orderBy: { created_at: 'desc' },
-    });
-    if (exact) return toExistingRef(exact);
-
-    // Rows created before this column was introduced remain useful without a large backfill.
-    const legacy = await this.prisma.jobApplication.findMany({
-      where: {
-        workspace_id: workspaceId,
-        job_fingerprint: null,
-        created_at: { gte: cutoff },
+        date: { gte: this.companyCooldownCutoff() },
         company_name: { not: null },
-        job_title: { not: null },
+        application_status: { not: 'Duplicated' },
+        NOT: [
+          { note: BANNED_URL_NOTE },
+          { note: { startsWith: 'job eligibility check failed -' } },
+        ],
         ...(excludeId ? { id: { not: excludeId } } : {}),
       },
-      select,
-      orderBy: { created_at: 'desc' },
+      select: existingRefSelect(),
+      orderBy: [{ date: 'desc' }, { created_at: 'desc' }],
     });
-    const match = legacy.find(
-      (row) => createJobFingerprint(row.company_name, row.job_title) === fingerprint,
-    );
+    const match = rows.find((row) => row.company_name
+      && normalizeCompanyIdentity(row.company_name) === companyIdentity);
     return match ? toExistingRef(match) : null;
   }
 
-  private fingerprintCutoff() {
-    const configuredDays = Number(process.env.JOB_FINGERPRINT_WINDOW_DAYS ?? 90);
+  private companyCooldownCutoff() {
+    const configuredDays = Number(
+      process.env.COMPANY_APPLICATION_COOLDOWN_DAYS
+        ?? process.env.JOB_FINGERPRINT_WINDOW_DAYS
+        ?? 90,
+    );
     const windowDays = Number.isFinite(configuredDays)
       ? Math.min(365, Math.max(1, Math.trunc(configuredDays)))
       : 90;
@@ -227,12 +203,12 @@ export interface DuplicateVerdict {
   normalized_url: string;
   is_duplicate: boolean;
   reason: 'existing' | 'within_batch' | null;
-  duplicate_type: 'url' | 'job_fingerprint' | null;
+  duplicate_type: 'url' | 'company' | null;
   existing?: ExistingRef;
 }
 
-export interface JobIdentityVerdict {
-  fingerprint: string | null;
+export interface CompanyIdentityVerdict {
+  company_identity: string | null;
   is_duplicate: boolean;
   reason: 'existing' | 'within_batch' | null;
   existing?: ExistingRef;

@@ -50,7 +50,7 @@ describe('ApplicationsService generated-application duplicate-click protection',
     const duplicates = {
       scope: 'workspace',
       classifyBatch: jest.fn(),
-      findRecentJobMatch: jest.fn().mockResolvedValue(null),
+      findRecentCompanyMatch: jest.fn().mockResolvedValue(null),
     };
     const slackNotifications = { notifyApplicationCreated: jest.fn().mockResolvedValue(undefined) };
     const service = new ApplicationsService(
@@ -158,15 +158,16 @@ describe('ApplicationsService generated-application duplicate-click protection',
     expect(prisma.jobApplication.create).toHaveBeenCalledTimes(1);
   });
 
-  it('blocks a recent company/title match from another URL', async () => {
+  it('blocks a recent application at the same company even when the job title differs', async () => {
     const { service, duplicates, numbering } = setup();
     duplicates.classifyBatch.mockResolvedValue([{
       normalized_url: existing.normalized_url,
       is_duplicate: false,
     }]);
-    duplicates.findRecentJobMatch.mockResolvedValue({
+    duplicates.findRecentCompanyMatch.mockResolvedValue({
       ...existing,
       url: 'https://linkedin.com/jobs/view/123',
+      job_title: 'A Different Role',
     });
 
     await expect(service.createGenerated(user, {
@@ -175,25 +176,32 @@ describe('ApplicationsService generated-application duplicate-click protection',
     })).resolves.toMatchObject({
       success: false,
       duplicate: true,
-      duplicate_type: 'job_fingerprint',
-      can_override: true,
+      duplicate_type: 'company',
     });
     expect(numbering.withNextNumber).not.toHaveBeenCalled();
   });
 
-  it('allows a user-confirmed company/title match', async () => {
-    const { service, prisma, duplicates } = setup();
+  it('does not allow the company cooldown to be overridden', async () => {
+    const { service, duplicates, numbering } = setup();
     duplicates.classifyBatch.mockResolvedValue([{
       normalized_url: existing.normalized_url,
       is_duplicate: false,
     }]);
-    prisma.jobApplication.create.mockResolvedValue(existing);
+    duplicates.findRecentCompanyMatch.mockResolvedValue(existing);
 
     await expect(service.createGenerated(user, {
       ...dto,
       allow_similar_job: true,
-    })).resolves.toMatchObject({ success: true, already_added: false });
-    expect(duplicates.findRecentJobMatch).not.toHaveBeenCalled();
+    })).resolves.toMatchObject({
+      success: false,
+      duplicate: true,
+      duplicate_type: 'company',
+    });
+    expect(duplicates.findRecentCompanyMatch).toHaveBeenCalledWith(
+      dto.workspace_id,
+      dto.company_name,
+    );
+    expect(numbering.withNextNumber).not.toHaveBeenCalled();
   });
 
   it('persists an eligibility rejection with its note and job details', async () => {

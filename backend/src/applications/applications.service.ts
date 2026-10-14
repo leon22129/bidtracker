@@ -354,16 +354,15 @@ export class ApplicationsService {
         ? emptyToNull(patch.company_name)
         : row.company_name;
       const jobTitle = patch.job_title !== undefined ? emptyToNull(patch.job_title) : row.job_title;
-      const similar = await this.duplicates.findRecentJobMatch(
+      const similar = await this.duplicates.findRecentCompanyMatch(
         row.workspace_id,
         companyName,
-        jobTitle,
         row.id,
       );
       if (similar && isAdmin(user.role)) data.application_status = 'Duplicated';
       else if (similar) {
         throw new BadRequestException(
-          `A recent application at ${companyName} with the title ${jobTitle} already exists.`,
+          `An application at ${companyName} already exists within this profile's 90-day company cooldown.`,
         );
       }
     }
@@ -417,12 +416,12 @@ export class ApplicationsService {
     const failed: Array<{ id: string; reason: string }> = [];
     const bannedVerdicts = await this.bannedUrls.matchMany(rows.map((row) => row.url));
     const bannedById = new Map(rows.map((row, index) => [row.id, bannedVerdicts[index]]));
-    const identityById = new Map<string, Awaited<ReturnType<DuplicateService['classifyJobIdentities']>>[number]>();
+    const identityById = new Map<string, Awaited<ReturnType<DuplicateService['classifyCompanyIdentities']>>[number]>();
 
     if (dto.patch.company_name !== undefined || dto.patch.job_title !== undefined) {
       for (const workspaceId of workspaceIds) {
         const workspaceRows = rows.filter((row) => row.workspace_id === workspaceId);
-        const identities = await this.duplicates.classifyJobIdentities(
+        const identities = await this.duplicates.classifyCompanyIdentities(
           workspaceId,
           workspaceRows.map((row) => ({
             company_name: dto.patch.company_name !== undefined
@@ -469,7 +468,7 @@ export class ApplicationsService {
           data.job_fingerprint = createJobFingerprint(companyName, jobTitle);
           const identity = identityById.get(row.id);
           if (identity?.is_duplicate && isAdmin(user.role)) data.application_status = 'Duplicated';
-          else if (identity?.is_duplicate) throw new BadRequestException('A recent application with that company and job title already exists.');
+          else if (identity?.is_duplicate) throw new BadRequestException("An application at that company already exists within this profile's 90-day company cooldown.");
         }
         if (patch.paid !== undefined && isAdmin(user.role)) data.paid = patch.paid;
         if (bannedById.get(row.id)) {
@@ -549,12 +548,12 @@ export class ApplicationsService {
       this.duplicates.classifyBatch(dto.workspace_id, [url]),
       this.bannedUrls.matches(url),
     ]);
-    const similar = urlVerdict.is_duplicate
+    const recentCompanyApplication = urlVerdict.is_duplicate
       ? null
-      : await this.duplicates.findRecentJobMatch(dto.workspace_id, companyName, jobTitle);
+      : await this.duplicates.findRecentCompanyMatch(dto.workspace_id, companyName);
     const applicationStatus: ApplicationStatus = banned
       ? 'Rejected'
-      : urlVerdict.is_duplicate || similar
+      : urlVerdict.is_duplicate || recentCompanyApplication
         ? 'Duplicated'
         : dto.application_status;
     const date = toDayStart(new Date());
@@ -649,21 +648,17 @@ export class ApplicationsService {
       };
     }
 
-    if (!dto.allow_similar_job) {
-      const similar = await this.duplicates.findRecentJobMatch(
-        dto.workspace_id,
-        companyName,
-        jobTitle,
-      );
-      if (similar) {
-        return {
-          success: false,
-          duplicate: true,
-          duplicate_type: 'job_fingerprint' as const,
-          existing_application: similar,
-          can_override: true,
-        };
-      }
+    const recentCompanyApplication = await this.duplicates.findRecentCompanyMatch(
+      dto.workspace_id,
+      companyName,
+    );
+    if (recentCompanyApplication) {
+      return {
+        success: false,
+        duplicate: true,
+        duplicate_type: 'company' as const,
+        existing_application: recentCompanyApplication,
+      };
     }
 
     const date = toDayStart(new Date());

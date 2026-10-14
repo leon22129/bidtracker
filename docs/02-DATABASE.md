@@ -55,7 +55,7 @@ creator, so reassignment cannot move earlier work to another bidder.
 | `company_name` | TEXT NULL | required for generated/manual creation; nullable for imports and banned rows |
 | `url` | TEXT | as pasted |
 | `normalized_url` | TEXT | canonical form — duplicate key within a workspace |
-| `job_fingerprint` | TEXT NULL | 128-bit company/title hash for recent cross-site duplicate warnings |
+| `job_fingerprint` | TEXT NULL | legacy 128-bit company/title hash retained for compatibility |
 | `job_source` | TEXT | detected platform, default `Other` |
 | `application_status` | TEXT | `Pending`\|`Applied`\|`Rejected`\|`Duplicated` |
 | `pipeline_status` | TEXT | `Not Started` … `Rejected` — admin only |
@@ -106,7 +106,7 @@ Every index below exists to serve a *named* query, not speculatively.
 | `JobApplication(workspace_id, date DESC, number ASC)` | default paginated workspace ordering without a temporary sort |
 | `JobApplication(workspace_id, normalized_url)` | workspace-local duplicate probe; a partial UNIQUE index additionally permits only one `Pending`/`Applied` row per URL in each workspace |
 | Trigram GIN on `JobApplication(job_title/company_name/url/note)` | case-insensitive leading-wildcard free-text search |
-| `JobApplication(workspace_id, job_fingerprint, created_at)` | recent cross-site company/title duplicate probe |
+| `JobApplication(workspace_id, job_fingerprint, created_at)` | legacy company/title lookup index; retained for compatibility |
 | `JobApplication(date)` | cross-workspace weekly aggregation |
 | `JobApplication(interview_date)` | upcoming-interview list |
 | `Workspace(owner_user_id)` | current ownership/access lookup |
