@@ -63,9 +63,9 @@ export function assertRowNotLocked(
   row: { paid: boolean; application_status?: ApplicationStatus | string },
   role: Role | string,
 ): void {
-  if (row.application_status === 'Rejected' && !isAdmin(role)) {
+  if (['Rejected', 'Banned'].includes(row.application_status ?? '') && !isAdmin(role)) {
     throw new ForbiddenException(
-      'Rejected applications are locked. Only an admin can modify this row.',
+      `${row.application_status} applications are locked. Only an admin can modify this row.`,
     );
   }
   if (row.paid && !isAdmin(role)) {

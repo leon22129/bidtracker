@@ -57,7 +57,7 @@ describe('ApplicationGenerationService application metadata eligibility', () => 
     const applications = {
       createBannedApplication: jest.fn().mockResolvedValue({
         id: 'banned-application-1',
-        application_status: 'Rejected',
+        application_status: 'Banned',
         note: 'this job is in banned list',
       }),
       createEligibilityRejectedApplication: jest.fn().mockImplementation(async (_user, application) => ({
@@ -118,7 +118,7 @@ describe('ApplicationGenerationService application metadata eligibility', () => 
       success: false,
       banned: true,
       application: {
-        application_status: 'Rejected',
+        application_status: 'Banned',
         note: 'this job is in banned list',
       },
     });

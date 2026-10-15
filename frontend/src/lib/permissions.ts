@@ -1,4 +1,5 @@
 import type { ApplicationStatus, JobApplication, Role, User } from './types';
+import { APPLICATION_STATUSES } from './types';
 
 /**
  * Client-side mirror of `backend/src/common/policies/application.policy.ts`.
@@ -37,7 +38,7 @@ export function canEditField(
   if (!user) return false;
   if (isAdmin(user)) return true;
   if (row.paid) return false;                 // paid rows are locked
-  if (row.application_status === 'Rejected') return false;
+  if (row.application_status === 'Rejected' || row.application_status === 'Banned') return false;
   if (row.application_status === 'Duplicated' && !DUPLICATED_EDITABLE_FIELDS.has(field)) return false;
   if (ADMIN_ONLY_FIELDS.has(field)) return false;
   return true;
@@ -49,9 +50,10 @@ export function allowedStatusTransitions(
   current: ApplicationStatus,
 ): ApplicationStatus[] {
   if (!user) return [current];
-  if (isAdmin(user)) return ['Pending', 'Applied', 'Rejected', 'Duplicated'];
+  if (isAdmin(user)) return [...APPLICATION_STATUSES];
 
-  // Non-admins: forward-only, and nothing may touch Duplicated.
+  // Non-admins: forward-only; Banned and Duplicated statuses are set by the system or an admin.
+  if (current === 'Banned') return ['Banned'];
   if (current === 'Duplicated') return ['Duplicated'];
   if (current === 'Pending') return ['Pending', 'Applied'];
   if (current === 'Applied') return ['Applied', 'Rejected'];
@@ -94,6 +96,7 @@ export function whyLocked(
   if (canEditField(user, row, field)) return null;
   if (row.paid) return 'This row is paid and locked — only an admin can edit it';
   if (row.application_status === 'Rejected') return 'Rejected applications are locked — only an admin can edit them';
+  if (row.application_status === 'Banned') return 'Banned applications are locked — only an admin can edit them';
   if (row.application_status === 'Duplicated') {
     return 'Duplicated applications only allow company, title, source, and note edits';
   }

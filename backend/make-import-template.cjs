@@ -48,6 +48,7 @@ const ROWS = [
     'Job Title     blank is fine - it is read from the job posting when "Fetch company and job title" is on.',
     'Company Name  same. The same normalized company has a 90-day cooldown within one profile, even for a different title.',
     'Status        Pending, Applied or Rejected. Blank = Pending. "Duplicated" is set by the system and is admin-only.',
+    'Banned URLs   automatically receive "Banned" and are counted separately from Rejected. Only an admin can change this status.',
     'Note          free text.',
     '',
     'Header names are matched loosely: "Job URL", "Link", "Company", "Notes" and similar variants all work.',

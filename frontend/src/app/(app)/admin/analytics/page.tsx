@@ -137,6 +137,7 @@ export default function AnalyticsPage() {
                 <Bar label="Pending" value={c.pending_count} max={c.total_applications} colour="bg-gray-400" />
                 <Bar label="Applied" value={c.applied_count} max={c.total_applications} colour="bg-green-500" />
                 <Bar label="Rejected" value={c.rejected_count} max={c.total_applications} colour="bg-gray-900" />
+                <Bar label="Banned" value={c.banned_count} max={c.total_applications} colour="bg-orange-500" />
                 <Bar label="Duplicated" value={c.duplicated_count} max={c.total_applications} colour="bg-red-500" />
               </div>
               {c.duplicate_rate !== null && (

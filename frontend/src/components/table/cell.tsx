@@ -118,7 +118,9 @@ export function Cell({
           column.align === 'right' ? 'justify-end' : column.align === 'center' ? 'justify-center' : ''
         }`}
         title={lockReason ?? displayTitle(row, column)}
-        onClick={() => editable && setEditing(true)}
+        onClick={() => {
+          if (editable && !window.getSelection()?.toString()) setEditing(true);
+        }}
         onKeyDown={(e) => {
           if (editable && (e.key === 'Enter' || e.key === 'F2')) setEditing(true);
         }}

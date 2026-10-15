@@ -38,7 +38,7 @@ import { careerPathIncludesCompany } from '../common/utils/job-fingerprint.util'
 import { stripTrailingCoverLetterSigner } from '../common/utils/cover-letter.util';
 
 const OPENAI_API_BASE = 'https://api.openai.com/v1';
-const MODEL = process.env.OPENAI_MODEL || 'gpt-5.6-terra';
+const MODEL = process.env.OPENAI_MODEL || 'gpt-6.1-sol';
 
 type OpenAiError = { message?: string; type?: string; code?: string; param?: string };
 type OpenAiResponse = { id?: string; output_text?: string; output?: Array<{ type?: string; role?: string; content?: Array<{ type?: string; text?: string }> }>; usage?: OpenAiUsage; error?: OpenAiError };

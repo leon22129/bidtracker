@@ -23,7 +23,7 @@ interface Props {
   onSortChange: (sortBy: string, sortDir: 'asc' | 'desc') => void;
   selectedIds: Set<string>;
   onToggleSelect: (id: string, shiftKey: boolean, rowIndex: number) => void;
-  onSelectAllVisible: (ids: string[], selected: boolean) => void;
+  onSelectAllVisible: (rowIndices: number[], selected: boolean) => void;
   onEditCell: (row: JobApplication, field: keyof JobApplication, value: unknown) => void;
   onDownloadResume: (row: JobApplication) => void;
   onDownloadJobDescription: (row: JobApplication) => void;
@@ -132,12 +132,12 @@ export function ApplicationsTable(props: Props) {
     virtualizer.scrollToIndex(0);
   };
 
-  // Select-all applies to the rows currently loaded in memory; the footer states this explicitly so
-  // "select all" can never be mistaken for "all 50,000 matching rows".
-  const visibleIds = virtualRows
-    .map((v) => getRow(v.index)?.id)
-    .filter((id): id is string => Boolean(id));
-  const allVisibleSelected = visibleIds.length > 0 && visibleIds.every((id) => selectedIds.has(id));
+  // Select-all applies to the rows shown in the table, excluding placeholders still loading.
+  const visibleRows = virtualRows.flatMap(({ index }) => {
+    const row = getRow(index);
+    return row ? [{ row, index }] : [];
+  });
+  const allVisibleSelected = visibleRows.length > 0 && visibleRows.every(({ row }) => selectedIds.has(row.id));
 
   const leftOffset = (index: number) =>
     SELECT_COL_WIDTH + columns.slice(0, index).reduce((sum, c) => sum + widthOf(c.key), 0);
@@ -150,6 +150,8 @@ export function ApplicationsTable(props: Props) {
         ref={scrollRef}
         className="thin-scroll relative min-h-0 flex-1 overflow-auto bg-white"
         role="grid"
+        aria-label="Job applications"
+        tabIndex={0}
         aria-rowcount={total}
         aria-colcount={columns.length + 1}
       >
@@ -167,11 +169,13 @@ export function ApplicationsTable(props: Props) {
             >
               <input
                 type="checkbox"
-                aria-label="Select all loaded rows"
+                aria-label="Select visible rows"
                 className="h-3.5 w-3.5 accent-gray-900"
                 checked={allVisibleSelected}
-                disabled={readOnly}
-                onChange={(e) => onSelectAllVisible(visibleIds, e.target.checked)}
+                ref={(input) => {
+                  if (input) input.indeterminate = !allVisibleSelected && visibleRows.some(({ row }) => selectedIds.has(row.id));
+                }}
+                onChange={(e) => onSelectAllVisible(visibleRows.map(({ index }) => index), e.target.checked)}
               />
             </div>
 
@@ -271,16 +275,18 @@ export function ApplicationsTable(props: Props) {
                   ? { borderTop: '5px solid #ef4444' }
                   : undefined;
               const rowSurface = row.application_status === 'Duplicated'
-                 ? 'bg-red-200 text-red-950 hover:bg-red-300'
-                : row.application_status === 'Rejected'
-                  ? 'bg-gray-500 text-white hover:bg-gray-600'
-                  : row.application_status === 'Applied' && row.paid
-                    ? 'bg-green-100 text-green-950 hover:bg-green-200'
-                    : row.application_status === 'Applied'
-                      ? 'bg-green-50 text-green-950 hover:bg-green-100'
-                      : row.application_status === 'Pending'
-                        ? 'bg-amber-50 text-gray-900 hover:bg-amber-100'
-                        : dayStart ? boundaryClass : 'bg-white hover:bg-gray-50/80';
+                ? 'bg-red-200 text-red-950 hover:bg-red-300'
+                : row.application_status === 'Banned'
+                  ? 'bg-orange-50 text-orange-950 hover:bg-orange-100'
+                  : row.application_status === 'Rejected'
+                    ? 'bg-gray-500 text-white hover:bg-gray-600'
+                    : row.application_status === 'Applied' && row.paid
+                      ? 'bg-green-100 text-green-950 hover:bg-green-200'
+                      : row.application_status === 'Applied'
+                        ? 'bg-green-50 text-green-950 hover:bg-green-100'
+                        : row.application_status === 'Pending'
+                          ? 'bg-amber-50 text-gray-900 hover:bg-amber-100'
+                          : dayStart ? boundaryClass : 'bg-white hover:bg-gray-50/80';
               return (
                 <div
                   key={row.id}
@@ -305,7 +311,6 @@ export function ApplicationsTable(props: Props) {
                       aria-label={`Select row ${row.number}`}
                       className="h-3.5 w-3.5 accent-gray-900"
                       checked={selected}
-                      disabled={readOnly}
                       onChange={(e) =>
                         onToggleSelect(
                           row.id,
@@ -359,7 +364,7 @@ export function ApplicationsTable(props: Props) {
           {total.toLocaleString()} row{total === 1 ? '' : 's'}
         </span>
         {selectedIds.size > 0 && (
-          <span className="font-medium text-gray-900">{selectedIds.size} selected</span>
+          <span className="font-medium text-gray-900">{selectedIds.size} selected · Copy links or Ctrl/Cmd+C</span>
         )}
         {loading && <span className="text-gray-500">Loading…</span>}
         <div className="hidden items-center gap-2.5 md:flex" aria-label="Row color legend">
@@ -367,7 +372,8 @@ export function ApplicationsTable(props: Props) {
           <LegendItem color="bg-green-100" label="Applied paid" />
           <LegendItem color="bg-amber-50" label="Pending" />
           <LegendItem color="bg-gray-500" label="Rejected" />
-            <LegendItem color="bg-red-200" label="Duplicated" />
+          <LegendItem color="bg-orange-50" label="Banned" />
+          <LegendItem color="bg-red-200" label="Duplicated" />
         </div>
         <span className="ml-auto text-gray-400">
           {stickyCount} pinned column{stickyCount === 1 ? '' : 's'} · drag a header edge to resize ·

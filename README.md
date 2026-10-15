@@ -7,6 +7,11 @@ Three roles (**admin**, **bidder manager**, **junior bidder**) work in per-bidde
 the company and job title, detects duplicates, and numbers rows per date. Admins manage the
 recruiting pipeline, settle weekly bid payments, and read conversion analytics.
 
+To copy job links, check the desired rows and choose **Copy links**, or press **Ctrl+C**
+(**Cmd+C** on Mac) while the table is focused. Full URLs are copied one per line in table order.
+Shift-click a row checkbox to select a range; the header checkbox selects the rows currently shown.
+Copying also works in read-only workspaces, and selected links remain available after scrolling away.
+
 **Stack:** Next.js 14 + TypeScript + Tailwind · NestJS + TypeScript · PostgreSQL + Prisma.
 No managed services, no paid dependencies, runs on the smallest VPS you can rent.
 
@@ -241,7 +246,7 @@ Additional generated-resume routes:
 | `page`                   | int                 | 1-based, default 1                                                                                                                                               |
 | `page_size`              | int                 | default 100,**capped at 500** so one request can't pull the table                                                                                          |
 | `search`                 | string              | matches job title, company, URL, note                                                                                                                            |
-| `application_status`     | csv                 | `Pending,Applied,Rejected,Duplicated`                                                                                                                          |
+| `application_status`     | csv                 | `Pending,Applied,Rejected,Banned,Duplicated`                                                                                                                   |
 | `pipeline_status`        | csv                 | the 7 pipeline values                                                                                                                                            |
 | `job_source`             | csv                 | the 13 sources                                                                                                                                                   |
 | `paid`                   | bool                |                                                                                                                                                                  |
@@ -696,7 +701,7 @@ Full annotated list in [.env.example](.env.example). The ones worth knowing:
 | `DISABLE_CONVERSATION_CLEANUP`                    | `false`               | Disables provider conversation retention cleanup when explicitly required.             |
 | `ALLOW_BIDDER_PENDING_TO_REJECTED`                 | `false`               | Adds one extra transition beyond the spec's two.                                       |
 | `OPENAI_API_KEY`                                    | —                    | Server-only key used by `POST /api/applications/generate`; never send it to the browser. |
-| `OPENAI_MODEL`                                      | `gpt-5.6-terra`      | OpenAI Responses API model used for eligibility, resume, and answer generation.        |
+| `OPENAI_MODEL`                                      | `gpt-6.1-sol`        | OpenAI Responses API model used for eligibility, resume, and answer generation.        |
 
 ### Logging and AI cost variables
 
@@ -710,6 +715,9 @@ descriptions. Set `AI_LOG_CONTENT=true` to include previews, bounded by
 provider request IDs are logged regardless. Set `OPENAI_INPUT_COST_PER_1M_TOKENS`,
 `OPENAI_CACHED_INPUT_COST_PER_1M_TOKENS`, and `OPENAI_OUTPUT_COST_PER_1M_TOKENS` to the current
 rates for `OPENAI_MODEL` to add separate input/output and total estimated USD costs.
+The example configuration uses GPT-6.1 Sol Standard rates per million tokens: $2 input,
+$0.10 cached input, and $10 output for prompts up to 272K input tokens. Confirm current
+[OpenAI pricing](https://developers.openai.com/api/docs/models/gpt-6.1-sol) when changing models.
 For each successfully generated application, the launcher also prints a compact comparison of the
 resume-only usage and the combined eligibility-plus-resume usage. Later application-answer calls
 are logged separately and are not included in that initial generation total.
@@ -772,6 +780,10 @@ can be blank or absent entirely.
 | `Company Name` | no | free text | imported blank and reported for review |
 | `Status` | no | `Pending`, `Applied`, `Rejected` | `Pending` |
 | `Note` | no | free text | empty |
+
+URLs matching the banned list receive `Banned`, which has its own filter and analytics count.
+`Rejected` counts exclude these applications. The status migration also reclassifies older
+`Rejected` rows whose note is exactly `this job is in banned list`.
 
 **Headers are fuzzy-matched.** Comparison is case-, space- and punctuation-insensitive, over a list of
 synonyms — so `JOB URL`, `Job_Url` and `link` all resolve to `URL`. Column **order is irrelevant** and

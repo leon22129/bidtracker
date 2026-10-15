@@ -180,7 +180,7 @@ model JobApplication {
   job_fingerprint String? // recent workspace duplicate signal: normalized company + title
   job_source      String  @default("Other")
 
-  application_status String @default("Pending") // Pending | Applied | Rejected | Duplicated
+  application_status String @default("Pending") // Pending | Applied | Rejected | Banned | Duplicated
   pipeline_status    String @default("Not Started") // admin-managed recruiting stage
 
   note String?

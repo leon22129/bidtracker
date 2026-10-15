@@ -295,7 +295,7 @@ export class ApplicationsService {
       data.job_source = detectJobSource(url);
 
       if (await this.bannedUrls.matches(url)) {
-        data.application_status = 'Rejected';
+        data.application_status = 'Banned';
         data.note = BANNED_URL_NOTE;
       } else {
         const [verdict] = await this.duplicates.classifyBatch(
@@ -347,7 +347,7 @@ export class ApplicationsService {
     const finalUrl = (data.url ?? row.url ?? '').toString().trim();
     const finalIsBanned = finalUrl ? await this.bannedUrls.matches(finalUrl) : false;
     if (finalIsBanned) {
-      data.application_status = 'Rejected';
+      data.application_status = 'Banned';
       data.note = BANNED_URL_NOTE;
     } else if (patch.company_name !== undefined || patch.job_title !== undefined) {
       const companyName = patch.company_name !== undefined
@@ -472,7 +472,7 @@ export class ApplicationsService {
         }
         if (patch.paid !== undefined && isAdmin(user.role)) data.paid = patch.paid;
         if (bannedById.get(row.id)) {
-          data.application_status = 'Rejected';
+          data.application_status = 'Banned';
           data.note = BANNED_URL_NOTE;
         }
         // `date` is intentionally not bulk-editable: it would require renumbering every affected row.
@@ -552,7 +552,7 @@ export class ApplicationsService {
       ? null
       : await this.duplicates.findRecentCompanyMatch(dto.workspace_id, companyName);
     const applicationStatus: ApplicationStatus = banned
-      ? 'Rejected'
+      ? 'Banned'
       : urlVerdict.is_duplicate || recentCompanyApplication
         ? 'Duplicated'
         : dto.application_status;
@@ -755,7 +755,7 @@ export class ApplicationsService {
       return this.prisma.jobApplication.update({
         where: { id: verdict.existing.id },
         data: {
-          application_status: 'Rejected',
+          application_status: 'Banned',
           note: BANNED_URL_NOTE,
         },
         select: ROW_SELECT,
@@ -771,7 +771,7 @@ export class ApplicationsService {
           url,
           normalized_url: normalizedUrl,
           job_source: detectJobSource(url),
-          application_status: 'Rejected',
+          application_status: 'Banned',
           note: BANNED_URL_NOTE,
           created_by_user_id: user.id,
         },

@@ -194,7 +194,7 @@ export class ImportService {
     const identityVerdicts = await this.duplicates.classifyCompanyIdentities(
       workspaceId,
       parsed.map((row, index) => ({
-        // A banned URL is recorded as skipped/rejected, not as an application to the company.
+        // A banned URL does not count as an application to the company.
         company_name: bannedVerdicts[index] ? null : row.company_name,
         job_title: row.job_title,
       })),
@@ -236,8 +236,8 @@ export class ImportService {
           url: row.url,
           normalized_url: verdict?.normalized_url ?? normalizeUrl(row.url),
           job_source: detectJobSource(row.url),
-          // Banned URLs are auto-rejected, regardless of spreadsheet status or duplicate checks.
-          application_status: banned ? 'Rejected' : verdict?.is_duplicate ? 'Duplicated' : row.status,
+          // Banned URLs keep their own status, regardless of spreadsheet status or duplicate checks.
+          application_status: banned ? 'Banned' : verdict?.is_duplicate ? 'Duplicated' : row.status,
           pipeline_status: 'Not Started',
           job_title: row.job_title,
           company_name: row.company_name,

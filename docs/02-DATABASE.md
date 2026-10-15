@@ -57,7 +57,7 @@ creator, so reassignment cannot move earlier work to another bidder.
 | `normalized_url` | TEXT | canonical form — duplicate key within a workspace |
 | `job_fingerprint` | TEXT NULL | legacy 128-bit company/title hash retained for compatibility |
 | `job_source` | TEXT | detected platform, default `Other` |
-| `application_status` | TEXT | `Pending`\|`Applied`\|`Rejected`\|`Duplicated` |
+| `application_status` | TEXT | `Pending`\|`Applied`\|`Rejected`\|`Banned`\|`Duplicated` |
 | `pipeline_status` | TEXT | `Not Started` … `Rejected` — admin only |
 | `note` | TEXT NULL | |
 | `interview_date` | DATETIME NULL | admin only |

@@ -9,7 +9,7 @@
 export const ROLES = ['super_admin', 'admin', 'bidder_manager', 'bidder'] as const;
 export type Role = (typeof ROLES)[number];
 
-export const APPLICATION_STATUSES = ['Pending', 'Applied', 'Rejected', 'Duplicated'] as const;
+export const APPLICATION_STATUSES = ['Pending', 'Applied', 'Rejected', 'Banned', 'Duplicated'] as const;
 export type ApplicationStatus = (typeof APPLICATION_STATUSES)[number];
 
 export const PIPELINE_STATUSES = [
@@ -55,6 +55,7 @@ export const APPLICATION_STATUS_COLORS: Record<ApplicationStatus, string> = {
   Pending: 'gray',
   Applied: 'green',
   Rejected: 'black',
+  Banned: 'orange',
   Duplicated: 'red',
 };
 

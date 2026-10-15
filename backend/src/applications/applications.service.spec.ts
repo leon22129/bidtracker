@@ -37,6 +37,7 @@ describe('ApplicationsService generated-application duplicate-click protection',
         findFirst: jest.fn(),
         create: jest.fn(),
         update: jest.fn(),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
       resumeConversation: { findUnique: jest.fn() },
     };
@@ -52,16 +53,20 @@ describe('ApplicationsService generated-application duplicate-click protection',
       classifyBatch: jest.fn(),
       findRecentCompanyMatch: jest.fn().mockResolvedValue(null),
     };
+    const bannedUrls = {
+      matches: jest.fn().mockResolvedValue(false),
+      matchMany: jest.fn(async (urls: string[]) => urls.map(() => false)),
+    };
     const slackNotifications = { notifyApplicationCreated: jest.fn().mockResolvedValue(undefined) };
     const service = new ApplicationsService(
       prisma as any,
       access as any,
       numbering as any,
       duplicates as any,
-      { matches: jest.fn().mockResolvedValue(false), matchMany: jest.fn() } as any,
+      bannedUrls as any,
       slackNotifications as any,
     );
-    return { service, prisma, numbering, duplicates, slackNotifications };
+    return { service, prisma, numbering, duplicates, bannedUrls, slackNotifications };
   }
 
   it('uses a forward cursor without recounting the result set', async () => {
@@ -236,7 +241,7 @@ describe('ApplicationsService generated-application duplicate-click protection',
     expect(slackNotifications.notifyApplicationCreated).toHaveBeenCalledWith(user.id);
   });
 
-  it('marks an existing banned URL rejected and saves the banned-list note', async () => {
+  it('marks an existing banned URL as Banned and saves the banned-list note', async () => {
     const { service, prisma, duplicates } = setup();
     duplicates.classifyBatch.mockResolvedValue([{
       normalized_url: existing.normalized_url,
@@ -245,22 +250,103 @@ describe('ApplicationsService generated-application duplicate-click protection',
     }]);
     prisma.jobApplication.update.mockResolvedValue({
       ...existing,
-      application_status: 'Rejected',
+      application_status: 'Banned',
       note: 'this job is in banned list',
     });
 
     await expect(service.createBannedApplication(user, dto.workspace_id, dto.url))
       .resolves.toMatchObject({
-        application_status: 'Rejected',
+        application_status: 'Banned',
         note: 'this job is in banned list',
       });
     expect(prisma.jobApplication.update).toHaveBeenCalledWith(expect.objectContaining({
       where: { id: existing.id },
       data: {
-        application_status: 'Rejected',
+        application_status: 'Banned',
         note: 'this job is in banned list',
       },
     }));
+  });
+
+  it('creates a new banned application with its own status', async () => {
+    const { service, prisma, duplicates } = setup();
+    duplicates.classifyBatch.mockResolvedValue([{
+      normalized_url: existing.normalized_url,
+      is_duplicate: false,
+    }]);
+
+    await service.createBannedApplication(user, dto.workspace_id, dto.url);
+
+    expect(prisma.jobApplication.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        application_status: 'Banned',
+        note: 'this job is in banned list',
+      }),
+    }));
+  });
+
+  it('marks a manually entered banned URL as Banned even if it is also a duplicate', async () => {
+    const { service, prisma, duplicates, bannedUrls } = setup();
+    duplicates.classifyBatch.mockResolvedValue([{
+      normalized_url: existing.normalized_url,
+      is_duplicate: true,
+      existing,
+    }]);
+    bannedUrls.matches.mockResolvedValue(true);
+
+    await service.createManual(user, { ...dto, application_status: 'Applied' });
+
+    expect(prisma.jobApplication.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        application_status: 'Banned',
+        note: 'this job is in banned list',
+      }),
+    }));
+  });
+
+  it.each([
+    { url: 'https://banned.example/jobs/1', application_status: 'Applied' as const },
+    { note: 'Updated note', application_status: 'Applied' as const },
+  ])('marks banned URLs as Banned when editing a row: %j', async (patch) => {
+    const { service, prisma, bannedUrls } = setup();
+    prisma.jobApplication.findUnique.mockResolvedValue({
+      ...existing,
+      paid: false,
+      application_status: 'Pending',
+    });
+    bannedUrls.matches.mockResolvedValue(true);
+
+    await service.update(user, existing.id, patch);
+
+    expect(prisma.jobApplication.update).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        application_status: 'Banned',
+        note: 'this job is in banned list',
+      }),
+    }));
+  });
+
+  it('keeps banned and ordinary statuses separate in a bulk edit', async () => {
+    const { service, prisma, bannedUrls } = setup();
+    prisma.jobApplication.findMany.mockResolvedValue([
+      { ...existing, application_status: 'Pending', paid: false },
+      { ...existing, id: 'application-2', application_status: 'Pending', paid: false },
+    ]);
+    bannedUrls.matchMany.mockResolvedValue([true, false]);
+
+    await expect(service.bulkUpdate(user, {
+      ids: [existing.id, 'application-2'],
+      patch: { application_status: 'Applied' },
+    })).resolves.toMatchObject({ updated: 2, failed: [] });
+
+    expect(prisma.jobApplication.updateMany).toHaveBeenCalledWith({
+      where: { id: { in: [existing.id] } },
+      data: { application_status: 'Banned', note: 'this job is in banned list' },
+    });
+    expect(prisma.jobApplication.updateMany).toHaveBeenCalledWith({
+      where: { id: { in: ['application-2'] } },
+      data: { application_status: 'Applied' },
+    });
   });
 
   it('persists the reviewed resume, JD, template, and owned conversation', async () => {

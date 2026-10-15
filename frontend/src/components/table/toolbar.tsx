@@ -238,7 +238,7 @@ function FilterGroup({ label, children }: { label: string; children: React.React
   );
 }
 
-/** The four application statuses are the most-used filter, so they stay on the main row. */
+/** Application statuses are the most-used filter, so they stay on the main row. */
 function StatusChips({
   filters,
   onToggle,
