@@ -362,7 +362,7 @@ export class ApplicationsService {
       if (similar && isAdmin(user.role)) data.application_status = 'Duplicated';
       else if (similar) {
         throw new BadRequestException(
-          `An application at ${companyName} already exists within this profile's 90-day company cooldown.`,
+          `An application at ${companyName} already exists within this profile's ${this.duplicates.companyCooldownDays()}-day company cooldown.`,
         );
       }
     }
@@ -468,7 +468,7 @@ export class ApplicationsService {
           data.job_fingerprint = createJobFingerprint(companyName, jobTitle);
           const identity = identityById.get(row.id);
           if (identity?.is_duplicate && isAdmin(user.role)) data.application_status = 'Duplicated';
-          else if (identity?.is_duplicate) throw new BadRequestException("An application at that company already exists within this profile's 90-day company cooldown.");
+          else if (identity?.is_duplicate) throw new BadRequestException(`An application at that company already exists within this profile's ${this.duplicates.companyCooldownDays()}-day company cooldown.`);
         }
         if (patch.paid !== undefined && isAdmin(user.role)) data.paid = patch.paid;
         if (bannedById.get(row.id)) {
@@ -822,6 +822,46 @@ export class ApplicationsService {
           job_fingerprint: createJobFingerprint(input.company_name, input.job_title),
           job_description: input.job_description,
           note: input.note,
+          created_by_user_id: user.id,
+        },
+        select: ROW_SELECT,
+      }),
+    );
+    await this.slackNotifications.notifyApplicationCreated(user.id);
+    return application;
+  }
+
+  /** Persists a resume-generation attempt blocked by the per-profile company cooldown. */
+  async createDuplicateApplication(
+    user: AuthUser,
+    input: {
+      workspace_id: string;
+      url: string;
+      job_title: string;
+      company_name: string;
+      job_description: string;
+      note?: string;
+    },
+  ) {
+    await this.access.assertCanEdit(user, input.workspace_id);
+    const url = input.url.trim();
+    const date = toDayStart(new Date());
+    const application = await this.numbering.withNextNumber(input.workspace_id, date, (number) =>
+      this.prisma.jobApplication.create({
+        data: {
+          workspace_id: input.workspace_id,
+          date,
+          number,
+          url,
+          normalized_url: normalizeUrl(url),
+          job_source: detectJobSource(url),
+          application_status: 'Duplicated',
+          pipeline_status: 'Not Started',
+          company_name: input.company_name,
+          job_title: input.job_title,
+          job_fingerprint: createJobFingerprint(input.company_name, input.job_title),
+          job_description: input.job_description,
+          note: input.note ?? null,
           created_by_user_id: user.id,
         },
         select: ROW_SELECT,

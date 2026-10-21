@@ -58,7 +58,11 @@ import {
   type CoverLetterTemplateId,
 } from "@/lib/cover-letter-templates";
 import { stripTrailingCoverLetterSigner } from "@/lib/cover-letter-templates/text";
-import { DEFAULT_TEMPLATE, type TemplateId } from "@/lib/pdf-templates";
+import {
+  DEFAULT_TEMPLATE,
+  generateResumePDF,
+  type TemplateId,
+} from "@/lib/pdf-templates";
 import {
   getFriendlyErrorMessage,
   parseGeneratedResume,
@@ -299,7 +303,7 @@ export function ProfileWorkspace({
         const reason = data.duplicateType === "career_history"
           ? `Resume generation is blocked because ${data.companyName || "the target company"} is already listed as a previous employer in this profile's career path.`
           : data.duplicateType === "company"
-            ? `This profile already applied to that company within the last 90 days.${location}`
+            ? `This profile already applied to that company within the last ${data.cooldownDays ?? 90} days.${location}`
             : `This job URL has already been added.${location}`;
         setError(reason);
         if (isActive) toast({ title: "Duplicate job", description: reason });
@@ -640,7 +644,6 @@ export function ProfileWorkspace({
     setIsDownloading(true);
 
     try {
-      const { generateResumePDF } = await import("@/lib/pdf-templates");
       const now = new Date();
       const hh = String(now.getHours()).padStart(2, "0");
       const mm1 = String(now.getMinutes()).padStart(2, "0");
@@ -782,7 +785,7 @@ export function ProfileWorkspace({
   };
 
   return (
-    <div className="max-w-[1400px] mx-auto py-8 px-4 sm:px-10 lg:px-20 h-full flex flex-col overflow-hidden">
+    <div className="relative max-w-[1400px] mx-auto py-8 px-4 sm:px-10 lg:px-20 h-full flex flex-col overflow-hidden">
       <div className={`relative flex-1 min-h-0 ${previewOpen || settingsOpen ? "overflow-hidden" : "overflow-y-auto"}`}>
       <div className="grid items-start gap-6">
       <div className="order-1 min-w-0">
@@ -1098,7 +1101,7 @@ export function ProfileWorkspace({
               disabled={isFillingPage || isGeneratingAnswers}
             >
               <ClipboardCheck className="h-4 w-4 mr-2" />
-              {isFillingPage ? "Filling Page..." : "Autofill Profile + Answers"}
+              {isFillingPage ? "Filling Text Boxes..." : "Fill Text Boxes"}
             </Button>
           </div>
           {questionScanMessage && <p className="text-sm text-muted-foreground">{questionScanMessage}</p>}
@@ -1125,8 +1128,8 @@ export function ProfileWorkspace({
       </TabsContent>
       </Tabs>
       </div>
-      <FunnyLoadingBar isLoading={isGenerating || isGeneratingAnswers} profileName={tabLabel || profile.name || undefined} />
       </div>
+      <FunnyLoadingBar isLoading={isGenerating || isGeneratingAnswers} profileName={tabLabel || profile.name || undefined} />
 
       {/* Preview dialog */}
       <Dialog

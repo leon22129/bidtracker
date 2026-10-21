@@ -220,11 +220,22 @@ export class ApplicationGenerationService {
       companyName,
     );
     if (recentCompanyApplication) {
+      const cooldownDays = this.duplicates.companyCooldownDays();
+      const application = await this.applications.createDuplicateApplication(user, {
+        workspace_id: workspace.id,
+        url: dto.url.trim(),
+        job_title: jobTitle,
+        company_name: companyName,
+        job_description: normalizedDescription,
+        note: `Company duplicate within ${cooldownDays}-day cooldown; original application #${recentCompanyApplication.number}.`,
+      });
       return {
         success: false,
         duplicate: true,
         duplicate_type: 'company',
+        cooldown_days: cooldownDays,
         existing_application: recentCompanyApplication,
+        application,
       };
     }
 

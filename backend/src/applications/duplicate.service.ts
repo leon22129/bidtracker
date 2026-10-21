@@ -91,16 +91,19 @@ export class DuplicateService {
     return match ? toExistingRef(match) : null;
   }
 
-  private companyCooldownCutoff() {
+  companyCooldownDays() {
     const configuredDays = Number(
       process.env.COMPANY_APPLICATION_COOLDOWN_DAYS
         ?? process.env.JOB_FINGERPRINT_WINDOW_DAYS
         ?? 90,
     );
-    const windowDays = Number.isFinite(configuredDays)
+    return Number.isFinite(configuredDays)
       ? Math.min(365, Math.max(1, Math.trunc(configuredDays)))
       : 90;
-    return new Date(Date.now() - windowDays * 24 * 60 * 60 * 1000);
+  }
+
+  private companyCooldownCutoff() {
+    return new Date(Date.now() - this.companyCooldownDays() * 24 * 60 * 60 * 1000);
   }
 
   async findExisting(

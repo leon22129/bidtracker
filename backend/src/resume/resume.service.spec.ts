@@ -53,6 +53,7 @@ describe('ApplicationGenerationService application metadata eligibility', () => 
     const duplicates = {
       classifyBatch: jest.fn().mockResolvedValue([{ is_duplicate: false }]),
       findRecentCompanyMatch: jest.fn().mockResolvedValue(null),
+      companyCooldownDays: jest.fn().mockReturnValue(90),
     };
     const applications = {
       createBannedApplication: jest.fn().mockResolvedValue({
@@ -63,6 +64,11 @@ describe('ApplicationGenerationService application metadata eligibility', () => 
       createEligibilityRejectedApplication: jest.fn().mockImplementation(async (_user, application) => ({
         id: 'rejected-application-1',
         application_status: 'Rejected',
+        ...application,
+      })),
+      createDuplicateApplication: jest.fn().mockImplementation(async (_user, application) => ({
+        id: 'duplicate-application-1',
+        application_status: 'Duplicated',
         ...application,
       })),
       createGenerated: jest.fn().mockImplementation(async (_user, application) => ({
@@ -246,7 +252,7 @@ describe('ApplicationGenerationService application metadata eligibility', () => 
   });
 
   it('checks the company cooldown before generating the resume', async () => {
-    const { service, duplicates } = setup();
+    const { service, duplicates, applications } = setup();
     const existing = { id: 'application-1', company_name: 'Acme', job_title: 'Software Engineer' };
     duplicates.findRecentCompanyMatch.mockResolvedValue(existing);
     const openAi = jest.spyOn(service as any, 'openAi').mockResolvedValue(eligible());
@@ -255,13 +261,24 @@ describe('ApplicationGenerationService application metadata eligibility', () => 
       success: false,
       duplicate: true,
       duplicate_type: 'company',
+      cooldown_days: 90,
       existing_application: existing,
+      application: { application_status: 'Duplicated' },
     });
     expect(duplicates.findRecentCompanyMatch).toHaveBeenCalledWith(
       dto.workspace_id,
       'Acme',
     );
     expect(openAi).toHaveBeenCalledTimes(1);
+    expect(applications.createDuplicateApplication).toHaveBeenCalledWith(
+      user,
+      expect.objectContaining({
+        workspace_id: dto.workspace_id,
+        company_name: 'Acme',
+        job_title: 'Software Engineer',
+      }),
+    );
+    expect(applications.createEligibilityRejectedApplication).not.toHaveBeenCalled();
   });
 
   it('blocks resume generation when the target company is a previous employer', async () => {

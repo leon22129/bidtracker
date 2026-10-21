@@ -148,7 +148,7 @@ const webAiProfiles: AiProfilesApi = {
             resume: input.resume,
           }),
     })
-    const data = await response.json().catch(() => null) as { tailored_resume?: string; full_name?: string; conversation_id?: string; job_description?: string; error?: string; message?: string; eligible?: boolean; reason?: string; banned?: boolean; resume?: unknown; answers?: unknown; application?: GenerateResumeResult["application"]; duplicate?: boolean; duplicate_type?: string | null; company_name?: string; existing_application?: GenerateResumeResult["existingApplication"] } | null
+    const data = await response.json().catch(() => null) as { tailored_resume?: string; full_name?: string; conversation_id?: string; job_description?: string; error?: string; message?: string; eligible?: boolean; reason?: string; banned?: boolean; resume?: unknown; answers?: unknown; application?: GenerateResumeResult["application"]; duplicate?: boolean; duplicate_type?: string | null; cooldown_days?: number; company_name?: string; existing_application?: GenerateResumeResult["existingApplication"] } | null
     if (!response.ok) throw new Error(data?.message || data?.error || `Generation failed (${response.status}).`)
     if (conversationAnswers) {
       if (!Array.isArray(data?.answers)) throw new Error("The AI provider returned an empty response.")
@@ -169,6 +169,7 @@ const webAiProfiles: AiProfilesApi = {
       if (data?.duplicate) return {
         duplicate: true,
         duplicateType: data.duplicate_type,
+        cooldownDays: data.cooldown_days,
         companyName: data.company_name,
         existingApplication: data.existing_application,
         application: data.application,

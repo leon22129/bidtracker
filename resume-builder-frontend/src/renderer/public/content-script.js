@@ -75,6 +75,14 @@ const FIELD_SELECTOR = [
   'button[class*="inputGroupEligible"]',
 ].join(',');
 
+const TEXT_ENTRY_INPUT_TYPES = new Set(['', 'text', 'search', 'url', 'tel', 'number', 'email']);
+
+function isTextEntryField(field) {
+  if (field instanceof HTMLTextAreaElement) return true;
+  if (!(field instanceof HTMLInputElement)) return false;
+  return TEXT_ENTRY_INPUT_TYPES.has(String(field.type || '').toLowerCase());
+}
+
 const IDENTITY_FIELD = /^(?:(?:legal |preferred )?(?:first|given|preferred|middle|last|family|full) name(?: legal| preferred)?|e-?mail(?: address)?|phone(?: number)?|phone (?:device )?type|phone extension|mobile(?: phone| number)?|street address|address(?: line)? [12]|city|location(?: city)?|candidate location|state|state province|province|county|postal code|zip(?: postal)?(?: code)?|country(?: of residence)?|resume|upload resume|cover letter|linkedin(?: profile| url)?|website|portfolio(?: url)?|search|subscribe(?: to job alerts)?|.*notify me of new opportunities.*|.*text message updates.*|opt in text messaging)$/i;
 const SENSITIVE_FIELD = /\b(?:race|ethnicity|gender|sex|sexual orientation|hispanic|latino|veteran|disability|disabled|religion|marital|pregnancy|pregnant|medical|health|age|social security|ssn|national id|pronoun|pronouns|salary history|current salary|sponsorship|citizenship|citizen|green card|permanent resident|immigration status)\b|date of birth|birth date|voluntary self.identification|legally authorized|authorized to work|right to work|work authorization/i;
 
@@ -1355,6 +1363,16 @@ async function fillField(record, answer) {
   return false;
 }
 
+async function fillTextEntryField(record, answer) {
+  const { field } = record;
+  if (!isTextEntryField(field)) return false;
+  setNativeValue(field, answer);
+  await sleep(75);
+  const actual = normalize(field.value);
+  const expected = normalize(answer);
+  return Boolean(actual && expected && (actual === expected || actual.includes(expected) || expected.includes(actual)));
+}
+
 function splitFullName(fullName) {
   const parts = cleanText(fullName).split(/\s+/).filter(Boolean);
   return {
@@ -1713,8 +1731,10 @@ async function fillAdpProfileFields(profile) {
   return { handled, filledQuestions };
 }
 
-async function fillProfileFields(profile) {
-  const adpResult = await fillAdpProfileFields(profile);
+async function fillProfileFields(profile, inputBoxesOnly = false) {
+  const adpResult = inputBoxesOnly
+    ? { handled: new Set(), filledQuestions: [] }
+    : await fillAdpProfileFields(profile);
   let filled = adpResult.handled.size;
   const filledQuestions = [...adpResult.filledQuestions];
   const skippedQuestions = [];
@@ -1724,6 +1744,10 @@ async function fillProfileFields(profile) {
   for (let pass = 0; pass < 4; pass += 1) {
     for (const field of document.querySelectorAll(FIELD_SELECTOR)) {
       if (!isVisible(field) || field.disabled || field.readOnly || seen.has(field)) continue;
+      if (inputBoxesOnly && !isTextEntryField(field)) {
+        seen.add(field);
+        continue;
+      }
       const value = cleanText(profileValueForField(field, profile));
       const question = fieldLabel(field) || field.id || field.getAttribute('name') || 'Profile field';
       const identity = normalize([field.id, field.getAttribute('name'), question].filter(Boolean).join(' '));
@@ -1742,7 +1766,7 @@ async function fillProfileFields(profile) {
         continue;
       }
       const record = { field, question, normalized: normalize(question), sensitive: SENSITIVE_FIELD.test(question) };
-      if (await fillField(record, value)) {
+      if (await (inputBoxesOnly ? fillTextEntryField(record, value) : fillField(record, value))) {
         seen.add(field);
         filled += 1;
         filledQuestions.push(question);
@@ -1755,7 +1779,7 @@ async function fillProfileFields(profile) {
   return { filled, filledQuestions, skippedQuestions };
 }
 
-async function fillCoverLetterField(coverLetterText) {
+async function fillCoverLetterField(coverLetterText, inputBoxesOnly = false) {
   const value = String(coverLetterText || '').trim();
   if (!value) return { filled: 0, filledQuestions: [], skippedQuestions: [] };
   for (const field of document.querySelectorAll(FIELD_SELECTOR)) {
@@ -1764,17 +1788,20 @@ async function fillCoverLetterField(coverLetterText) {
     const question = fieldLabel(field) || field.id || field.getAttribute('name') || '';
     if (!/\bcover letter\b/i.test(cleanLabel(question).replace(/[_-]+/g, ' '))) continue;
     const record = { field, question, normalized: normalize(question), sensitive: false };
-    return await fillField(record, value)
+    return await (inputBoxesOnly ? fillTextEntryField(record, value) : fillField(record, value))
       ? { filled: 1, filledQuestions: [question], skippedQuestions: [] }
       : { filled: 0, filledQuestions: [], skippedQuestions: [question] };
   }
   return { filled: 0, filledQuestions: [], skippedQuestions: [] };
 }
 
-async function fillAnswers(answers, profile, coverLetterText) {
+async function fillAnswers(answers, profile, coverLetterText, inputBoxesOnly = false) {
   const records = extractFields();
-  const profileResult = await fillProfileFields(profile || {});
-  const coverLetterResult = await fillCoverLetterField(coverLetterText);
+  const eligibleRecords = inputBoxesOnly
+    ? records.filter((record) => isTextEntryField(record.field))
+    : records;
+  const profileResult = await fillProfileFields(profile || {}, inputBoxesOnly);
+  const coverLetterResult = await fillCoverLetterField(coverLetterText, inputBoxesOnly);
   let filled = profileResult.filled + coverLetterResult.filled;
   const filledQuestions = [...profileResult.filledQuestions, ...coverLetterResult.filledQuestions];
   const skippedQuestions = [...profileResult.skippedQuestions, ...coverLetterResult.skippedQuestions];
@@ -1782,9 +1809,12 @@ async function fillAnswers(answers, profile, coverLetterText) {
     const question = cleanLabel(item?.question);
     const answer = cleanText(item?.answer);
     if (!question || !answer) continue;
-    const target = records.find((record) => record.normalized === normalize(question))
-      || records.find((record) => record.normalized.includes(normalize(question)) || normalize(question).includes(record.normalized));
-    if (!target || target.sensitive || !await fillField(target, answer)) {
+    const target = eligibleRecords.find((record) => record.normalized === normalize(question))
+      || eligibleRecords.find((record) => record.normalized.includes(normalize(question)) || normalize(question).includes(record.normalized));
+    const wasFilled = target && !target.sensitive && await (
+      inputBoxesOnly ? fillTextEntryField(target, answer) : fillField(target, answer)
+    );
+    if (!wasFilled) {
       skippedQuestions.push(question);
       continue;
     }
@@ -1802,7 +1832,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return true;
   }
   if (message?.type === RESUME_AI_FILL_ANSWERS) {
-    fillAnswers(message.answers, message.profile, message.coverLetterText).then(sendResponse).catch((error) => {
+    fillAnswers(message.answers, message.profile, message.coverLetterText, message.inputBoxesOnly === true).then(sendResponse).catch((error) => {
       sendResponse({ filled: 0, skipped: 1, filledQuestions: [], skippedQuestions: [error instanceof Error ? error.message : 'Autofill failed'] });
     });
     return true;

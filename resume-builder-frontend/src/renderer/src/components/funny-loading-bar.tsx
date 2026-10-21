@@ -1,7 +1,6 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { createPortal } from "react-dom"
 import { Progress } from "@/components/ui/progress"
 import { cn } from "@/lib/utils"
 import { Bot, FileText, Sparkles } from "lucide-react"
@@ -94,9 +93,9 @@ export function FunnyLoadingBar({ isLoading, profileName, className }: FunnyLoad
 
   if (!isLoading) return null
 
-  return createPortal(
+  return (
     <div
-      className="fixed inset-0 z-[100] flex items-center justify-center bg-background/80 px-4 backdrop-blur-sm"
+      className="absolute inset-0 z-20 flex items-center justify-center bg-background/80 px-4 backdrop-blur-sm"
       role="status"
       aria-live="polite"
       aria-busy="true"
@@ -158,7 +157,6 @@ export function FunnyLoadingBar({ isLoading, profileName, className }: FunnyLoad
           This may take a moment. Good things come to those who wait!
         </p>
       </div>
-    </div>,
-    document.body,
+    </div>
   )
 }

@@ -52,6 +52,7 @@ describe('ApplicationsService generated-application duplicate-click protection',
       scope: 'workspace',
       classifyBatch: jest.fn(),
       findRecentCompanyMatch: jest.fn().mockResolvedValue(null),
+      companyCooldownDays: jest.fn().mockReturnValue(90),
     };
     const bannedUrls = {
       matches: jest.fn().mockResolvedValue(false),
@@ -235,6 +236,36 @@ describe('ApplicationsService generated-application duplicate-click protection',
         job_title: dto.job_title,
         job_description: 'A remote engineering role that requires clearance.',
         note: 'job eligibility check failed - it requires clearance',
+        created_by_user_id: user.id,
+      }),
+    }));
+    expect(slackNotifications.notifyApplicationCreated).toHaveBeenCalledWith(user.id);
+  });
+
+  it('persists a company-cooldown attempt as a Duplicated application', async () => {
+    const { service, prisma, slackNotifications } = setup();
+    prisma.jobApplication.create.mockImplementation(async ({ data }: any) => ({
+      id: 'duplicate-application-1',
+      ...data,
+    }));
+
+    await expect(service.createDuplicateApplication(user, {
+      ...dto,
+      job_description: 'A fully remote engineering role.',
+      note: 'Company duplicate within 90-day cooldown; original application #1.',
+    })).resolves.toMatchObject({
+      application_status: 'Duplicated',
+      company_name: dto.company_name,
+      job_title: dto.job_title,
+    });
+
+    expect(prisma.jobApplication.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        application_status: 'Duplicated',
+        pipeline_status: 'Not Started',
+        company_name: dto.company_name,
+        job_title: dto.job_title,
+        job_description: 'A fully remote engineering role.',
         created_by_user_id: user.id,
       }),
     }));
