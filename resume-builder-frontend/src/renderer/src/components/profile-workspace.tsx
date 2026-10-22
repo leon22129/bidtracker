@@ -785,7 +785,7 @@ export function ProfileWorkspace({
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3 px-4">
-          <section className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+          <section className="flex flex-wrap gap-2">
             {[
               ["Full name", personalInfo.fullName],
               ["First name", personalInfo.firstName],
@@ -795,8 +795,8 @@ export function ProfileWorkspace({
               ["Phone", personalInfo.phone],
               ["LinkedIn", personalInfo.linkedin],
             ].map(([label, value]) => (
-              <div key={label} className="min-w-0 rounded-md border bg-muted/30 px-3 py-2">
-                <div className="mb-1 flex items-center gap-2 text-xs font-medium text-muted-foreground">
+              <div key={label} className="flex w-full min-w-0 max-w-full items-baseline gap-2 rounded-md border bg-muted/30 px-3 py-2 sm:w-auto">
+                <div className="flex shrink-0 items-center gap-2 text-xs font-medium text-muted-foreground">
                   {label === "Email" ? <Mail className="h-3.5 w-3.5" />
                     : label === "Phone" ? <Phone className="h-3.5 w-3.5" />
                     : label === "LinkedIn" ? <Linkedin className="h-3.5 w-3.5" />
@@ -833,7 +833,7 @@ export function ProfileWorkspace({
             <h3 className="mb-2 flex items-center gap-2 text-sm font-semibold">
               <MapPin className="h-4 w-4" /> Full address
             </h3>
-            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+            <div className="flex flex-wrap">
               {[
                 ["Street address", personalInfo.address1],
                 ["City", personalInfo.city],
@@ -842,8 +842,8 @@ export function ProfileWorkspace({
                 ["County", personalInfo.county],
                 ["Country", personalInfo.country],
               ].map(([label, value]) => (
-                <div key={label} className="min-w-0 rounded-md bg-muted/30 px-3 py-2">
-                  <div className="mb-1 text-xs font-medium text-muted-foreground">{label}</div>
+                <div key={label} className="flex w-full min-w-0 max-w-full items-baseline gap-2 rounded-md bg-muted/30 px-3 py-2 sm:w-auto">
+                  <div className="shrink-0 text-xs font-medium text-muted-foreground">{label}</div>
                   <div className="break-words text-sm font-medium" title={value || undefined}>
                     {value?.trim() || "Not provided"}
                   </div>
@@ -856,7 +856,7 @@ export function ProfileWorkspace({
             <h3 className="mb-2 flex items-center gap-2 text-sm font-semibold">
               <Briefcase className="h-4 w-4" /> Demographics and work authorization
             </h3>
-            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+            <div className="flex flex-wrap">
               {[
                 ["Gender", personalInfo.gender],
                 ["Hispanic / Latino", personalInfo.hispanicLatino],
@@ -865,8 +865,8 @@ export function ProfileWorkspace({
                 ["Legally authorized to work in the US", personalInfo.legallyAuthorizedUs],
                 ["Requires sponsorship now or later", personalInfo.requiresSponsorship],
               ].map(([label, value]) => (
-                <div key={label} className="min-w-0 rounded-md bg-muted/30 px-3 py-2">
-                  <div className="mb-1 text-xs font-medium text-muted-foreground">{label}</div>
+                <div key={label} className="flex w-full min-w-0 max-w-full items-baseline gap-2 rounded-md bg-muted/30 px-3 py-2 sm:w-auto">
+                  <div className="shrink-0 text-xs font-medium text-muted-foreground">{label}</div>
                   <div className="break-words text-sm font-medium" title={value || undefined}>
                     {value?.trim() || "Not provided"}
                   </div>
