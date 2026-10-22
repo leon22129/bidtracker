@@ -149,9 +149,14 @@ async function main() {
     await assertTargetIsEmpty(tx);
 
     const users = await source.user.findMany();
-    const usersWithoutCreators = users.map(({ created_by_user_id: _creator, ...user }) => ({
+    const usersWithoutCreators = users.map(({
+      created_by_user_id: _creator,
+      manager_user_id: _manager,
+      ...user
+    }) => ({
         ...user,
         created_by_user_id: null,
+        manager_user_id: null,
       }));
     await tx.user.createMany({ data: usersWithoutCreators });
     console.log(`users: ${usersWithoutCreators.length}`);
@@ -160,6 +165,12 @@ async function main() {
         await tx.user.update({
           where: { id: user.id },
           data: { created_by_user_id: user.created_by_user_id },
+        });
+      }
+      if (user.manager_user_id) {
+        await tx.user.update({
+          where: { id: user.id },
+          data: { manager_user_id: user.manager_user_id },
         });
       }
     }

@@ -1,5 +1,5 @@
 import {
-  BadRequestException, ConflictException, Injectable, NotFoundException,
+  BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { hashPassword } from '../auth/auth.service';
@@ -13,6 +13,8 @@ const PUBLIC_SELECT = {
   username: true,
   email: true,
   role: true,
+  manager_user_id: true,
+  manager: { select: { id: true, username: true } },
   is_active: true,
   created_at: true,
   updated_at: true,
@@ -30,13 +32,14 @@ export class UsersService {
       where: this.visibilityWhere(actingUser),
       select: {
         ...PUBLIC_SELECT,
-        _count: { select: { ownedWorkspaces: true } },
+        _count: { select: { ownedWorkspaces: true, managedBidders: true } },
       },
       orderBy: [{ role: 'asc' }, { username: 'asc' }],
     });
     return users.map(({ _count, ...u }) => ({
       ...u,
       owned_workspace_count: _count.ownedWorkspaces,
+      managed_bidder_count: _count.managedBidders,
     }));
   }
 
@@ -56,18 +59,27 @@ export class UsersService {
   async create(dto: CreateUserDto, actingUser: AuthUser) {
     const allowedRoles = actingUser.role === 'super_admin'
       ? ['admin']
-      : ['bidder', 'bidder_manager'];
+      : actingUser.role === 'bidder_manager'
+        ? ['bidder']
+        : ['bidder', 'bidder_manager'];
     if (!allowedRoles.includes(dto.role)) {
       throw new BadRequestException(
         actingUser.role === 'super_admin'
           ? 'Super admins can only add admins'
-          : 'Admins can only add bidders and bidder managers',
+          : actingUser.role === 'bidder_manager'
+            ? 'Bidder managers can only add bidders'
+            : 'Admins can only add bidders and bidder managers',
       );
     }
     const email = dto.email.trim().toLowerCase();
     const username = dto.username.trim();
 
     await this.assertUnique(email, username);
+    const managerUserId = await this.validateManagerAssignment(
+      dto.role,
+      actingUser.role === 'bidder_manager' ? actingUser.id : dto.manager_user_id,
+      actingUser,
+    );
 
     return this.prisma.user.create({
       data: {
@@ -75,6 +87,7 @@ export class UsersService {
         email,
         password_hash: await hashPassword(dto.password),
         role: dto.role,
+        manager_user_id: managerUserId,
         created_by_user_id: actingUser.role === 'super_admin' ? null : actingUser.id,
       },
       select: PUBLIC_SELECT,
@@ -85,6 +98,21 @@ export class UsersService {
     const user = await this.prisma.user.findUnique({ where: { id } });
     if (!user) throw new NotFoundException('User not found');
     await this.assertCanManage(id, actingUser);
+
+    if (actingUser.role === 'bidder_manager') {
+      const requestedFields = Object.entries(dto)
+        .filter(([, value]) => value !== undefined)
+        .map(([key]) => key);
+      if (requestedFields.some((field) => field !== 'is_active')) {
+        throw new ForbiddenException('Bidder managers can only activate or deactivate their bidders');
+      }
+      if (dto.is_active === undefined) return this.findOne(id, actingUser);
+      return this.prisma.user.update({
+        where: { id },
+        data: { is_active: dto.is_active },
+        select: PUBLIC_SELECT,
+      });
+    }
 
     if (dto.role) {
       const allowedRoles = actingUser.role === 'super_admin'
@@ -119,19 +147,48 @@ export class UsersService {
     const username = dto.username?.trim();
     await this.assertUnique(email, username, id);
 
-    return this.prisma.user.update({
+    const effectiveRole = dto.role ?? user.role;
+    const managerUserId = dto.manager_user_id !== undefined || effectiveRole !== 'bidder'
+      ? await this.validateManagerAssignment(
+        effectiveRole,
+        effectiveRole === 'bidder' ? dto.manager_user_id : null,
+        actingUser,
+      )
+      : undefined;
+
+    const update = this.prisma.user.update({
       where: { id },
       data: {
         ...(username !== undefined ? { username } : {}),
         ...(email !== undefined ? { email } : {}),
         ...(dto.role !== undefined ? { role: dto.role } : {}),
         ...(dto.is_active !== undefined ? { is_active: dto.is_active } : {}),
+        ...(managerUserId !== undefined ? { manager_user_id: managerUserId } : {}),
       },
       select: PUBLIC_SELECT,
     });
+
+    if (user.role === 'bidder_manager' && effectiveRole !== 'bidder_manager') {
+      const [, , updated] = await this.prisma.$transaction([
+        this.prisma.user.updateMany({
+          where: { manager_user_id: id },
+          data: { manager_user_id: null },
+        }),
+        this.prisma.workspace.updateMany({
+          where: { manager_user_id: id },
+          data: { manager_user_id: null },
+        }),
+        update,
+      ]);
+      return updated;
+    }
+    return update;
   }
 
   async resetPassword(id: string, dto: ResetPasswordDto, actingUser: AuthUser) {
+    if (actingUser.role === 'bidder_manager') {
+      throw new ForbiddenException('Only an admin can reset another user\'s password');
+    }
     const user = await this.prisma.user.findUnique({ where: { id } });
     if (!user) throw new NotFoundException('User not found');
     await this.assertCanManage(id, actingUser);
@@ -148,6 +205,9 @@ export class UsersService {
    * part of the payment audit trail. Deactivate instead; restrictive FKs are the second line of defence.
    */
   async remove(id: string, actingUser: AuthUser) {
+    if (actingUser.role === 'bidder_manager') {
+      throw new ForbiddenException('Bidder managers can deactivate bidders but cannot delete them');
+    }
     if (id === actingUser.id) throw new BadRequestException('You cannot delete your own account');
 
     const user = await this.prisma.user.findUnique({
@@ -196,11 +256,56 @@ export class UsersService {
     }
   }
 
+  private async validateManagerAssignment(
+    role: string,
+    managerUserId: string | null | undefined,
+    actingUser: AuthUser,
+  ): Promise<string | null | undefined> {
+    if (managerUserId === undefined) return undefined;
+    if (role !== 'bidder') {
+      if (managerUserId !== null) {
+        throw new BadRequestException('Only bidders can be assigned to a bidder manager');
+      }
+      return null;
+    }
+    if (managerUserId === null || managerUserId.trim() === '') return null;
+    if (actingUser.role === 'bidder_manager') {
+      if (managerUserId !== actingUser.id) {
+        throw new BadRequestException('Bidder managers can only allocate bidders to themselves');
+      }
+      return actingUser.id;
+    }
+    if (actingUser.role !== 'admin') {
+      throw new BadRequestException('Only an admin can assign bidder managers');
+    }
+
+    const manager = await this.prisma.user.findFirst({
+      where: {
+        id: managerUserId,
+        role: 'bidder_manager',
+        is_active: true,
+        created_by_user_id: actingUser.id,
+      },
+      select: { id: true },
+    });
+    if (!manager) {
+      throw new BadRequestException('Manager must be an active bidder manager created by this admin');
+    }
+    return manager.id;
+  }
+
   private visibilityWhere(actingUser: AuthUser) {
     if (actingUser.role === 'super_admin') return undefined;
+    if (actingUser.role === 'bidder_manager') {
+      return { role: 'bidder', manager_user_id: actingUser.id };
+    }
     return {
       role: { in: ['bidder', 'bidder_manager'] },
-      created_by_user_id: actingUser.id,
+      OR: [
+        { created_by_user_id: actingUser.id },
+        { creator: { is: { created_by_user_id: actingUser.id } } },
+        { manager: { is: { created_by_user_id: actingUser.id } } },
+      ],
     };
   }
 

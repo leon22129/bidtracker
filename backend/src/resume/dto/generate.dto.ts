@@ -37,17 +37,10 @@ export class GenerateApplicationDto {
   @IsUrl({ require_protocol: true })
   url: string;
 
-  @IsOptional()
-  @IsArray()
-  @ArrayMaxSize(50)
-  @ValidateNested({ each: true })
-  @Type(() => ApplicationQuestionDto)
-  questions?: ApplicationQuestionDto[];
-
   @Transform(({ value }) => typeof value === 'string' ? value.trim() : value)
   @IsString()
   @MinLength(8)
-  @MaxLength(20000)
+  @MaxLength(50000)
   job_description: string;
 }
 

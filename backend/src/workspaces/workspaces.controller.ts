@@ -43,6 +43,27 @@ export class WorkspacesController {
     return this.workspaces.create(dto, user);
   }
 
+  @Patch(':id/manager')
+  @Roles('admin', 'super_admin')
+  assignManager(
+    @Param('id') id: string,
+    @Body() dto: UpdateWorkspaceDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.workspaces.assignManager(id, dto.manager_user_id ?? null, user);
+  }
+
+  @Patch(':id/bidder')
+  @Roles('bidder_manager')
+  assignBidder(
+    @Param('id') id: string,
+    @Body() dto: UpdateWorkspaceDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    if (!dto.owner_user_id) return this.workspaces.assignBidder(id, '', user);
+    return this.workspaces.assignBidder(id, dto.owner_user_id, user);
+  }
+
   @Patch(':id')
   update(@Param('id') id: string, @Body() dto: UpdateWorkspaceDto, @CurrentUser() user: AuthUser) {
     return this.workspaces.update(id, dto, user);

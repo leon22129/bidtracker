@@ -189,12 +189,13 @@ export class ImportService {
       parsed.map((p) => p.url),
     );
 
-    // --- Pass 3: classify company/title identities exactly as supplied ------
+    // --- Pass 3: enforce the per-profile company cooldown -------------------
     const bannedVerdicts = await this.bannedUrls.matchMany(parsed.map((row) => row.url));
-    const identityVerdicts = await this.duplicates.classifyJobIdentities(
+    const identityVerdicts = await this.duplicates.classifyCompanyIdentities(
       workspaceId,
-      parsed.map((row) => ({
-        company_name: row.company_name,
+      parsed.map((row, index) => ({
+        // A banned URL does not count as an application to the company.
+        company_name: bannedVerdicts[index] ? null : row.company_name,
         job_title: row.job_title,
       })),
     );
@@ -206,7 +207,7 @@ export class ImportService {
             ...verdict,
             is_duplicate: true,
             reason: identity.reason,
-            duplicate_type: 'job_fingerprint' as const,
+            duplicate_type: 'company' as const,
             existing: identity.existing,
           };
     });
@@ -235,8 +236,8 @@ export class ImportService {
           url: row.url,
           normalized_url: verdict?.normalized_url ?? normalizeUrl(row.url),
           job_source: detectJobSource(row.url),
-          // Banned URLs are auto-rejected, regardless of spreadsheet status or duplicate checks.
-          application_status: banned ? 'Rejected' : verdict?.is_duplicate ? 'Duplicated' : row.status,
+          // Banned URLs keep their own status, regardless of spreadsheet status or duplicate checks.
+          application_status: banned ? 'Banned' : verdict?.is_duplicate ? 'Duplicated' : row.status,
           pipeline_status: 'Not Started',
           job_title: row.job_title,
           company_name: row.company_name,

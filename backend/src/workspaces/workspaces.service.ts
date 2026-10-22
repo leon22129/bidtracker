@@ -28,6 +28,7 @@ export class WorkspacesService {
       },
       include: {
         owner: { select: { id: true, username: true, email: true } },
+        manager: { select: { id: true, username: true, email: true } },
         _count: { select: { applications: true } },
         resumeProfile: true,
       },
@@ -59,12 +60,17 @@ export class WorkspacesService {
       id: w.id,
       name: w.name,
       owner_user_id: w.owner_user_id,
+      manager_user_id: w.manager_user_id,
       created_by_user_id: w.created_by_user_id,
       owner: w.owner,
+      manager: w.manager,
       is_archived: w.is_archived,
       created_at: w.created_at,
       updated_at: w.updated_at,
       profile: w.resumeProfile ? this.toProfile(w.resumeProfile) : null,
+      can_edit: user.role === 'super_admin'
+        || (user.role === 'admin' && w.created_by_user_id === user.id)
+        || (user.role !== 'admin' && w.owner_user_id === user.id),
       application_count: w._count.applications,
       applied_today_by_user: todayGroups
         .filter((group) => group.workspace_id === w.id)
@@ -88,9 +94,13 @@ export class WorkspacesService {
   async create(dto: CreateWorkspaceDto, user: AuthUser) {
     const owner = await this.prisma.user.findUnique({ where: { id: dto.owner_user_id } });
     if (!owner) throw new BadRequestException('Owner user does not exist');
-    if (!['bidder', 'bidder_manager'].includes(owner.role)) {
-      throw new BadRequestException('A workspace owner must be a bidder or bidder manager');
+    if (owner.role !== 'bidder_manager') {
+      throw new BadRequestException('Admins must assign new profiles to a bidder manager');
     }
+    if (dto.manager_user_id && dto.manager_user_id !== owner.id) {
+      throw new BadRequestException('Profile owner and bidder manager must match');
+    }
+    const managerUserId = await this.validateManager(owner.id, user);
 
     const name = dto.name.trim();
     const clash = await this.prisma.workspace.findUnique({ where: { name } });
@@ -101,15 +111,20 @@ export class WorkspacesService {
         data: {
           name,
           owner_user_id: dto.owner_user_id,
+          manager_user_id: managerUserId,
           created_by_user_id: user.id,
         },
-        include: { owner: { select: { id: true, username: true, email: true } } },
+        include: {
+          owner: { select: { id: true, username: true, email: true } },
+          manager: { select: { id: true, username: true, email: true } },
+        },
       });
       await tx.resumeProfile.create({ data: { workspace_id: workspace.id, name } });
       return tx.workspace.findUniqueOrThrow({
         where: { id: workspace.id },
         include: {
           owner: { select: { id: true, username: true, email: true } },
+          manager: { select: { id: true, username: true, email: true } },
           resumeProfile: true,
         },
       });
@@ -121,11 +136,14 @@ export class WorkspacesService {
     const workspace = await this.prisma.workspace.findUnique({ where: { id } });
     if (!workspace) throw new NotFoundException('Workspace not found');
 
-    if (
-      !isAdmin(user.role) &&
-      (dto.owner_user_id !== undefined || dto.is_archived !== undefined)
-    ) {
-      throw new ForbiddenException('Only an admin can change workspace ownership or archive state');
+    if (dto.owner_user_id !== undefined) {
+      throw new ForbiddenException('Only the assigned bidder manager can choose who works on a profile');
+    }
+    if (dto.manager_user_id !== undefined) {
+      throw new ForbiddenException('Use the manager assignment action to assign this profile');
+    }
+    if (!isAdmin(user.role) && dto.is_archived !== undefined) {
+      throw new ForbiddenException('Only an admin can change workspace archive state');
     }
 
     const profileData = this.profileData(dto);
@@ -137,16 +155,6 @@ export class WorkspacesService {
       const clash = await this.prisma.workspace.findUnique({ where: { name: dto.name.trim() } });
       if (clash) throw new ConflictException('A workspace with that name already exists');
     }
-    if (dto.owner_user_id) {
-      const owner = await this.prisma.user.findUnique({ where: { id: dto.owner_user_id } });
-      if (!owner) throw new BadRequestException('Owner user does not exist');
-      if (!['bidder', 'bidder_manager'].includes(owner.role)) {
-        throw new BadRequestException('A workspace owner must be a bidder or bidder manager');
-      }
-      // Reassignment only changes current workspace/profile ownership. Each application's immutable
-      // creator continues to receive credit for both settled and still-unpaid historical work.
-    }
-
     return this.prisma.$transaction(async (tx) => {
       let profile = await tx.resumeProfile.findUnique({ where: { workspace_id: workspace.id } });
       if (!profile) {
@@ -162,12 +170,84 @@ export class WorkspacesService {
         where: { id },
         data: {
           ...(dto.name !== undefined ? { name: dto.name.trim() } : {}),
-          ...(dto.owner_user_id !== undefined ? { owner_user_id: dto.owner_user_id } : {}),
           ...(dto.is_archived !== undefined ? { is_archived: dto.is_archived } : {}),
         },
-        include: { owner: { select: { id: true, username: true, email: true } }, resumeProfile: true },
+        include: {
+          owner: { select: { id: true, username: true, email: true } },
+          manager: { select: { id: true, username: true, email: true } },
+          resumeProfile: true,
+        },
       });
     });
+  }
+
+  async assignManager(id: string, managerUserId: string | null, user: AuthUser) {
+    await this.access.assertCanEdit(user, id);
+    if (!managerUserId) throw new BadRequestException('A bidder manager is required');
+    const validatedManagerId = await this.validateManager(managerUserId, user);
+    return this.prisma.workspace.update({
+      where: { id },
+      data: {
+        manager_user_id: validatedManagerId,
+        // Assigning a profile to a manager returns it to the manager's extension queue.
+        // Once the manager assigns a bidder, owner_user_id changes and the profile leaves that queue.
+        owner_user_id: validatedManagerId,
+      },
+      include: {
+        owner: { select: { id: true, username: true, email: true } },
+        manager: { select: { id: true, username: true, email: true } },
+        resumeProfile: true,
+      },
+    });
+  }
+
+  async assignBidder(id: string, bidderUserId: string, user: AuthUser) {
+    if (!bidderUserId) throw new BadRequestException('A profile assignee is required');
+    const workspace = await this.prisma.workspace.findFirst({
+      where: {
+        id,
+        manager_user_id: user.id,
+      },
+      select: { id: true },
+    });
+    if (!workspace) throw new NotFoundException('Workspace not found');
+
+    const bidder = bidderUserId === user.id
+      ? { id: user.id }
+      : await this.prisma.user.findFirst({
+        where: {
+          id: bidderUserId,
+          role: 'bidder',
+          is_active: true,
+          manager_user_id: user.id,
+        },
+        select: { id: true },
+      });
+    if (!bidder) throw new BadRequestException('Bidder must be an active bidder allocated to you');
+
+    return this.prisma.workspace.update({
+      where: { id },
+      data: { owner_user_id: bidder.id },
+      include: {
+        owner: { select: { id: true, username: true, email: true } },
+        manager: { select: { id: true, username: true, email: true } },
+        resumeProfile: true,
+      },
+    });
+  }
+
+  private async validateManager(managerUserId: string, user: AuthUser): Promise<string> {
+    const manager = await this.prisma.user.findFirst({
+      where: {
+        id: managerUserId,
+        role: 'bidder_manager',
+        is_active: true,
+        ...(user.role === 'admin' ? { created_by_user_id: user.id } : {}),
+      },
+      select: { id: true },
+    });
+    if (!manager) throw new BadRequestException('Manager must be an active bidder manager in your account');
+    return manager.id;
   }
 
   async listProfiles(user: AuthUser) {
@@ -177,7 +257,12 @@ export class WorkspacesService {
       where: {
         workspace: {
           is_archived: false,
-          ...(workspaceIds ? { id: { in: workspaceIds } } : {}),
+          ...(user.role === 'bidder_manager'
+            ? {
+              owner_user_id: user.id,
+              manager_user_id: user.id,
+            }
+            : workspaceIds ? { id: { in: workspaceIds } } : {}),
         },
       },
       include: { workspace: { select: { id: true } } },

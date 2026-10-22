@@ -15,6 +15,7 @@ interface CellProps {
   onDownloadResume?: (row: JobApplication) => void;
   onDownloadJobDescription?: (row: JobApplication) => void;
   onDownloadCoverLetter?: (row: JobApplication) => void;
+  onViewApplicationAnswers?: (row: JobApplication) => void;
 }
 
 /**
@@ -30,7 +31,7 @@ interface CellProps {
  */
 export function Cell({
   row, column, user, boundary, onCommit, onDownloadResume, onDownloadJobDescription,
-  onDownloadCoverLetter,
+  onDownloadCoverLetter, onViewApplicationAnswers,
 }: CellProps) {
   const [editing, setEditing] = useState(false);
   const [customSource, setCustomSource] = useState(false);
@@ -78,6 +79,15 @@ export function Cell({
         >
           Cover letter.pdf
         </button>
+        <button
+          type="button"
+          className="rounded border border-gray-400 bg-white px-1.5 py-0.5 text-2xs font-semibold text-gray-800 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-40"
+          disabled={!hasResume}
+          title={hasResume ? 'View saved application questions and answers' : 'No generated application was saved'}
+          onClick={() => onViewApplicationAnswers?.(row)}
+        >
+          Q&amp;A
+        </button>
       </div>
     );
   }
@@ -108,7 +118,9 @@ export function Cell({
           column.align === 'right' ? 'justify-end' : column.align === 'center' ? 'justify-center' : ''
         }`}
         title={lockReason ?? displayTitle(row, column)}
-        onClick={() => editable && setEditing(true)}
+        onClick={() => {
+          if (editable && !window.getSelection()?.toString()) setEditing(true);
+        }}
         onKeyDown={(e) => {
           if (editable && (e.key === 'Enter' || e.key === 'F2')) setEditing(true);
         }}

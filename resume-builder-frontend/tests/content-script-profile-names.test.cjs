@@ -191,6 +191,22 @@ test('falls back to splitting Full Name for older profiles', () => {
   assert.equal(api.profileValueForField(new Input('Last Name'), { fullName: 'Ada Byron Lovelace' }), 'Lovelace');
 });
 
+test('input-only autofill leaves choice controls unchanged', async () => {
+  const firstName = new Input('First Name', 'given-name');
+  const state = new Select('State / Territory', ['Washington', 'Oregon']);
+  const api = loadContentScript({ allFields: [firstName, state] });
+
+  const result = await api.fillProfileFields({
+    firstName: 'Ada',
+    state: 'Washington',
+  }, true);
+
+  assert.equal(firstName.value, 'Ada');
+  assert.equal(state.value, '');
+  assert.deepEqual(state.events, []);
+  assert.equal(result.filled, 1);
+});
+
 test('prioritizes work authorization over country wording and selects Yes', async () => {
   const api = loadContentScript();
   const field = new Select(

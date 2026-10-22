@@ -496,6 +496,123 @@ $FrontendErr = Join-Path $LogDirectory "frontend-err.log"
 $CloudflareOut = Join-Path $LogDirectory "cloudflared-out.log"
 $CloudflareErr = Join-Path $LogDirectory "cloudflared-err.log"
 
+$script:AiUsageLogOffsets = @{}
+$script:AiUsageLogBuffers = @{}
+
+function Get-AiUsageLogPath {
+    $UtcDate = [DateTime]::UtcNow.ToString("yyyy-MM-dd")
+    return Join-Path (Join-Path $Backend "logs") "${UtcDate}.log"
+}
+
+function Initialize-AiUsageMonitor {
+    $Path = Get-AiUsageLogPath
+    $script:AiUsageLogOffsets[$Path] = if (Test-Path -LiteralPath $Path) {
+        (Get-Item -LiteralPath $Path).Length
+    }
+    else {
+        0
+    }
+    $script:AiUsageLogBuffers[$Path] = ""
+}
+
+function Format-AiTokenCount([object]$Value) {
+    if ($null -eq $Value) {
+        return "n/a"
+    }
+    return "{0:N0}" -f [long]$Value
+}
+
+function Format-AiCost([object]$Value) {
+    if ($null -eq $Value) {
+        return "pricing not configured"
+    }
+    return '$' + ("{0:F6}" -f [double]$Value)
+}
+
+function Show-NewAiUsageSummaries {
+    $Path = Get-AiUsageLogPath
+    if (!(Test-Path -LiteralPath $Path)) {
+        return
+    }
+    if (!$script:AiUsageLogOffsets.ContainsKey($Path)) {
+        $script:AiUsageLogOffsets[$Path] = 0
+        $script:AiUsageLogBuffers[$Path] = ""
+    }
+
+    $Stream = $null
+    $Reader = $null
+    try {
+        $Stream = [IO.File]::Open(
+            $Path,
+            [IO.FileMode]::Open,
+            [IO.FileAccess]::Read,
+            [IO.FileShare]::ReadWrite
+        )
+        $Offset = [long]$script:AiUsageLogOffsets[$Path]
+        if ($Offset -gt $Stream.Length) {
+            $Offset = 0
+        }
+        [void]$Stream.Seek($Offset, [IO.SeekOrigin]::Begin)
+        $Reader = [IO.StreamReader]::new($Stream, [Text.Encoding]::UTF8, $true, 4096, $true)
+        $Content = $Reader.ReadToEnd()
+        $script:AiUsageLogOffsets[$Path] = $Stream.Position
+    }
+    catch {
+        return
+    }
+    finally {
+        if ($null -ne $Reader) {
+            $Reader.Dispose()
+        }
+        if ($null -ne $Stream) {
+            $Stream.Dispose()
+        }
+    }
+
+    if (!$Content) {
+        return
+    }
+    $Combined = [string]$script:AiUsageLogBuffers[$Path] + $Content
+    $Lines = $Combined -split '\r?\n'
+    if (!$Combined.EndsWith("`n")) {
+        $script:AiUsageLogBuffers[$Path] = $Lines[-1]
+        $Lines = @($Lines | Select-Object -SkipLast 1)
+    }
+    else {
+        $script:AiUsageLogBuffers[$Path] = ""
+    }
+
+    foreach ($Line in $Lines) {
+        if (!$Line -or $Line -notmatch '"event":"application_generation_usage"') {
+            continue
+        }
+        try {
+            $Entry = $Line | ConvertFrom-Json -ErrorAction Stop
+        }
+        catch {
+            continue
+        }
+
+        Write-Host ""
+        Write-Host "AI usage and estimated cost [$($Entry.model)]" -ForegroundColor Cyan
+        Write-Host (
+            "  Resume only:        {0} input + {1} output = {2}" -f `
+                (Format-AiTokenCount $Entry.resume_input_tokens), `
+                (Format-AiTokenCount $Entry.resume_output_tokens), `
+                (Format-AiCost $Entry.resume_estimated_total_cost_usd)
+        )
+        Write-Host (
+            "  Initial application: {0} input + {1} output = {2}" -f `
+                (Format-AiTokenCount $Entry.application_input_tokens), `
+                (Format-AiTokenCount $Entry.application_output_tokens), `
+                (Format-AiCost $Entry.application_estimated_total_cost_usd)
+        ) -ForegroundColor Green
+        Write-Host "  Application ID:     $($Entry.application_id)"
+        Write-Host "  Application total includes eligibility + resume; later answers are separate."
+        Write-Host ""
+    }
+}
+
 foreach ($Log in @(
     $BackendOut,
     $BackendErr,
@@ -818,6 +935,8 @@ Write-Host ""
 Write-Host "============================================================" -ForegroundColor Green
 Write-Host ""
 
+Initialize-AiUsageMonitor
+
 # ============================================================================
 # Keep running
 # ============================================================================
@@ -827,6 +946,8 @@ try {
     while ($true) {
 
         Start-Sleep -Seconds 2
+
+        Show-NewAiUsageSummaries
 
         if ($BackendProcess.HasExited) {
             Write-Host ""

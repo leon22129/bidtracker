@@ -29,7 +29,7 @@ describe('ImportService missing company/title warnings', () => {
     const duplicates = {
       classifyBatch: jest.fn(async (_workspaceId, urls: string[]) =>
         urls.map((url) => ({ is_duplicate: false, normalized_url: url }))),
-      classifyJobIdentities: jest.fn(async (_workspaceId, rows: unknown[]) =>
+      classifyCompanyIdentities: jest.fn(async (_workspaceId, rows: unknown[]) =>
         rows.map(() => ({ is_duplicate: false }))),
     };
     const numbering = { reserveBlock: jest.fn().mockResolvedValue(1) };
@@ -42,7 +42,7 @@ describe('ImportService missing company/title warnings', () => {
       numbering as any,
       bannedUrls as any,
     );
-    return { service, applications };
+    return { service, applications, bannedUrls, duplicates };
   }
 
   it('reports missing fields during preview', async () => {
@@ -93,6 +93,37 @@ describe('ImportService missing company/title warnings', () => {
       skipped: [],
       missing_fields: [],
     });
+  });
+
+  it('separates banned URLs from genuine rejections and gives bans precedence over duplicates', async () => {
+    const { service, applications, bannedUrls, duplicates } = setup();
+    const statusesFile = {
+      ...file,
+      buffer: Buffer.from([
+        'URL,Company Name,Job Title,Status',
+        'https://banned.example/jobs/1,Blocked,Engineer,Applied',
+        'https://example.com/jobs/2,Acme,Engineer,Rejected',
+      ].join('\n')),
+    };
+    bannedUrls.matchMany.mockResolvedValue([true, false]);
+    duplicates.classifyBatch.mockResolvedValue([
+      { is_duplicate: true, normalized_url: 'banned.example/jobs/1' },
+      { is_duplicate: false, normalized_url: 'example.com/jobs/2' },
+    ]);
+
+    await service.import({ ...user, role: 'admin' }, 'workspace-1', statusesFile);
+
+    expect(applications.insertChunked).toHaveBeenCalledWith([
+      expect.objectContaining({
+        application_status: 'Banned',
+        note: 'this job is in banned list',
+      }),
+      expect.objectContaining({ application_status: 'Rejected', note: null }),
+    ], 'workspace-1');
+    expect(duplicates.classifyCompanyIdentities).toHaveBeenCalledWith('workspace-1', [
+      { company_name: null, job_title: 'Engineer' },
+      { company_name: 'Acme', job_title: 'Engineer' },
+    ]);
   });
 
   it('rejects an XLSX archive whose expanded contents exceed the configured bound', async () => {

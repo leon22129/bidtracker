@@ -22,6 +22,10 @@ export class CreateUserDto {
 
   @IsIn(ROLES)
   role: Role;
+
+  @IsOptional()
+  @IsString()
+  manager_user_id?: string | null;
 }
 
 export class UpdateUserDto {
@@ -43,6 +47,10 @@ export class UpdateUserDto {
   @IsOptional()
   @IsBoolean()
   is_active?: boolean;
+
+  @IsOptional()
+  @IsString()
+  manager_user_id?: string | null;
 }
 
 export class ResetPasswordDto {

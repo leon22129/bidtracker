@@ -23,19 +23,43 @@ import {
 import { BannedUrlService } from '../applications/banned-url.service';
 import { ApplicationsService } from '../applications/applications.service';
 import { WorkspacesService } from '../workspaces/workspaces.service';
-import { OpenAiUsage, openAiUsageFields } from './openai-telemetry';
+import {
+  combineOpenAiUsage,
+  OpenAiUsage,
+  openAiUsageFields,
+  prefixedOpenAiUsageFields,
+} from './openai-telemetry';
+import {
+  parseApplicationHistory,
+  serializeApplicationHistory,
+  type SavedApplicationAnswer,
+} from '../common/utils/application-history.util';
+import { careerPathIncludesCompany } from '../common/utils/job-fingerprint.util';
+import { stripTrailingCoverLetterSigner } from '../common/utils/cover-letter.util';
 
 const OPENAI_API_BASE = 'https://api.openai.com/v1';
-const MODEL = process.env.OPENAI_MODEL || 'gpt-5.6-sol';
+const MODEL = process.env.OPENAI_MODEL || 'gpt-6.1-sol';
 
 type OpenAiError = { message?: string; type?: string; code?: string; param?: string };
 type OpenAiResponse = { id?: string; output_text?: string; output?: Array<{ type?: string; role?: string; content?: Array<{ type?: string; text?: string }> }>; usage?: OpenAiUsage; error?: OpenAiError };
 type OpenAiConversationResponse = { id?: string; error?: OpenAiError };
+type OpenAiConversationItem = {
+  id?: string;
+  created_at?: number;
+  type?: string;
+  role?: string;
+  content?: string | Array<{ type?: string; text?: string }>;
+};
+type OpenAiConversationItemsResponse = {
+  data?: OpenAiConversationItem[];
+  error?: OpenAiError;
+};
 type OpenAiOptions = {
   conversationId?: string;
   instructions?: string;
   maxOutputTokens?: number;
   operation?: string;
+  onUsage?: (usage: OpenAiUsage | undefined) => void;
 };
 
 function envEnabled(name: string) {
@@ -77,6 +101,41 @@ function requestText(body: unknown) {
   return parts.join('\n');
 }
 
+function usableJobInfo(value: unknown) {
+  const cleaned = typeof value === 'string' ? value.trim() : '';
+  return /^(?:unavailable|unknown|n\/?a|not specified)(?:\s*,.*)?$/i.test(cleaned) ? '' : cleaned;
+}
+
+function workArrangementRejectionReason(workplace: unknown) {
+  const normalized = typeof workplace === 'string' ? workplace.trim().toLowerCase() : '';
+  if (/\bhybrid\b/.test(normalized)) return 'it is hybrid';
+  if (/\bon[\s-]?site\b/.test(normalized)) return 'it is onsite';
+  return 'it is not explicitly fully remote';
+}
+
+function normalizedJobDescription(value: string, info: EligibilityResult) {
+  const marker = '\n\nJob Description\n';
+  const markerIndex = value.indexOf(marker);
+  const description = markerIndex >= 0 ? value.slice(markerIndex + marker.length).trim() : value.trim();
+  const fields = [
+    ['Title', info.job_title],
+    ['Company', info.company_name],
+    ['Location', info.location],
+    ['Workplace', info.workplace],
+    ['Department', info.department],
+    ['Employment Type', info.employment_type],
+    ['Salary', info.salary],
+  ] as const;
+  const lines = fields.flatMap(([label, rawValue]) => {
+    const fieldValue = usableJobInfo(rawValue);
+    return fieldValue ? [`${label}: ${fieldValue}`] : [];
+  });
+  const sections: string[] = [];
+  if (lines.length) sections.push(`Job Information\n${lines.join('\n')}`);
+  if (description) sections.push(`Job Description\n${description}`);
+  return sections.join('\n\n');
+}
+
 @Injectable()
 export class ApplicationGenerationService {
   private readonly logger = new Logger(ApplicationGenerationService.name);
@@ -100,6 +159,11 @@ export class ApplicationGenerationService {
       throw new BadRequestException('The selected profile is not assigned to this workspace');
     }
 
+    if (await this.bannedUrls.matches(dto.url)) {
+      const application = await this.applications.createBannedApplication(user, workspace.id, dto.url);
+      return { success: false, banned: true, url: dto.url, application };
+    }
+
     const duplicate = (await this.duplicates.classifyBatch(workspace.id, [dto.url]))[0];
     if (duplicate.is_duplicate) {
       return {
@@ -113,14 +177,11 @@ export class ApplicationGenerationService {
       };
     }
 
-    if (await this.bannedUrls.matches(dto.url)) {
-      const application = await this.applications.createBannedApplication(user, workspace.id, dto.url);
-      return { success: false, banned: true, url: dto.url, application };
-    }
-
     const jobDescription = dto.job_description.trim();
+    let eligibilityUsage: OpenAiUsage | undefined;
     const eligibility = await this.openAi(buildJobEligibilityPrompt(jobDescription, dto.url), {
       operation: 'job_eligibility',
+      onUsage: (usage) => { eligibilityUsage = usage; },
     });
     const eligibilityJson = this.parseEligibility(eligibility);
     const companyName = typeof eligibilityJson.company_name === 'string'
@@ -129,6 +190,7 @@ export class ApplicationGenerationService {
     const jobTitle = typeof eligibilityJson.job_title === 'string'
       ? eligibilityJson.job_title.trim()
       : '';
+    const normalizedDescription = normalizedJobDescription(jobDescription, eligibilityJson);
     if (!companyName || !jobTitle) {
       const missing = [
         !companyName ? 'company name' : null,
@@ -140,51 +202,86 @@ export class ApplicationGenerationService {
         url: dto.url,
         reason: `Need ${missing} in the JD.`,
         eligibility: eligibilityJson,
+        job_description: normalizedDescription,
       };
     }
 
-    const similar = await this.duplicates.findRecentJobMatch(
-      workspace.id,
-      companyName,
-      jobTitle,
-    );
-    if (similar) {
+    if (careerPathIncludesCompany(profile.career_path, companyName)) {
       return {
         success: false,
         duplicate: true,
-        duplicate_type: 'job_fingerprint',
-        existing_application: similar,
+        duplicate_type: 'career_history' as const,
+        company_name: companyName,
+      };
+    }
+
+    const recentCompanyApplication = await this.duplicates.findRecentCompanyMatch(
+      workspace.id,
+      companyName,
+    );
+    if (recentCompanyApplication) {
+      const cooldownDays = this.duplicates.companyCooldownDays();
+      const application = await this.applications.createDuplicateApplication(user, {
+        workspace_id: workspace.id,
+        url: dto.url.trim(),
+        job_title: jobTitle,
+        company_name: companyName,
+        job_description: normalizedDescription,
+        note: `Company duplicate within ${cooldownDays}-day cooldown; original application #${recentCompanyApplication.number}.`,
+      });
+      return {
+        success: false,
+        duplicate: true,
+        duplicate_type: 'company',
+        cooldown_days: cooldownDays,
+        existing_application: recentCompanyApplication,
+        application,
       };
     }
 
     const rejectionReasons: string[] = [];
-    if (eligibilityJson.requires_clearance) rejectionReasons.push('requires security clearance');
-    if (eligibilityJson.requires_public_trust) rejectionReasons.push('requires public trust');
-    if (!eligibilityJson.is_us_job) rejectionReasons.push('is not clearly a US job');
-    if (!eligibilityJson.work_arrangement_is_remote_only) rejectionReasons.push('is not explicitly fully remote');
-    if (eligibilityJson.requires_in_person_interview) rejectionReasons.push('requires an in-person interview');
-    if (eligibilityJson.requires_onsite_onboarding) rejectionReasons.push('requires onsite onboarding');
-    if (rejectionReasons.length) return { success: false, eligible: false, url: dto.url, reason: `Skipped because it ${rejectionReasons.join(', ')}.`, eligibility: eligibilityJson };
+    if (eligibilityJson.requires_clearance) rejectionReasons.push('it requires clearance');
+    if (eligibilityJson.requires_public_trust) rejectionReasons.push('it requires public trust');
+    if (!eligibilityJson.is_us_job) rejectionReasons.push('it is not clearly a US job');
+    if (!eligibilityJson.work_arrangement_is_remote_only) {
+      rejectionReasons.push(workArrangementRejectionReason(eligibilityJson.workplace));
+    }
+    if (eligibilityJson.requires_in_person_interview) rejectionReasons.push('it requires an in-person interview');
+    if (eligibilityJson.requires_onsite_onboarding) rejectionReasons.push('it requires onsite onboarding');
+    if (rejectionReasons.length) {
+      const note = `job eligibility check failed - ${rejectionReasons.join('; ')}`;
+      const application = await this.applications.createEligibilityRejectedApplication(user, {
+        workspace_id: workspace.id,
+        url: dto.url.trim(),
+        job_title: jobTitle,
+        company_name: companyName,
+        job_description: normalizedDescription,
+        note,
+      });
+      return {
+        success: false,
+        eligible: false,
+        url: dto.url,
+        reason: `Skipped because ${rejectionReasons.join(', ')}.`,
+        eligibility: eligibilityJson,
+        job_description: normalizedDescription,
+        application,
+      };
+    }
 
-    const resume = this.parseJson(await this.openAi(this.resumePrompt(profile, jobDescription), {
+    let resumeUsage: OpenAiUsage | undefined;
+    const resume = this.parseJson(await this.openAi(this.resumePrompt(profile, normalizedDescription), {
       operation: 'resume_generation',
+      onUsage: (usage) => { resumeUsage = usage; },
     }));
+    this.normalizeCoverLetter(resume, profile.full_name);
     const conversation = await this.createAnswerConversation(
       user,
       profile,
       workspace.id,
-      jobDescription,
+      normalizedDescription,
       resume,
     );
-    let answers: unknown = null;
-    if (dto.questions?.length) {
-      answers = await this.answerInConversation(
-        conversation.openai_conversation_id,
-        dto.questions,
-        profile,
-      );
-    }
-
     const coverLetterText = profile.generate_cover_letter && typeof resume.coverletter === 'string'
       ? resume.coverletter
       : undefined;
@@ -194,7 +291,7 @@ export class ApplicationGenerationService {
       job_title: jobTitle,
       company_name: companyName,
       generated_resume: this.buildResumeSnapshot(profile, resume),
-      job_description: jobDescription,
+      job_description: normalizedDescription,
       conversation_id: conversation.id,
       resume_template: profile.template || 'classic',
       cover_letter_text: coverLetterText,
@@ -202,14 +299,26 @@ export class ApplicationGenerationService {
         ? profile.cover_letter_template || 'classic'
         : undefined,
     });
-    if (!saved.success) return saved;
+    if (!saved.success || !saved.application) return saved;
+
+    logEvent(this.logger, 'log', 'application_generation_usage', {
+      model: MODEL,
+      application_id: saved.application.id,
+      scope: 'eligibility_and_resume_generation',
+      ...prefixedOpenAiUsageFields('eligibility', eligibilityUsage),
+      ...prefixedOpenAiUsageFields('resume', resumeUsage),
+      ...prefixedOpenAiUsageFields(
+        'application',
+        combineOpenAiUsage([eligibilityUsage, resumeUsage]),
+      ),
+    });
 
     return {
       success: true,
       eligible: true,
       application: saved.application,
       resume,
-      answers,
+      job_description: normalizedDescription,
       conversation_id: conversation.id,
       full_name: profile.full_name,
     };
@@ -232,6 +341,7 @@ export class ApplicationGenerationService {
         operation: 'resume_generation',
       });
       const resume = this.parseJson(tailoredResume);
+      this.normalizeCoverLetter(resume, profile.full_name);
       const conversation = await this.createAnswerConversation(
         user,
         profile,
@@ -240,7 +350,7 @@ export class ApplicationGenerationService {
         resume,
       );
       return {
-        tailored_resume: tailoredResume,
+        tailored_resume: JSON.stringify(resume),
         conversation_id: conversation.id,
         full_name: profile.full_name,
       };
@@ -279,11 +389,108 @@ export class ApplicationGenerationService {
         ? await this.prisma.resumeProfile.findUnique({ where: { id: conversation.profile_id } })
         : null,
     );
-    await this.prisma.resumeConversation.update({
-      where: { id: conversation.id },
-      data: { updated_at: new Date() },
-    });
+    await this.persistApplicationHistory(conversation.id, dto.questions, answers.answers);
     return answers;
+  }
+
+  async getConversationAnswers(user: AuthUser, conversationId: string) {
+    const conversation = await this.prisma.resumeConversation.findUnique({
+      where: { id: conversationId },
+    });
+    if (!conversation || conversation.user_id !== user.id) {
+      throw new BadRequestException('Conversation not found');
+    }
+    if (conversation.workspace_id) {
+      await this.access.assertCanEdit(user, conversation.workspace_id);
+    }
+
+    const savedApplication = await this.prisma.jobApplication.findFirst({
+      where: {
+        conversation_id: conversation.id,
+        application_questions_json: { not: null },
+        application_answers_json: { not: null },
+      },
+      select: {
+        application_questions_json: true,
+        application_answers_json: true,
+      },
+      orderBy: { updated_at: 'desc' },
+    });
+    if (savedApplication) {
+      try {
+        const saved = parseApplicationHistory(
+          savedApplication.application_questions_json,
+          savedApplication.application_answers_json,
+        );
+        if (saved) return saved;
+      } catch {
+        // Fall through to provider history and repair the local snapshot below.
+      }
+    }
+
+    const history = await this.openAiRequest(
+      `/conversations/${encodeURIComponent(conversation.openai_conversation_id)}/items?order=desc&limit=100`,
+      undefined,
+      'GET',
+      'conversation_history',
+    ) as OpenAiConversationItemsResponse;
+    const items = Array.isArray(history.data) ? history.data : [];
+
+    for (let answerIndex = 0; answerIndex < items.length; answerIndex++) {
+      const answerItem = items[answerIndex];
+      if (answerItem.role !== 'assistant') continue;
+      const answers = this.parseConversationAnswers(this.conversationItemText(answerItem));
+      if (!answers.length) continue;
+
+      const questionItem = items.slice(answerIndex + 1).find((item) => (
+        item.role === 'user' && this.conversationItemText(item).includes('Application questions:')
+      ));
+      const questions = questionItem
+        ? this.parseConversationQuestions(this.conversationItemText(questionItem))
+        : [];
+      const restored = {
+        questions: questions.length
+          ? questions
+          : answers.map((item) => ({ question: item.question, options: [] })),
+        answers,
+      };
+      await this.persistApplicationHistory(
+        conversation.id,
+        restored.questions,
+        restored.answers,
+      );
+      return restored;
+    }
+
+    return { questions: [], answers: [] };
+  }
+
+  private async persistApplicationHistory(
+    conversationId: string,
+    questions: ApplicationQuestionInput[],
+    answers: SavedApplicationAnswer[],
+  ) {
+    let serialized: ReturnType<typeof serializeApplicationHistory>;
+    try {
+      serialized = serializeApplicationHistory(questions, answers);
+    } catch (error) {
+      throw new BadRequestException(
+        error instanceof Error ? error.message : 'Unable to save application answers',
+      );
+    }
+    await this.prisma.$transaction([
+      this.prisma.resumeConversation.update({
+        where: { id: conversationId },
+        data: { updated_at: new Date() },
+      }),
+      this.prisma.jobApplication.updateMany({
+        where: { conversation_id: conversationId },
+        data: {
+          application_questions_json: serialized.questionsJson,
+          application_answers_json: serialized.answersJson,
+        },
+      }),
+    ]);
   }
 
   private async findAccessibleProfile(user: AuthUser, profileId: string) {
@@ -351,6 +558,12 @@ export class ApplicationGenerationService {
       hourlyRate: typeof generated.hourly_rate === 'string' ? generated.hourly_rate : '',
       rateInJd: typeof generated.rate_in_jd === 'boolean' ? generated.rate_in_jd : undefined,
     };
+  }
+
+  private normalizeCoverLetter(generated: Record<string, unknown>, fullName?: string | null) {
+    if (typeof generated.coverletter === 'string') {
+      generated.coverletter = stripTrailingCoverLetterSigner(generated.coverletter, fullName);
+    }
   }
 
   private async createAnswerConversation(
@@ -473,6 +686,58 @@ ${JSON.stringify(resume)}`;
     };
   }
 
+  private conversationItemText(item: OpenAiConversationItem): string {
+    if (typeof item.content === 'string') return item.content;
+    if (!Array.isArray(item.content)) return '';
+    return item.content
+      .filter((part) => part.type === 'input_text' || part.type === 'output_text')
+      .map((part) => part.text || '')
+      .join('');
+  }
+
+  private parseConversationAnswers(text: string): Array<{ question: string; answer: string }> {
+    try {
+      const parsed = this.parseJson(text);
+      if (!Array.isArray(parsed.answers)) return [];
+      return parsed.answers
+        .filter((item): item is Record<string, unknown> => Boolean(
+          item && typeof item === 'object' &&
+          typeof (item as Record<string, unknown>).question === 'string' &&
+          typeof (item as Record<string, unknown>).answer === 'string',
+        ))
+        .map((item) => ({
+          question: String(item.question),
+          answer: String(item.answer),
+        }));
+    } catch {
+      return [];
+    }
+  }
+
+  private parseConversationQuestions(text: string): ApplicationQuestionInput[] {
+    const section = text.match(/Application questions:\s*([\s\S]*?)\n\s*Return valid JSON/i)?.[1];
+    if (!section) return [];
+    return [...section.matchAll(/(?:^|\n)\d+\.\s+([\s\S]*?)(?=\n\d+\.\s+|$)/g)]
+      .map((match) => {
+        const block = match[1].trim();
+        const optionMatch = block.match(/\n\s*Allowed answers:\s*(\[[^\n]*\])\s*$/i);
+        let options: string[] = [];
+        if (optionMatch) {
+          try {
+            const parsed: unknown = JSON.parse(optionMatch[1]);
+            if (Array.isArray(parsed)) {
+              options = parsed.filter((value): value is string => typeof value === 'string');
+            }
+          } catch {
+            options = [];
+          }
+        }
+        const question = optionMatch ? block.slice(0, optionMatch.index).trim() : block;
+        return { question, options };
+      })
+      .filter((item) => item.question.length > 0);
+  }
+
   private async openAi(prompt: string, options: OpenAiOptions = {}) {
     const data = await this.openAiRequest('/responses', {
       model: MODEL,
@@ -482,6 +747,7 @@ ${JSON.stringify(resume)}`;
       ...(options.conversationId ? { conversation: options.conversationId } : {}),
       ...(options.instructions ? { instructions: options.instructions } : {}),
     }, 'POST', options.operation || 'response_generation') as OpenAiResponse;
+    options.onUsage?.(data.usage);
     const text = responseText(data);
     if (!text?.trim()) throw new BadGatewayException('OpenAI returned an empty response');
     return text.trim();
@@ -593,6 +859,15 @@ ${JSON.stringify(resume)}`;
 
   private parseEligibility(value: string): EligibilityResult {
     const parsed = this.parseJson(value);
+    const stringFields = [
+      'company_name',
+      'job_title',
+      'location',
+      'workplace',
+      'department',
+      'employment_type',
+      'salary',
+    ] as const;
     const booleanFields = [
       'requires_clearance',
       'requires_public_trust',
@@ -602,8 +877,7 @@ ${JSON.stringify(resume)}`;
       'requires_onsite_onboarding',
     ] as const;
     if (
-      typeof parsed.company_name !== 'string' ||
-      typeof parsed.job_title !== 'string' ||
+      stringFields.some((field) => typeof parsed[field] !== 'string') ||
       booleanFields.some((field) => typeof parsed[field] !== 'boolean')
     ) {
       throw new BadGatewayException('OpenAI returned an invalid eligibility response');
@@ -626,6 +900,11 @@ ${JSON.stringify(resume)}`;
 interface EligibilityResult extends Record<string, unknown> {
   company_name: string;
   job_title: string;
+  location: string;
+  workplace: string;
+  department: string;
+  employment_type: string;
+  salary: string;
   requires_clearance: boolean;
   requires_public_trust: boolean;
   is_us_job: boolean;

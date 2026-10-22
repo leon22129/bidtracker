@@ -56,6 +56,11 @@ export class ApplicationsController {
     return this.applications.summary(user, workspaceId);
   }
 
+  @Get('latest-generated')
+  latestGenerated(@CurrentUser() user: AuthUser, @Query('workspace_id') workspaceId: string) {
+    return this.applications.getLatestGenerated(user, workspaceId);
+  }
+
   // Static routes must precede ':id' so they are not captured as an id.
   @Post('generated')
   createGenerated(

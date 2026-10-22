@@ -15,12 +15,17 @@ unit-tested module that every write path must pass through.
 
 | Capability | admin | bidder_manager | bidder |
 |---|:--:|:--:|:--:|
-| Create / delete users | ✅ | ❌ | ❌ |
+| Create users | ✅ | ✅ (bidders allocated to self) | ❌ |
+| Deactivate / reactivate users | ✅ | ✅ (allocated bidders only) | ❌ |
+| Delete users | ✅ | ❌ | ❌ |
 | Reset any password | ✅ | ❌ | ❌ |
 | Change username / role | ✅ | ❌ | ❌ |
 | Change **own** password | ✅ | ✅ | ✅ |
 | Create / rename / delete workspace | ✅ | ❌ | ❌ |
-| List accessible workspaces | created workspaces | owned workspace | owned workspace |
+| List accessible workspaces | created workspaces | owned + assigned bidders' workspaces | owned workspace |
+| View assigned bidders' application tables and profiles | ✅ | ✅ (read-only) | ❌ |
+| Assign a profile to a bidder manager | ✅ | ❌ | ❌ |
+| Choose who works on a manager-allocated profile | ❌ | ✅ (self or own allocated bidders) | ❌ |
 | Add application manually / import Excel or CSV | ✅ | ✅ (owned workspace) | ✅ (owned workspace) |
 | Edit job title/company/url/note | ✅ | ✅ (owned workspace) | ✅ (owned workspace) |
 | Set status `Pending→Applied`, `Applied→Rejected` | ✅ | ✅ | ✅ |
@@ -30,23 +35,32 @@ unit-tested module that every write path must pass through.
 | Edit `interview_date` / `interview_note` | ✅ | ❌ | ❌ |
 | Toggle `paid` | ✅ | ❌ | ❌ |
 | Edit **any** field on a paid row | ✅ | ❌ | ❌ |
-| Delete applications | ✅ | ❌ | ❌ |
+| Delete applications | ✅ | unpaid Pending/Duplicated | unpaid Pending/Duplicated |
 | View own live bid-count report | ✅ | ✅ | ✅ |
 | View payment history / process payment | ✅ | ❌ | ❌ |
 | View analytics dashboard | ✅ | ❌ | ❌ |
 
-`bidder_manager` and `bidder` currently have the same workspace scope and field capabilities. A workspace
-has one owner and one resume profile; assigning the workspace to another user transfers current access but
-does not rewrite historical application/payment attribution.
+Each bidder may be assigned to one `bidder_manager`, and each workspace/profile may be explicitly allocated
+to one `bidder_manager` by an admin. Admins do not assign profiles directly to bidders. A manager can read
+profiles allocated to them and choose either themselves or an active bidder on their team as the owner. The manager cannot edit those application tables unless they are also the
+workspace owner. A workspace has one owner and one resume profile; changing the owner transfers current access
+but does not rewrite historical application/payment attribution.
 
 ## 3.2 (B) Workspace scope resolution
 
 ```ts
-canAccess(user, workspace): boolean
+canView(user, workspace): boolean
 
   if (user.role === 'super_admin') return true;
   if (user.role === 'admin') return workspace.created_by_user_id === user.id;
-  return workspace.owner_user_id === user.id;
+  if (workspace.owner_user_id === user.id) return true;
+  return user.role === 'bidder_manager' && (
+    workspace.manager_user_id === user.id || workspace.owner.manager_user_id === user.id
+  );
+
+canEdit(user, workspace): boolean
+
+  // Same admin/owner checks, but manager assignment alone never grants edits.
 ```
 
 Consequences:
@@ -55,8 +69,9 @@ Consequences:
 - Every application endpoint derives `workspaceId` from **the row**, not from the request body, then re-checks
   scope. So you cannot move a row into a workspace you can't write to, and you cannot read row `X` by guessing
   its id.
-- There is no share grant or view-only mode. If a workspace is returned to a user, workspace-level access permits
-  both reading and writing; role and field rules still restrict which application fields may be changed.
+- Manager assignment is a view-only grant resolved server-side. The dedicated bidder-assignment endpoint is
+  the only exception: it verifies both that the profile was allocated to the caller and that the new owner is
+  an active bidder allocated to that caller.
 
 ## 3.3 (C) Field-level policy — the security core
 

@@ -4,6 +4,7 @@ import {
   assertStatusTransition,
   filterPatchByRole,
 } from './application.policy';
+import { APPLICATION_STATUSES } from '../constants';
 
 describe('ApplicationPolicy', () => {
   describe('assertStatusTransition', () => {
@@ -44,11 +45,18 @@ describe('ApplicationPolicy', () => {
     });
 
     it('allows every transition for admin', () => {
-      const all = ['Pending', 'Applied', 'Rejected', 'Duplicated'];
+      const all = APPLICATION_STATUSES;
       for (const from of all) {
         for (const to of all) {
           expect(() => assertStatusTransition(from, to, 'admin')).not.toThrow();
         }
+      }
+    });
+
+    it.each(['bidder', 'bidder_manager'])('blocks manual Banned transitions for %s', (role) => {
+      for (const status of APPLICATION_STATUSES.filter((value) => value !== 'Banned')) {
+        expect(() => assertStatusTransition(status, 'Banned', role)).toThrow(ForbiddenException);
+        expect(() => assertStatusTransition('Banned', status, role)).toThrow(ForbiddenException);
       }
     });
 
@@ -75,6 +83,14 @@ describe('ApplicationPolicy', () => {
     });
     it('allows admins to modify rejected rows', () => {
       expect(() => assertRowNotLocked({ paid: false, application_status: 'Rejected' }, 'admin'))
+        .not.toThrow();
+    });
+    it.each(['bidder', 'bidder_manager'])('locks banned rows for %s', (role) => {
+      expect(() => assertRowNotLocked({ paid: false, application_status: 'Banned' }, role))
+        .toThrow('Banned applications are locked');
+    });
+    it.each(['admin', 'super_admin'])('allows %s to modify banned rows', (role) => {
+      expect(() => assertRowNotLocked({ paid: false, application_status: 'Banned' }, role))
         .not.toThrow();
     });
   });

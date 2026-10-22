@@ -50,6 +50,8 @@ export function useApplications(
   const [error, setError] = useState<string | null>(null);
 
   const inFlight = useRef<Set<number>>(new Set());
+  const pageBounds = useRef<Map<number, { start: string | null; end: string | null }>>(new Map());
+  const totalRef = useRef(0);
   const lastRange = useRef<{ start: number; end: number }>({ start: 0, end: 0 });
   const generation = useRef(0);
 
@@ -60,6 +62,8 @@ export function useApplications(
   const resetAndFetch = useCallback(() => {
     generation.current += 1;
     inFlight.current.clear();
+    pageBounds.current.clear();
+    totalRef.current = 0;
     setPages(new Map());
     setTotal(0);
     setError(null);
@@ -79,11 +83,33 @@ export function useApplications(
       setLoading(true);
 
       try {
-        const res = await api.listApplications(workspaceId, pageIndex + 1, PAGE_SIZE, filters);
+        const previous = pageBounds.current.get(pageIndex - 1);
+        const following = pageBounds.current.get(pageIndex + 1);
+        const cursorAfter = previous?.end ?? undefined;
+        const cursorBefore = cursorAfter ? undefined : following?.start ?? undefined;
+        const usingCursor = Boolean(cursorAfter || cursorBefore);
+        const res = await api.listApplications(
+          workspaceId,
+          pageIndex + 1,
+          PAGE_SIZE,
+          filters,
+          {
+            cursorAfter,
+            cursorBefore,
+            includeTotal: !usingCursor && totalRef.current === 0,
+          },
+        );
         // A response from a superseded filter state must not be written into the new cache.
         if (gen !== generation.current) return;
 
-        setTotal(res.total);
+        if (res.total !== null) {
+          totalRef.current = res.total;
+          setTotal(res.total);
+        }
+        pageBounds.current.set(pageIndex, {
+          start: res.start_cursor,
+          end: res.end_cursor,
+        });
         setPages((prev) => {
           const next = new Map(prev);
           next.set(pageIndex, res.items);

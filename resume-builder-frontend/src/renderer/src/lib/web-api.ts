@@ -4,6 +4,8 @@ import type {
   CreateAiProfileInput,
   GenerateResumeInput,
   GenerateResumeResult,
+  SavedGeneratedApplication,
+  SavedConversationAnswers,
   UpdateAiProfileInput,
 } from "../../../shared/ai-profiles"
 import type { WebAuthApi, WebAuthStatus } from "../../../shared/auth"
@@ -142,11 +144,11 @@ const webAiProfiles: AiProfilesApi = {
             profile_id: input.profileId,
             job_description: input.jobDescription,
             kind: input.kind,
-            questions: input.questions,
+            ...(!applicationGeneration ? { questions: input.questions } : {}),
             resume: input.resume,
           }),
     })
-    const data = await response.json().catch(() => null) as { tailored_resume?: string; full_name?: string; conversation_id?: string; error?: string; message?: string; eligible?: boolean; reason?: string; banned?: boolean; resume?: unknown; answers?: unknown; application?: GenerateResumeResult["application"]; duplicate?: boolean; duplicate_type?: string | null; existing_application?: GenerateResumeResult["existingApplication"] } | null
+    const data = await response.json().catch(() => null) as { tailored_resume?: string; full_name?: string; conversation_id?: string; job_description?: string; error?: string; message?: string; eligible?: boolean; reason?: string; banned?: boolean; resume?: unknown; answers?: unknown; application?: GenerateResumeResult["application"]; duplicate?: boolean; duplicate_type?: string | null; cooldown_days?: number; company_name?: string; existing_application?: GenerateResumeResult["existingApplication"] } | null
     if (!response.ok) throw new Error(data?.message || data?.error || `Generation failed (${response.status}).`)
     if (conversationAnswers) {
       if (!Array.isArray(data?.answers)) throw new Error("The AI provider returned an empty response.")
@@ -167,18 +169,32 @@ const webAiProfiles: AiProfilesApi = {
       if (data?.duplicate) return {
         duplicate: true,
         duplicateType: data.duplicate_type,
+        cooldownDays: data.cooldown_days,
+        companyName: data.company_name,
         existingApplication: data.existing_application,
         application: data.application,
         tailored_resume: data.resume ? JSON.stringify(data.resume) : undefined,
         full_name: data.full_name,
       }
       if (data?.banned) return { banned: true, tailored_resume: "" }
-      if (data?.eligible === false) return { eligible: false, reason: data.reason, tailored_resume: "" }
+      if (data?.eligible === false) return { eligible: false, reason: data.reason, jobDescription: data.job_description, tailored_resume: "" }
       if (!data?.resume) throw new Error("The AI provider returned an empty response.")
-      return { eligible: true, tailored_resume: JSON.stringify(data.resume), full_name: data.full_name, conversationId: data.conversation_id, application: data.application, answers }
+      return { eligible: true, tailored_resume: JSON.stringify(data.resume), full_name: data.full_name, conversationId: data.conversation_id, jobDescription: data.job_description, application: data.application, answers }
     }
     if (!data?.tailored_resume) throw new Error("The AI provider returned an empty response.")
     return { tailored_resume: data.tailored_resume, full_name: data.full_name, conversationId: data.conversation_id }
+  },
+  async loadLastApplication(workspaceId: string): Promise<SavedGeneratedApplication> {
+    const response = await apiFetch(`/applications/latest-generated?workspace_id=${encodeURIComponent(workspaceId)}`)
+    const data = await response.json().catch(() => null) as (SavedGeneratedApplication & { message?: string }) | null
+    if (!response.ok || !data) throw new Error(data?.message || "Unable to load the last application.")
+    return data
+  },
+  async loadConversationAnswers(conversationId: string): Promise<SavedConversationAnswers> {
+    const response = await apiFetch(`/resume/answers/${encodeURIComponent(conversationId)}`)
+    const data = await response.json().catch(() => null) as (SavedConversationAnswers & { message?: string }) | null
+    if (!response.ok || !data) throw new Error(data?.message || "Unable to restore application answers.")
+    return data
   },
 }
 

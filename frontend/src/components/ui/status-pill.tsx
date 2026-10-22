@@ -1,10 +1,11 @@
 import type { ApplicationStatus, PipelineStatus } from '@/lib/types';
 
-/** Colour contract from the spec: Pending gray, Applied green, Rejected black, Duplicated red. */
+/** Application status colours, mirrored in the backend. */
 const STATUS_CLASS: Record<ApplicationStatus, string> = {
   Pending: 'status-pending',
   Applied: 'status-applied',
   Rejected: 'status-rejected',
+  Banned: 'status-banned',
   Duplicated: 'status-duplicated',
 };
 

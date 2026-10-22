@@ -70,9 +70,12 @@ export type GenerateResumeResult = {
   answers?: Array<{ question: string; answer: string }>
   eligible?: boolean
   reason?: string
+  jobDescription?: string
   banned?: boolean
   duplicate?: boolean
   duplicateType?: string | null
+  cooldownDays?: number
+  companyName?: string
   application?: GeneratedApplication
   existingApplication?: {
     id: string
@@ -93,10 +96,33 @@ export type GeneratedApplication = {
   company_name: string
 }
 
+export type SavedGeneratedApplication = {
+  id: string
+  url: string
+  job_title: string | null
+  company_name: string | null
+  resume: unknown
+  template: string
+  generated_at: string | null
+  job_description: string | null
+  conversation_id: string | null
+  cover_letter_text: string | null
+  cover_letter_template: string
+  questions: ApplicationQuestionInput[] | null
+  answers: Array<{ question: string; answer: string }> | null
+}
+
+export type SavedConversationAnswers = {
+  questions: ApplicationQuestionInput[]
+  answers: Array<{ question: string; answer: string }>
+}
+
 export type AiProfilesApi = {
   list: () => Promise<AiProfile[]>
   create: (input: CreateAiProfileInput) => Promise<AiProfile>
   update: (input: UpdateAiProfileInput) => Promise<AiProfile>
   delete: (profileId: string) => Promise<void>
   generate: (input: GenerateResumeInput) => Promise<GenerateResumeResult>
+  loadLastApplication: (workspaceId: string) => Promise<SavedGeneratedApplication>
+  loadConversationAnswers: (conversationId: string) => Promise<SavedConversationAnswers>
 }

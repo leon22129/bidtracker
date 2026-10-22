@@ -246,7 +246,7 @@ export function canScanCurrentPage(): boolean {
  * an extension's isolated world. This function is deliberately self-contained
  * because Chrome serializes it and executes it in the page's MAIN world.
  */
-async function autofillAdpInPageWorld(profile: PageAutofillProfile): Promise<({
+async function autofillAdpInPageWorld(profile: PageAutofillProfile, inputBoxesOnly = false): Promise<({
   filled: number;
   skipped: number;
   skippedQuestions: string[];
@@ -327,6 +327,31 @@ async function autofillAdpInPageWorld(profile: PageAutofillProfile): Promise<({
     if (shouldBlur) field.blur();
     return normalized(field.value) === normalized(desiredValue);
   };
+
+  if (inputBoxesOnly) {
+    const inputValues: Array<[string, string]> = [
+      ["personalInfomationFirstName", text(profile.firstName) || fallbackNames.firstName],
+      ["personalInfomationMiddleName", text(profile.middleName) || fallbackNames.middleName],
+      ["personalInfomationLastName", text(profile.lastName) || fallbackNames.lastName],
+      ["PersonalAddress_address_line1", text(profile.address1)],
+      ["PersonalAddress_city", text(profile.city)],
+      ["PersonalAddress_postalCode", text(profile.zip)],
+      ["PersonalAddress_county", text(profile.county)],
+    ];
+    const skippedQuestions: string[] = [];
+    for (const [id, value] of inputValues) {
+      const field = document.getElementById(id);
+      if (!(field instanceof HTMLInputElement) || !value) continue;
+      if (await fillControlledInput(field, value)) filledQuestions.add(fieldNames.get(id) ?? id);
+      else skippedQuestions.push(fieldNames.get(id) ?? id);
+    }
+    return {
+      filled: filledQuestions.size,
+      skipped: skippedQuestions.length,
+      skippedQuestions,
+      filledQuestions: [...filledQuestions],
+    };
+  }
 
   const roots = () => {
     const found: Array<Document | ShadowRoot> = [document];
@@ -518,7 +543,7 @@ async function fillAdpPageWorld(profile: PageAutofillProfile) {
       target: { tabId: tab.id, allFrames: true },
       world: "MAIN",
       func: autofillAdpInPageWorld as (...args: never[]) => unknown,
-      args: [profile],
+      args: [profile, true],
     });
     return executions.map(({ result }) => result).filter((result): result is NonNullable<Awaited<ReturnType<typeof autofillAdpInPageWorld>>> => Boolean(result));
   } catch {
@@ -527,8 +552,11 @@ async function fillAdpPageWorld(profile: PageAutofillProfile) {
   }
 }
 
-export async function getCurrentPageContext(): Promise<CurrentPageContext> {
-  const { tabUrl, responses } = await sendToCurrentPageFrames<CurrentPageContext>({ type: "RESUME_AI_EXTRACT_PAGE" });
+export async function getCurrentPageContext({ includeQuestions = true }: { includeQuestions?: boolean } = {}): Promise<CurrentPageContext> {
+  const { tabUrl, responses } = await sendToCurrentPageFrames<CurrentPageContext>({
+    type: "RESUME_AI_EXTRACT_PAGE",
+    includeQuestions,
+  });
   const contexts = responses.filter(({ value }) => value && Array.isArray(value.questions));
   if (!contexts.length) throw new Error("No readable job or application content was found on this page.");
 
@@ -565,6 +593,7 @@ export async function fillCurrentPageAnswers(
     answers,
     profile,
     coverLetterText,
+    inputBoxesOnly: true,
   });
   // Run ADP last so its page-owned React state cannot restore the account's
   // stale name/address values after the generic isolated-world autofill.

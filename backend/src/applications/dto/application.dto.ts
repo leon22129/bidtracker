@@ -28,6 +28,21 @@ export class QueryApplicationsDto {
   @Max(MAX_PAGE_SIZE)
   page_size?: number = DEFAULT_PAGE_SIZE;
 
+  @IsOptional()
+  @IsString()
+  @MaxLength(128)
+  cursor_after?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(128)
+  cursor_before?: string;
+
+  @IsOptional()
+  @Transform(toBool)
+  @IsBoolean()
+  include_total?: boolean = true;
+
   /** Free-text search across job title, company and URL. */
   @IsOptional()
   @IsString()
@@ -219,7 +234,7 @@ export class CreateGeneratedApplicationDto {
   @MaxLength(200)
   company_name: string;
 
-  /** User-confirmed override for a recent company/title match. Exact URL matches are never overridden. */
+  /** Deprecated compatibility field. The per-profile company cooldown cannot be overridden. */
   @IsOptional()
   @Transform(toBool)
   @IsBoolean()

@@ -63,7 +63,7 @@ export default function BannedUrlsPage() {
     <main className="mx-auto max-w-4xl px-4 py-6">
       <div className="mb-5">
         <h1 className="text-lg font-semibold">Banned URL Patterns</h1>
-        <p className="mt-1 text-xs text-gray-500">A job URL containing any pattern below is automatically rejected before resume generation.</p>
+        <p className="mt-1 text-xs text-gray-500">A job URL containing any pattern below is marked as Banned before resume generation.</p>
       </div>
 
       <form className="card mb-5 flex gap-2 p-4" onSubmit={add}>

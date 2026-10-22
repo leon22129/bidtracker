@@ -50,10 +50,10 @@ const LOCATION_SELECTORS = [
 ];
 
 const JOB_ATTRIBUTE_SELECTORS = [
-  { key: 'workplace', label: 'Workplace', sectionLabels: ['Location Type', 'Workplace'], selectors: ['[data-ui="job-workplace"]', '[data-testid="job-workplace"]', '[data-ui="overview-workplace"]', '.posting-categories .workplaceTypes'] },
+  { key: 'workplace', label: 'Workplace', sectionLabels: ['Location Type', 'Workplace'], selectors: ['[data-automation-id="remoteType"]', '[data-ui="job-workplace"]', '[data-testid="job-workplace"]', '[data-ui="overview-workplace"]', '.posting-categories .workplaceTypes'] },
   { key: 'department', label: 'Department', sectionLabels: ['Department'], selectors: ['[data-ui="job-department"]', '[data-testid="job-department"]', '[data-ui="overview-department"]', '.posting-categories .department'] },
-  { key: 'employmentType', label: 'Employment type', sectionLabels: ['Employment Type'], selectors: ['[data-ui="job-type"]', '[data-testid="job-type"]', '[data-ui="overview-employment-type"]', '.posting-categories .commitment'] },
-  { key: 'compensation', label: 'Compensation', sectionLabels: ['Compensation'], selectors: ['[data-ui="job-compensation"]', '[data-testid="job-compensation"]'] },
+  { key: 'employmentType', label: 'Employment Type', sectionLabels: ['Employment Type'], selectors: ['[data-ui="job-type"]', '[data-testid="job-type"]', '[data-ui="overview-employment-type"]', '.posting-categories .commitment'] },
+  { key: 'compensation', label: 'Salary', sectionLabels: ['Salary', 'Compensation'], selectors: ['[data-ui="job-compensation"]', '[data-testid="job-compensation"]'] },
 ];
 
 const FIELD_SELECTOR = [
@@ -74,6 +74,14 @@ const FIELD_SELECTOR = [
   'button[aria-haspopup="listbox"]',
   'button[class*="inputGroupEligible"]',
 ].join(',');
+
+const TEXT_ENTRY_INPUT_TYPES = new Set(['', 'text', 'search', 'url', 'tel', 'number', 'email']);
+
+function isTextEntryField(field) {
+  if (field instanceof HTMLTextAreaElement) return true;
+  if (!(field instanceof HTMLInputElement)) return false;
+  return TEXT_ENTRY_INPUT_TYPES.has(String(field.type || '').toLowerCase());
+}
 
 const IDENTITY_FIELD = /^(?:(?:legal |preferred )?(?:first|given|preferred|middle|last|family|full) name(?: legal| preferred)?|e-?mail(?: address)?|phone(?: number)?|phone (?:device )?type|phone extension|mobile(?: phone| number)?|street address|address(?: line)? [12]|city|location(?: city)?|candidate location|state|state province|province|county|postal code|zip(?: postal)?(?: code)?|country(?: of residence)?|resume|upload resume|cover letter|linkedin(?: profile| url)?|website|portfolio(?: url)?|search|subscribe(?: to job alerts)?|.*notify me of new opportunities.*|.*text message updates.*|opt in text messaging)$/i;
 const SENSITIVE_FIELD = /\b(?:race|ethnicity|gender|sex|sexual orientation|hispanic|latino|veteran|disability|disabled|religion|marital|pregnancy|pregnant|medical|health|age|social security|ssn|national id|pronoun|pronouns|salary history|current salary|sponsorship|citizenship|citizen|green card|permanent resident|immigration status)\b|date of birth|birth date|voluntary self.identification|legally authorized|authorized to work|right to work|work authorization/i;
@@ -130,11 +138,101 @@ function structuredDescription(posting) {
   const parser = new DOMParser();
   const parsed = parser.parseFromString(String(posting.description), 'text/html');
   const description = cleanText(parsed.body.innerText || parsed.body.textContent);
-  return description.length >= 120 ? description.slice(0, 20000) : '';
+  return description.length >= 120 ? description.slice(0, 50000) : '';
 }
 
 function structuredName(value) {
   return cleanText(typeof value === 'string' ? value : value?.name);
+}
+
+function assignedJsonObject(text, assignmentPattern) {
+  const assignment = assignmentPattern.exec(String(text || ''));
+  if (!assignment) return null;
+  const start = String(text).indexOf('{', assignment.index + assignment[0].length);
+  if (start < 0) return null;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let index = start; index < text.length; index += 1) {
+    const character = text[index];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (character === '\\') escaped = true;
+      else if (character === '"') inString = false;
+      continue;
+    }
+    if (character === '"') {
+      inString = true;
+      continue;
+    }
+    if (character === '{') depth += 1;
+    else if (character === '}') {
+      depth -= 1;
+      if (depth === 0) {
+        try {
+          return JSON.parse(text.slice(start, index + 1));
+        } catch {
+          return null;
+        }
+      }
+    }
+  }
+  return null;
+}
+
+function phenomJobData() {
+  for (const script of document.querySelectorAll('script')) {
+    const data = assignedJsonObject(script.textContent, /(?:window\.)?phApp\.ddo\s*=\s*/);
+    const job = data?.jobDetail?.data?.job;
+    if (job && typeof job === 'object') return job;
+  }
+  return null;
+}
+
+function phenomLocation() {
+  const job = phenomJobData();
+  if (!job) return '';
+  const locations = Array.isArray(job.multi_location) && job.multi_location.length
+    ? job.multi_location
+    : Array.isArray(job.standardised_multi_location)
+      ? job.standardised_multi_location
+      : [];
+  const locationValues = locations.map((item) => cleanText(
+    item?.location
+    || item?.cityStateCountry
+    || item?.standardisedMapQueryLocation
+    || [item?.cityState, item?.country].filter(Boolean).join(', '),
+  )).filter(Boolean);
+  if (locationValues.length) {
+    return [...new Map(locationValues.map((value) => [normalize(value), value])).values()].join('; ');
+  }
+  return cleanText(job.location
+    || job.cityStateCountry
+    || [job.cityState, job.country].filter(Boolean).join(', '));
+}
+
+function ripplingJobHeader() {
+  if (!/(^|\.)ats\.rippling\.com$/i.test(location.hostname)) return null;
+  const script = document.getElementById('__NEXT_DATA__');
+  if (!script?.textContent) return null;
+  try {
+    const apiData = JSON.parse(script.textContent)?.props?.pageProps?.apiData;
+    const jobPost = apiData?.jobPost;
+    if (!jobPost || typeof jobPost !== 'object') return null;
+    const workLocations = Array.isArray(jobPost.workLocations) && jobPost.workLocations.length
+      ? jobPost.workLocations
+      : apiData.workLocations;
+    const locationValue = Array.isArray(workLocations)
+      ? workLocations.map((item) => cleanText(typeof item === 'string' ? item : item?.name)).filter(Boolean).join('; ')
+      : cleanText(workLocations);
+    return {
+      title: cleanText(jobPost.name),
+      company: cleanText(jobPost.companyName),
+      location: locationValue,
+    };
+  } catch {
+    return null;
+  }
 }
 
 function structuredLocation(posting) {
@@ -148,12 +246,34 @@ function structuredLocation(posting) {
     ].filter(Boolean).join(', ');
     if (locationText) return locationText;
   }
+  if (normalize(posting?.jobLocationType) === 'telecommute') {
+    const requirements = Array.isArray(posting?.applicantLocationRequirements)
+      ? posting.applicantLocationRequirements
+      : [posting?.applicantLocationRequirements];
+    for (const requirement of requirements) {
+      const rawRegion = structuredName(requirement);
+      if (!rawRegion) continue;
+      let region = rawRegion;
+      if (/^[a-z]{2}$/i.test(rawRegion)) {
+        try {
+          region = new Intl.DisplayNames(['en'], { type: 'region' }).of(rawRegion.toUpperCase()) || rawRegion;
+        } catch {
+          // Keep the supplied region code when DisplayNames is unavailable.
+        }
+      }
+      return `Remote (${region})`;
+    }
+  }
   return '';
 }
 
 function structuredWorkplace(posting) {
   if (normalize(posting?.jobLocationType) !== 'telecommute') return '';
   if (/\/(?:view\/[^/]+\/)?hybrid-/i.test(location.pathname)) return 'Hybrid';
+  const description = structuredDescription(posting);
+  if (/\bhybrid(?:[- ](?:work|working|workplace|role|position|schedule|model|arrangement|environment))?\b/i.test(description)) {
+    return 'Hybrid';
+  }
   return 'Remote';
 }
 
@@ -199,6 +319,19 @@ function structuredCompensation(posting) {
   return amount ? `${amount}${period ? ` per ${period}` : ''}` : '';
 }
 
+function cleanJobAttributeValue(key, value) {
+  const cleaned = cleanText(value).replace(/\s*\/\s*$/, '');
+  if (key === 'workplace') {
+    return cleaned.replace(/^(?:remote type|location type|workplace)\s*:?\s*/i, '');
+  }
+  return cleaned;
+}
+
+function cleanJobLocationValue(value) {
+  const cleaned = cleanText(value).replace(/\s*\/\s*$/, '');
+  return /^(?:unavailable|unknown|n\/?a|not specified)(?:\s*,.*)?$/i.test(cleaned) ? '' : cleaned;
+}
+
 function iCimsHeaderValue(label) {
   const expectedLabel = normalize(label);
   for (const item of document.querySelectorAll('.iCIMS_JobHeaderTag')) {
@@ -225,7 +358,7 @@ function extractICimsJobDescription() {
     if (headingText && contentText) sections.push(`${headingText}\n${contentText}`);
   }
   const description = sections.join('\n\n');
-  return description.length >= 120 ? description.slice(0, 20000) : '';
+  return description.length >= 120 ? description.slice(0, 50000) : '';
 }
 
 function labeledJobSections() {
@@ -253,6 +386,19 @@ function labeledSectionValue(sections, labels) {
   return '';
 }
 
+function definitionListValue(labels) {
+  const expectedLabels = new Set(labels.map(normalize));
+  for (const term of document.querySelectorAll('dt')) {
+    if (!expectedLabels.has(normalize(term.innerText || term.textContent))) continue;
+    const sibling = term.nextElementSibling;
+    const valueElement = sibling?.matches?.('dd') ? sibling : term.parentElement?.querySelector?.('dd');
+    if (!(valueElement instanceof HTMLElement) || !isVisible(valueElement)) continue;
+    const value = cleanText(valueElement.innerText || valueElement.textContent);
+    if (value && value.length <= 300) return value;
+  }
+  return '';
+}
+
 function descriptionScore(element, text, selectorIndex) {
   const identity = `${element.id} ${element.className || ''} ${element.getAttribute('data-testid') || ''}`.toLowerCase();
   const headingText = Array.from(element.querySelectorAll('h1,h2,h3,strong'))
@@ -275,6 +421,14 @@ function extractJobDescription(posting) {
   const iCimsDescription = extractICimsJobDescription();
   if (iCimsDescription) return { text: iCimsDescription, source: 'iCIMS job sections' };
 
+  if (/(^|\.)ats\.rippling\.com$/i.test(location.hostname)) {
+    for (const element of document.querySelectorAll('.ATS_htmlPreview')) {
+      if (!isVisible(element)) continue;
+      const text = cleanText(element.innerText || element.textContent);
+      if (text.length >= 120) return { text: text.slice(0, 50000), source: 'Rippling job description' };
+    }
+  }
+
   const structured = structuredDescription(posting);
   if (structured) return { text: structured, source: 'JobPosting metadata' };
 
@@ -295,7 +449,7 @@ function extractJobDescription(posting) {
   });
   candidates.sort((a, b) => b.score - a.score);
   const best = candidates[0];
-  return best?.score >= 90 ? { text: best.text.slice(0, 20000), source: best.source } : { text: '', source: null };
+  return best?.score >= 90 ? { text: best.text.slice(0, 50000), source: best.source } : { text: '', source: null };
 }
 
 function firstVisibleText(selectors, maximumLength = 300) {
@@ -310,6 +464,7 @@ function firstVisibleText(selectors, maximumLength = 300) {
 }
 
 function extractJobHeader(posting) {
+  const ripplingHeader = ripplingJobHeader();
   const labeledSections = labeledJobSections();
   const structuredAttributes = {
     workplace: structuredWorkplace(posting),
@@ -318,20 +473,25 @@ function extractJobHeader(posting) {
     compensation: structuredCompensation(posting),
   };
   const attributes = JOB_ATTRIBUTE_SELECTORS.flatMap(({ key, label, sectionLabels, selectors }) => {
-    const value = (firstVisibleText(selectors)
+    const value = cleanJobAttributeValue(key, firstVisibleText(selectors)
       || labeledSectionValue(labeledSections, sectionLabels)
-      || structuredAttributes[key]).replace(/\s*\/\s*$/, '');
+      || structuredAttributes[key]);
     return value ? [{ label, value }] : [];
   });
-  const company = firstVisibleText(COMPANY_SELECTORS)
+  const company = ripplingHeader?.company
+    || firstVisibleText(COMPANY_SELECTORS)
     || iCimsHeaderValue('Brand')
     || structuredName(posting?.hiringOrganization);
+  const locationValue = cleanJobLocationValue(ripplingHeader?.location
+    || firstVisibleText(LOCATION_SELECTORS)
+    || definitionListValue(['Location'])
+    || labeledSectionValue(labeledSections, ['Location'])
+    || phenomLocation()
+    || structuredLocation(posting));
   return {
-    title: firstVisibleText(TITLE_SELECTORS) || cleanText(posting?.title),
+    title: ripplingHeader?.title || firstVisibleText(TITLE_SELECTORS) || cleanText(posting?.title),
     company: company.replace(/^at\s+/i, ''),
-    location: firstVisibleText(LOCATION_SELECTORS)
-      || labeledSectionValue(labeledSections, ['Location'])
-      || structuredLocation(posting),
+    location: locationValue,
     attributes,
   };
 }
@@ -755,32 +915,22 @@ async function fillDayforceAddressCombobox(field, answer) {
   return false;
 }
 
-async function extractPage() {
+async function extractPage(includeQuestions = true) {
   const posting = parseJobPostingJsonLd();
   const description = extractJobDescription(posting);
   const header = extractJobHeader(posting);
-  const fields = extractFields();
+  const fields = includeQuestions ? extractFields() : [];
   for (const record of fields) {
     if (!record.sensitive && record.field instanceof HTMLInputElement && record.field.getAttribute('role') === 'combobox') {
       record.options = await comboboxOptions(record.field);
       record.fieldType = 'combobox';
     }
   }
-  const descriptionParts = [];
-  if (header.title && !normalize(description.text).startsWith(normalize(header.title))) descriptionParts.push(header.title);
-  const headerDetails = [];
-  if (header.company) headerDetails.push(`Company: ${header.company}`);
-  if (header.location) headerDetails.push(`Location: ${header.location}`);
-  if (header.attributes.length) {
-    headerDetails.push(...header.attributes.map(({ label, value }) => `${label}: ${value}`));
-  }
-  if (headerDetails.length) descriptionParts.push(headerDetails.join('\n'));
-  if (description.text) descriptionParts.push(description.text);
   return {
     url: location.href,
     title: document.title,
     jobTitle: header.title,
-    jobDescription: descriptionParts.join('\n\n').slice(0, 20000),
+    jobDescription: composeJobDescription(header, description.text).slice(0, 50000),
     jobDescriptionSource: description.source,
     questions: fields.map(({ question, fieldType, options, sensitive }) => ({
       question,
@@ -789,6 +939,19 @@ async function extractPage() {
       sensitive,
     })),
   };
+}
+
+function composeJobDescription(header, description) {
+  const information = [];
+  if (header.title) information.push(`Title: ${header.title}`);
+  if (header.company) information.push(`Company: ${header.company}`);
+  if (header.location) information.push(`Location: ${header.location}`);
+  information.push(...header.attributes.map(({ label, value }) => `${label}: ${value}`));
+
+  const parts = [];
+  if (information.length) parts.push(`Job Information\n${information.join('\n')}`);
+  if (description) parts.push(`Job Description\n${description}`);
+  return parts.join('\n\n');
 }
 
 function setNativeValue(field, value, blur = true) {
@@ -1200,6 +1363,16 @@ async function fillField(record, answer) {
   return false;
 }
 
+async function fillTextEntryField(record, answer) {
+  const { field } = record;
+  if (!isTextEntryField(field)) return false;
+  setNativeValue(field, answer);
+  await sleep(75);
+  const actual = normalize(field.value);
+  const expected = normalize(answer);
+  return Boolean(actual && expected && (actual === expected || actual.includes(expected) || expected.includes(actual)));
+}
+
 function splitFullName(fullName) {
   const parts = cleanText(fullName).split(/\s+/).filter(Boolean);
   return {
@@ -1558,8 +1731,10 @@ async function fillAdpProfileFields(profile) {
   return { handled, filledQuestions };
 }
 
-async function fillProfileFields(profile) {
-  const adpResult = await fillAdpProfileFields(profile);
+async function fillProfileFields(profile, inputBoxesOnly = false) {
+  const adpResult = inputBoxesOnly
+    ? { handled: new Set(), filledQuestions: [] }
+    : await fillAdpProfileFields(profile);
   let filled = adpResult.handled.size;
   const filledQuestions = [...adpResult.filledQuestions];
   const skippedQuestions = [];
@@ -1569,6 +1744,10 @@ async function fillProfileFields(profile) {
   for (let pass = 0; pass < 4; pass += 1) {
     for (const field of document.querySelectorAll(FIELD_SELECTOR)) {
       if (!isVisible(field) || field.disabled || field.readOnly || seen.has(field)) continue;
+      if (inputBoxesOnly && !isTextEntryField(field)) {
+        seen.add(field);
+        continue;
+      }
       const value = cleanText(profileValueForField(field, profile));
       const question = fieldLabel(field) || field.id || field.getAttribute('name') || 'Profile field';
       const identity = normalize([field.id, field.getAttribute('name'), question].filter(Boolean).join(' '));
@@ -1587,7 +1766,7 @@ async function fillProfileFields(profile) {
         continue;
       }
       const record = { field, question, normalized: normalize(question), sensitive: SENSITIVE_FIELD.test(question) };
-      if (await fillField(record, value)) {
+      if (await (inputBoxesOnly ? fillTextEntryField(record, value) : fillField(record, value))) {
         seen.add(field);
         filled += 1;
         filledQuestions.push(question);
@@ -1600,7 +1779,7 @@ async function fillProfileFields(profile) {
   return { filled, filledQuestions, skippedQuestions };
 }
 
-async function fillCoverLetterField(coverLetterText) {
+async function fillCoverLetterField(coverLetterText, inputBoxesOnly = false) {
   const value = String(coverLetterText || '').trim();
   if (!value) return { filled: 0, filledQuestions: [], skippedQuestions: [] };
   for (const field of document.querySelectorAll(FIELD_SELECTOR)) {
@@ -1609,17 +1788,20 @@ async function fillCoverLetterField(coverLetterText) {
     const question = fieldLabel(field) || field.id || field.getAttribute('name') || '';
     if (!/\bcover letter\b/i.test(cleanLabel(question).replace(/[_-]+/g, ' '))) continue;
     const record = { field, question, normalized: normalize(question), sensitive: false };
-    return await fillField(record, value)
+    return await (inputBoxesOnly ? fillTextEntryField(record, value) : fillField(record, value))
       ? { filled: 1, filledQuestions: [question], skippedQuestions: [] }
       : { filled: 0, filledQuestions: [], skippedQuestions: [question] };
   }
   return { filled: 0, filledQuestions: [], skippedQuestions: [] };
 }
 
-async function fillAnswers(answers, profile, coverLetterText) {
+async function fillAnswers(answers, profile, coverLetterText, inputBoxesOnly = false) {
   const records = extractFields();
-  const profileResult = await fillProfileFields(profile || {});
-  const coverLetterResult = await fillCoverLetterField(coverLetterText);
+  const eligibleRecords = inputBoxesOnly
+    ? records.filter((record) => isTextEntryField(record.field))
+    : records;
+  const profileResult = await fillProfileFields(profile || {}, inputBoxesOnly);
+  const coverLetterResult = await fillCoverLetterField(coverLetterText, inputBoxesOnly);
   let filled = profileResult.filled + coverLetterResult.filled;
   const filledQuestions = [...profileResult.filledQuestions, ...coverLetterResult.filledQuestions];
   const skippedQuestions = [...profileResult.skippedQuestions, ...coverLetterResult.skippedQuestions];
@@ -1627,9 +1809,12 @@ async function fillAnswers(answers, profile, coverLetterText) {
     const question = cleanLabel(item?.question);
     const answer = cleanText(item?.answer);
     if (!question || !answer) continue;
-    const target = records.find((record) => record.normalized === normalize(question))
-      || records.find((record) => record.normalized.includes(normalize(question)) || normalize(question).includes(record.normalized));
-    if (!target || target.sensitive || !await fillField(target, answer)) {
+    const target = eligibleRecords.find((record) => record.normalized === normalize(question))
+      || eligibleRecords.find((record) => record.normalized.includes(normalize(question)) || normalize(question).includes(record.normalized));
+    const wasFilled = target && !target.sensitive && await (
+      inputBoxesOnly ? fillTextEntryField(target, answer) : fillField(target, answer)
+    );
+    if (!wasFilled) {
       skippedQuestions.push(question);
       continue;
     }
@@ -1641,13 +1826,13 @@ async function fillAnswers(answers, profile, coverLetterText) {
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type === RESUME_AI_EXTRACT_PAGE) {
-    extractPage().then(sendResponse).catch((error) => {
+    extractPage(message.includeQuestions !== false).then(sendResponse).catch((error) => {
       sendResponse({ error: error instanceof Error ? error.message : 'Page extraction failed' });
     });
     return true;
   }
   if (message?.type === RESUME_AI_FILL_ANSWERS) {
-    fillAnswers(message.answers, message.profile, message.coverLetterText).then(sendResponse).catch((error) => {
+    fillAnswers(message.answers, message.profile, message.coverLetterText, message.inputBoxesOnly === true).then(sendResponse).catch((error) => {
       sendResponse({ filled: 0, skipped: 1, filledQuestions: [], skippedQuestions: [error instanceof Error ? error.message : 'Autofill failed'] });
     });
     return true;

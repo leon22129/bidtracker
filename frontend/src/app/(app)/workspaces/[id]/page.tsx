@@ -6,17 +6,22 @@ import { useParams } from 'next/navigation';
 import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 import { useApplications } from '@/lib/use-applications';
-import type { ApplicationFilters, JobApplication, Workspace, WorkspaceSummary } from '@/lib/types';
+import type {
+  ApplicationFilters, JobApplication, ResumeArtifact, Workspace, WorkspaceSummary,
+} from '@/lib/types';
 import { ApplicationsTable } from '@/components/table/applications-table';
 import { BulkActionsBar } from '@/components/table/bulk-actions';
 import { TableToolbar } from '@/components/table/toolbar';
 import { useToast } from '@/components/ui/toast';
 import { ADMIN_ONLY_FIELDS } from '@/lib/permissions';
-import {
-  downloadCoverLetterPdf,
-  downloadJobDescription as downloadSavedJobDescription,
-  downloadResumePdf,
-} from '@/lib/resume-pdf';
+import { ApplicationAnswersModal } from '@/components/table/application-answers-modal';
+import { downloadJobDescription as downloadSavedJobDescription } from '@/lib/artifact-download';
+import { copyText } from '@/lib/clipboard';
+
+interface SelectedApplication {
+  row: JobApplication;
+  index: number;
+}
 
 /**
  * The workspace grid page — the app's primary screen.
@@ -40,13 +45,16 @@ export default function WorkspaceTablePage() {
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [summary, setSummary] = useState<WorkspaceSummary | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [answersArtifact, setAnswersArtifact] = useState<ResumeArtifact | null>(null);
 
   const [filters, setFilters] = useState<ApplicationFilters>({
     sort_by: 'date',
     sort_dir: 'desc',
   });
 
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  // Keep selected rows after their pages leave the scrolling cache, including their table order.
+  const [selection, setSelection] = useState<Map<string, SelectedApplication>>(new Map());
+  const selectedIds = useMemo(() => new Set(selection.keys()), [selection]);
   const lastClickedIndex = useRef<number | null>(null);
 
   const { total, loading, error, getRow, ensureRange, patchRow, reload, loadedRows } =
@@ -78,50 +86,70 @@ export default function WorkspaceTablePage() {
   // ---- selection -----------------------------------------------------------
   const onToggleSelect = useCallback(
     (id: string, shiftKey: boolean, rowIndex: number) => {
-      setSelectedIds((prev) => {
-        const next = new Set(prev);
+      const anchor = lastClickedIndex.current;
+      lastClickedIndex.current = rowIndex;
+      setSelection((prev) => {
+        const next = new Map(prev);
 
         // Shift-click extends from the previous click, matching spreadsheet behaviour. Only rows
         // currently loaded can be added — the ids of unloaded rows simply aren't known client-side.
-        if (shiftKey && lastClickedIndex.current !== null) {
-          const [from, to] = [lastClickedIndex.current, rowIndex].sort((a, b) => a - b);
+        if (shiftKey && anchor !== null) {
+          const [from, to] = [anchor, rowIndex].sort((a, b) => a - b);
           for (let i = from; i <= to; i++) {
             const row = getRow(i);
-            if (row) next.add(row.id);
+            if (row) next.set(row.id, { row, index: i });
           }
         } else if (next.has(id)) {
           next.delete(id);
         } else {
-          next.add(id);
+          const row = getRow(rowIndex);
+          if (row) next.set(id, { row, index: rowIndex });
         }
 
-        lastClickedIndex.current = rowIndex;
         return next;
       });
     },
     [getRow],
   );
 
-  const onSelectAllVisible = useCallback((ids: string[], selected: boolean) => {
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      for (const id of ids) {
-        if (selected) next.add(id);
-        else next.delete(id);
+  const onSelectAllVisible = useCallback((rowIndices: number[], selected: boolean) => {
+    setSelection((prev) => {
+      const next = new Map(prev);
+      for (const index of rowIndices) {
+        const row = getRow(index);
+        if (!row) continue;
+        if (selected) next.set(row.id, { row, index });
+        else next.delete(row.id);
       }
       return next;
     });
-  }, []);
+  }, [getRow]);
 
   const clearSelection = useCallback(() => {
-    setSelectedIds(new Set());
+    setSelection(new Map());
     lastClickedIndex.current = null;
   }, []);
 
-  const selectedRows = useMemo(
-    () => loadedRows.filter((r) => selectedIds.has(r.id)),
-    [loadedRows, selectedIds],
-  );
+  useEffect(clearSelection, [workspaceId, clearSelection]);
+
+  const selectedRows = useMemo(() => {
+    const currentRows = new Map(loadedRows.map((row) => [row.id, row]));
+    return [...selection.values()]
+      .sort((a, b) => a.index - b.index)
+      .map(({ row }) => currentRows.get(row.id) ?? row);
+  }, [loadedRows, selection]);
+
+  const selectedLinks = useMemo(() => selectedRows.map((row) => row.url).join('\n'), [selectedRows]);
+
+  const onCopyLinks = useCallback(async () => {
+    if (!selectedRows.length) return;
+    try {
+      await copyText(selectedLinks);
+      toast.success(`Copied ${selectedRows.length} link${selectedRows.length === 1 ? '' : 's'}.`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not copy links to the clipboard.');
+    }
+  }, [selectedLinks, selectedRows.length, toast]);
 
   const refreshSummary = useCallback(async () => {
     try {
@@ -149,6 +177,13 @@ export default function WorkspaceTablePage() {
         // may flip the row to Duplicated; changing `date` reassigns `number`. Trusting the local guess
         // would leave the grid quietly out of sync.
         patchRow(row.id, updated);
+        setSelection((prev) => {
+          const selected = prev.get(row.id);
+          if (!selected) return prev;
+          const next = new Map(prev);
+          next.set(row.id, { ...selected, row: updated });
+          return next;
+        });
 
         if (
           field === 'url' &&
@@ -211,7 +246,10 @@ export default function WorkspaceTablePage() {
 
   const downloadResume = useCallback(async (row: JobApplication) => {
     try {
-      const artifact = await api.getApplicationResume(row.id);
+      const [artifact, { downloadResumePdf }] = await Promise.all([
+        api.getApplicationResume(row.id),
+        import('@/lib/resume-pdf'),
+      ]);
       await downloadResumePdf(artifact);
       toast.success('Resume downloaded.');
     } catch (err) {
@@ -231,11 +269,22 @@ export default function WorkspaceTablePage() {
 
   const downloadCoverLetter = useCallback(async (row: JobApplication) => {
     try {
-      const artifact = await api.getApplicationResume(row.id);
+      const [artifact, { downloadCoverLetterPdf }] = await Promise.all([
+        api.getApplicationResume(row.id),
+        import('@/lib/resume-pdf'),
+      ]);
       await downloadCoverLetterPdf(artifact);
       toast.success('Cover letter downloaded.');
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Could not download the cover letter');
+    }
+  }, [toast]);
+
+  const viewApplicationAnswers = useCallback(async (row: JobApplication) => {
+    try {
+      setAnswersArtifact(await api.getApplicationResume(row.id));
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not load application answers');
     }
   }, [toast]);
 
@@ -260,7 +309,20 @@ export default function WorkspaceTablePage() {
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
+    <div
+      className="flex h-full min-h-0 flex-col"
+      onCopy={(event) => {
+        const target = event.target as HTMLElement;
+        // Native copying still works for text selections and active cell editors.
+        if (
+          !selectedRows.length || window.getSelection()?.toString() ||
+          target.closest('textarea, select, input:not([type="checkbox"]), [contenteditable]')
+        ) return;
+        event.clipboardData.setData('text/plain', selectedLinks);
+        event.preventDefault();
+        toast.success(`Copied ${selectedRows.length} link${selectedRows.length === 1 ? '' : 's'}.`);
+      }}
+    >
       <TableToolbar
         workspaceId={workspaceId}
         workspaceName={workspace.name}
@@ -273,9 +335,11 @@ export default function WorkspaceTablePage() {
         }}
         summary={summary}
         onReload={() => {
+          clearSelection();
           reload();
           void refreshSummary();
         }}
+        canEdit={workspace.can_edit}
       />
 
       <div className="min-h-0 flex-1">
@@ -297,6 +361,8 @@ export default function WorkspaceTablePage() {
           onDownloadResume={downloadResume}
           onDownloadJobDescription={downloadJobDescription}
           onDownloadCoverLetter={downloadCoverLetter}
+          onViewApplicationAnswers={viewApplicationAnswers}
+          readOnly={!workspace.can_edit}
         />
       </div>
 
@@ -305,9 +371,17 @@ export default function WorkspaceTablePage() {
         selectedIds={[...selectedIds]}
         selectedRows={selectedRows}
         onClear={clearSelection}
+        onCopyLinks={onCopyLinks}
         onBulkPatch={onBulkPatch}
         onBulkDelete={onBulkDelete}
+        readOnly={!workspace.can_edit}
       />
+      {answersArtifact && (
+        <ApplicationAnswersModal
+          artifact={answersArtifact}
+          onClose={() => setAnswersArtifact(null)}
+        />
+      )}
     </div>
   );
 }

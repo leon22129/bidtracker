@@ -139,7 +139,7 @@ async function bootstrap() {
   await app.listen(port, '0.0.0.0');
   logger.log(`API listening on http://0.0.0.0:${port}/api`);
   logger.log('Duplicate detection scope: workspace (database-enforced for active URLs)');
-  logger.log(`Job fingerprint window: ${process.env.JOB_FINGERPRINT_WINDOW_DAYS || '90'} days`);
+  logger.log(`Company application cooldown: ${process.env.COMPANY_APPLICATION_COOLDOWN_DAYS || process.env.JOB_FINGERPRINT_WINDOW_DAYS || '90'} days`);
 }
 
 bootstrap().catch((err) => {

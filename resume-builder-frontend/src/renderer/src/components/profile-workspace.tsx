@@ -35,6 +35,14 @@ import {
   Pencil,
   RefreshCw,
   ClipboardCheck,
+  Eye,
+  History,
+  UserRound,
+  MapPin,
+  Mail,
+  Phone,
+  Linkedin,
+  MessagesSquare,
 } from "lucide-react";
 import {
   type ResumeData,
@@ -49,7 +57,12 @@ import {
   DEFAULT_COVER_LETTER_TEMPLATE,
   type CoverLetterTemplateId,
 } from "@/lib/cover-letter-templates";
-import { DEFAULT_TEMPLATE, type TemplateId } from "@/lib/pdf-templates";
+import { stripTrailingCoverLetterSigner } from "@/lib/cover-letter-templates/text";
+import {
+  DEFAULT_TEMPLATE,
+  generateResumePDF,
+  type TemplateId,
+} from "@/lib/pdf-templates";
 import {
   getFriendlyErrorMessage,
   parseGeneratedResume,
@@ -92,6 +105,30 @@ function questionInputFromEditorLine(line: string, scannedQuestions: PageQuestio
     question: scanned?.question ?? line,
     options: scanned?.options ?? [],
   };
+}
+
+function comparableJobUrl(raw: string): string {
+  try {
+    const url = new URL(raw);
+    const ignored = new Set([
+      "source", "src", "ref", "referrer", "trackingid", "trk", "trkinfo", "position",
+      "pagenum", "origin", "originalsubdomain", "savedsearchid", "refid", "eburl", "from",
+      "lipi", "licu", "fbclid", "gclid", "mc_cid", "mc_eid", "ittk", "sid", "jobclick",
+      "campaignid", "clickid", "applyflowversion",
+    ]);
+    const params = new URLSearchParams();
+    [...url.searchParams.keys()].sort().forEach((key) => {
+      const lower = key.toLowerCase();
+      if (ignored.has(lower) || ["utm_", "gh_", "ref_"].some((prefix) => lower.startsWith(prefix))) return;
+      url.searchParams.getAll(key).forEach((value) => params.append(lower, value));
+    });
+    const host = url.hostname.toLowerCase().replace(/^www\./, "");
+    const path = url.pathname.replace(/\/{2,}/g, "/").replace(/\/+$/, "");
+    const query = params.toString();
+    return `${host}${path}${query ? `?${query}` : ""}`;
+  } catch {
+    return raw.trim().toLowerCase();
+  }
 }
 
 export function ProfileWorkspace({
@@ -154,11 +191,13 @@ export function ProfileWorkspace({
   const [applicationQuestions, setApplicationQuestions] = useState("");
   const [scannedQuestions, setScannedQuestions] = useState<PageQuestion[]>([]);
   const [applicationAnswers, setApplicationAnswers] = useState<Array<{ question: string; answer: string }>>([]);
+  const [answersReadOnly, setAnswersReadOnly] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isGeneratingAnswers, setIsGeneratingAnswers] = useState(false);
   const [isScanningPage, setIsScanningPage] = useState(false);
   const [isFillingPage, setIsFillingPage] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
+  const [isLoadingLastApplication, setIsLoadingLastApplication] = useState(false);
   const [error, setError] = useState("");
   const [applicationError, setApplicationError] = useState("");
   const [pageScanMessage, setPageScanMessage] = useState("");
@@ -169,6 +208,7 @@ export function ProfileWorkspace({
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewEditable, setPreviewEditable] = useState(false);
   const [downloadLocationPromptOpen, setDownloadLocationPromptOpen] = useState(false);
+  const [workflowTab, setWorkflowTab] = useState<"resume" | "questions">("resume");
 
   const syncFromProfile = (p: AiProfile) => {
     setSelectedTemplate(
@@ -220,6 +260,8 @@ export function ProfileWorkspace({
     setError("");
     setConversationId(null);
     setCompanyName("");
+    setApplicationAnswers([]);
+    setAnswersReadOnly(false);
     setIsGenerating(true);
 
     const shouldGenerateCoverLetter = profile.generateCoverLetter ?? generateCoverLetter;
@@ -228,15 +270,6 @@ export function ProfileWorkspace({
     const shouldUseCompanyName = profile.useCompanyName ?? useCompanyName;
     const shouldAutoDownload = profile.autoDownload ?? autoDownload;
     const shouldSaveInFolder = profile.saveInFolder ?? saveInFolder;
-    const initialQuestionLines = applicationQuestions
-      .split("\n")
-      .map((question) => question.trim())
-      .filter(Boolean)
-      .slice(0, 50);
-    const initialQuestions = initialQuestionLines.map((question) =>
-      questionInputFromEditorLine(question, scannedQuestions),
-    );
-
     try {
       const tabUrl = await getCurrentBrowserTabUrl();
       const data = await window.aiProfiles.generate({
@@ -244,17 +277,19 @@ export function ProfileWorkspace({
         workspaceId: profile.workspaceId,
         url: tabUrl,
         jobDescription,
-        questions: initialQuestions.length ? initialQuestions : undefined,
         kind: "resume",
       });
+      if (data.jobDescription?.trim()) setJobDescription(data.jobDescription.trim());
       if (data.duplicate) {
         const existing = data.existingApplication;
         const location = existing
           ? ` It already exists in ${existing.workspace_name} as application #${existing.number}.`
           : "";
-        const reason = data.duplicateType === "job_fingerprint"
-          ? `A recent application has the same company and job title.${location}`
-          : `This job URL has already been added.${location}`;
+        const reason = data.duplicateType === "career_history"
+          ? `Resume generation is blocked because ${data.companyName || "the target company"} is already listed as a previous employer in this profile's career path.`
+          : data.duplicateType === "company"
+            ? `This profile already applied to that company within the last ${data.cooldownDays ?? 90} days.${location}`
+            : `This job URL has already been added.${location}`;
         setError(reason);
         if (isActive) toast({ title: "Duplicate job", description: reason });
         return;
@@ -313,7 +348,9 @@ export function ProfileWorkspace({
       };
       if (generatedPersonalInfo !== personalInfo) setPersonalInfo(generatedPersonalInfo);
 
-      const effectiveCoverLetterText = shouldGenerateCoverLetter ? (parsed.coverletter ?? null) : null;
+      const effectiveCoverLetterText = shouldGenerateCoverLetter && parsed.coverletter
+        ? stripTrailingCoverLetterSigner(parsed.coverletter, generatedPersonalInfo.fullName) || null
+        : null;
       setCoverLetterText(effectiveCoverLetterText);
       const workexperience = (parsed.workexperience || []).map((experience) => ({
         ...experience,
@@ -340,6 +377,7 @@ export function ProfileWorkspace({
       }
       setConversationId(data.conversationId);
       setApplicationAnswers(data.answers ?? []);
+      setAnswersReadOnly(false);
 
       if (shouldAutoDownload) {
         await handleDownloadPDF(
@@ -367,6 +405,90 @@ export function ProfileWorkspace({
     }
   };
 
+  const handleLoadLastApplication = async () => {
+    if (!profile.workspaceId || isLoadingLastApplication) return;
+    setIsLoadingLastApplication(true);
+    setError("");
+    try {
+      const saved = await window.aiProfiles.loadLastApplication(profile.workspaceId);
+      const loadedResume = saved.resume as ResumeData;
+      if (!loadedResume || typeof loadedResume !== "object" || !loadedResume.personalInfo) {
+        throw new Error("The saved resume is not valid.");
+      }
+
+      setJobDescription(saved.job_description ?? "");
+      setResumeData(loadedResume);
+      setPersonalInfo(loadedResume.personalInfo);
+      setEducation(loadedResume.education ?? []);
+      setCertifications(loadedResume.certifications ?? []);
+      setCompanyName(saved.company_name ?? "");
+      setConversationId(saved.conversation_id);
+      const savedCoverLetterText = saved.cover_letter_text
+        ? stripTrailingCoverLetterSigner(saved.cover_letter_text, loadedResume.personalInfo.fullName)
+        : saved.cover_letter_text;
+      setCoverLetterText(savedCoverLetterText);
+      let restoredHistory = {
+        questions: saved.questions ?? [],
+        answers: saved.answers ?? [],
+      };
+      let historyRestoreFailed = false;
+      if ((!saved.questions || !saved.answers) && saved.conversation_id) {
+        try {
+          restoredHistory = await window.aiProfiles.loadConversationAnswers(saved.conversation_id);
+        } catch {
+          historyRestoreFailed = true;
+        }
+      }
+      const restoredQuestions: PageQuestion[] = restoredHistory.questions.map((item) => ({
+        question: item.question,
+        options: item.options ?? [],
+        fieldType: item.options?.length ? "select" : "text",
+        sensitive: false,
+      }));
+      setApplicationQuestions(restoredQuestions.map(formatQuestionEditorLine).join("\n"));
+      setScannedQuestions(restoredQuestions);
+      setApplicationAnswers(restoredHistory.answers);
+      setAnswersReadOnly(true);
+      if (restoredHistory.answers.length) setWorkflowTab("questions");
+      setApplicationError("");
+      if (saved.template) setSelectedTemplate(saved.template as TemplateId);
+      if (saved.cover_letter_template) {
+        setCoverLetterTemplate(saved.cover_letter_template as CoverLetterTemplateId);
+      }
+      if (savedCoverLetterText) setGenerateCoverLetter(true);
+
+      let mismatch = false;
+      try {
+        const currentUrl = await getCurrentBrowserTabUrl();
+        mismatch = comparableJobUrl(currentUrl) !== comparableJobUrl(saved.url);
+      } catch {
+        // Standalone mode has no active browser tab to compare.
+      }
+
+      const conversationNote = restoredHistory.answers.length
+        ? ` Restored ${restoredHistory.answers.length} saved application answer${restoredHistory.answers.length === 1 ? "" : "s"}.`
+        : !saved.conversation_id
+          ? " The saved documents were restored, but no application answers were saved."
+          : historyRestoreFailed
+          ? " The documents were restored, but conversation history could not be retrieved."
+          : " The conversation is available, but it does not contain application answers yet.";
+      const description = mismatch
+        ? `The active page URL does not match the restored application (${saved.company_name || saved.job_title || saved.url}).${conversationNote}`
+        : `Restored ${saved.company_name || saved.job_title || "your last generated application"}.${conversationNote}`;
+      toast({
+        title: mismatch ? "Application URL does not match" : "Last application loaded",
+        description,
+        variant: mismatch ? "destructive" : "default",
+      });
+    } catch (err) {
+      const message = getFriendlyErrorMessage(err, "Unable to load the last application.");
+      setError(message);
+      toast({ title: "Could Not Load Last Application", description: message, variant: "destructive" });
+    } finally {
+      setIsLoadingLastApplication(false);
+    }
+  };
+
   const handleScanPage = async (scope: "page" | "questions" = "page") => {
     const questionsOnly = scope === "questions";
     if (!canScanCurrentPage()) {
@@ -379,7 +501,7 @@ export function ProfileWorkspace({
     if (questionsOnly) setQuestionScanMessage("");
     else setPageScanMessage("");
     try {
-      const context = await getCurrentPageContext();
+      const context = await getCurrentPageContext({ includeQuestions: questionsOnly });
       const nonSensitiveQuestions = context.questions.filter((item) => !item.sensitive);
       const safeQuestions = nonSensitiveQuestions.slice(0, 50);
       const sensitiveCount = context.questions.length - nonSensitiveQuestions.length;
@@ -390,23 +512,26 @@ export function ProfileWorkspace({
         setJobDescription(context.jobDescription.trim());
         setError("");
       }
-      setApplicationQuestions(safeQuestions.map(formatQuestionEditorLine).join("\n"));
-      setScannedQuestions(safeQuestions);
-      setApplicationAnswers([]);
-      setApplicationError("");
-      setPageFillMessage("");
+      if (questionsOnly) {
+        setApplicationQuestions(safeQuestions.map(formatQuestionEditorLine).join("\n"));
+        setScannedQuestions(safeQuestions);
+        setApplicationAnswers([]);
+        setAnswersReadOnly(false);
+        setApplicationError("");
+        setPageFillMessage("");
+      }
 
       const parts = [
         ...(!questionsOnly ? [context.jobDescription.trim()
           ? "Job description found"
           : "No job description was identified; paste it manually"] : []),
-        safeQuestions.length
+        ...(questionsOnly ? [safeQuestions.length
           ? `${safeQuestions.length} application question${safeQuestions.length === 1 ? "" : "s"} found`
-          : "no application questions found on this page",
+          : "no application questions found on this page"] : []),
       ];
-      if (sensitiveCount) parts.push(`${sensitiveCount} sensitive field${sensitiveCount === 1 ? " was" : "s were"} excluded from AI and will use saved profile values when available`);
-      if (choiceCount) parts.push(`allowed choices captured for ${choiceCount} question${choiceCount === 1 ? "" : "s"}`);
-      if (omittedCount) parts.push(`${omittedCount} extra field${omittedCount === 1 ? " was" : "s were"} omitted from the 50-question limit`);
+      if (questionsOnly && sensitiveCount) parts.push(`${sensitiveCount} sensitive field${sensitiveCount === 1 ? " was" : "s were"} excluded from AI and will use saved profile values when available`);
+      if (questionsOnly && choiceCount) parts.push(`allowed choices captured for ${choiceCount} question${choiceCount === 1 ? "" : "s"}`);
+      if (questionsOnly && omittedCount) parts.push(`${omittedCount} extra field${omittedCount === 1 ? " was" : "s were"} omitted from the 50-question limit`);
       const message = `${parts.join("; ")}.`;
       if (questionsOnly) setQuestionScanMessage(message);
       else setPageScanMessage(message);
@@ -479,6 +604,7 @@ export function ProfileWorkspace({
         throw new Error("The AI returned an incomplete set of application answers.");
       }
       setApplicationAnswers(answers);
+      setAnswersReadOnly(false);
     } catch (err) {
       const msg = getFriendlyErrorMessage(err, "Failed to generate application answers.");
       setApplicationError(msg);
@@ -503,7 +629,6 @@ export function ProfileWorkspace({
     setIsDownloading(true);
 
     try {
-      const { generateResumePDF } = await import("@/lib/pdf-templates");
       const now = new Date();
       const hh = String(now.getHours()).padStart(2, "0");
       const mm1 = String(now.getMinutes()).padStart(2, "0");
@@ -512,7 +637,10 @@ export function ProfileWorkspace({
       const dd = String(now.getDate()).padStart(2, "0");
       const yyyy = String(now.getFullYear());
       const effectiveGenerateCoverLetter =
-        overrideGenerateCoverLetter ?? (profile.generateCoverLetter ?? generateCoverLetter);
+        overrideGenerateCoverLetter ?? (
+          Boolean(overrideCoverLetterText ?? coverLetterText) ||
+          (profile.generateCoverLetter ?? generateCoverLetter)
+        );
       const effectiveCoverLetterTemplate =
         overrideCoverLetterTemplate ??
         ((profile.coverLetterTemplate as CoverLetterTemplateId | undefined) ?? coverLetterTemplate);
@@ -642,17 +770,160 @@ export function ProfileWorkspace({
   };
 
   return (
-    <div className="max-w-[1400px] mx-auto py-8 px-4 sm:px-10 lg:px-20 h-full flex flex-col overflow-hidden">
+    <div className="relative max-w-[1400px] mx-auto py-8 px-4 sm:px-10 lg:px-20 h-full flex flex-col overflow-hidden">
       <div className={`relative flex-1 min-h-0 ${previewOpen || settingsOpen ? "overflow-hidden" : "overflow-y-auto"}`}>
       <div className="grid items-start gap-6">
       <div className="order-1 min-w-0">
+      <Card className="gap-3 py-4">
+        <CardHeader className="gap-1 px-4 pb-0">
+          <CardTitle className="flex items-center gap-2">
+            <UserRound className="h-5 w-5" />
+            Personal Information
+          </CardTitle>
+          <CardDescription>
+            The contact details used for this profile's resume and application autofill.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3 px-4">
+          <section className="flex flex-wrap gap-2">
+            {[
+              ["Full name", personalInfo.fullName],
+              ["First name", personalInfo.firstName],
+              ["Middle name", personalInfo.middleName],
+              ["Last name", personalInfo.lastName],
+              ["Email", personalInfo.email],
+              ["Phone", personalInfo.phone],
+              ["LinkedIn", personalInfo.linkedin],
+            ].map(([label, value]) => (
+              <div key={label} className="flex w-full min-w-0 max-w-full items-baseline gap-2 rounded-md border bg-muted/30 px-3 py-2 sm:w-auto">
+                <div className="flex shrink-0 items-center gap-2 text-xs font-medium text-muted-foreground">
+                  {label === "Email" ? <Mail className="h-3.5 w-3.5" />
+                    : label === "Phone" ? <Phone className="h-3.5 w-3.5" />
+                    : label === "LinkedIn" ? <Linkedin className="h-3.5 w-3.5" />
+                    : <UserRound className="h-3.5 w-3.5" />}
+                  {label}
+                </div>
+                {label === "Email" && value?.trim() ? (
+                  <a className="break-words text-sm font-medium text-primary hover:underline" href={`mailto:${value}`}>
+                    {value}
+                  </a>
+                ) : label === "Phone" && value?.trim() ? (
+                  <a className="break-words text-sm font-medium text-primary hover:underline" href={`tel:${value}`}>
+                    {value}
+                  </a>
+                ) : label === "LinkedIn" && value?.trim() ? (
+                  <a
+                    className="break-words text-sm font-medium text-primary hover:underline"
+                    href={/^https?:\/\//i.test(value) ? value : `https://${value}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    {value}
+                  </a>
+                ) : (
+                  <div className="break-words text-sm font-medium" title={value || undefined}>
+                    {value?.trim() || "Not provided"}
+                  </div>
+                )}
+              </div>
+            ))}
+          </section>
+
+          <section className="rounded-lg border p-3">
+            <h3 className="mb-2 flex items-center gap-2 text-sm font-semibold">
+              <MapPin className="h-4 w-4" /> Full address
+            </h3>
+            <div className="flex flex-wrap">
+              {[
+                ["Street address", personalInfo.address1],
+                ["City", personalInfo.city],
+                ["State", personalInfo.state],
+                ["ZIP code", personalInfo.zip],
+                ["County", personalInfo.county],
+                ["Country", personalInfo.country],
+              ].map(([label, value]) => (
+                <div key={label} className="flex w-full min-w-0 max-w-full items-baseline gap-2 rounded-md bg-muted/30 px-3 py-2 sm:w-auto">
+                  <div className="shrink-0 text-xs font-medium text-muted-foreground">{label}</div>
+                  <div className="break-words text-sm font-medium" title={value || undefined}>
+                    {value?.trim() || "Not provided"}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+
+          <section className="rounded-lg border p-3">
+            <h3 className="mb-2 flex items-center gap-2 text-sm font-semibold">
+              <Briefcase className="h-4 w-4" /> Demographics and work authorization
+            </h3>
+            <div className="flex flex-wrap">
+              {[
+                ["Gender", personalInfo.gender],
+                ["Hispanic / Latino", personalInfo.hispanicLatino],
+                ["Race / ethnicity", personalInfo.ethnicity],
+                ["US work status", personalInfo.usWorkStatus],
+                ["Legally authorized to work in the US", personalInfo.legallyAuthorizedUs],
+                ["Requires sponsorship now or later", personalInfo.requiresSponsorship],
+              ].map(([label, value]) => (
+                <div key={label} className="flex w-full min-w-0 max-w-full items-baseline gap-2 rounded-md bg-muted/30 px-3 py-2 sm:w-auto">
+                  <div className="shrink-0 text-xs font-medium text-muted-foreground">{label}</div>
+                  <div className="break-words text-sm font-medium" title={value || undefined}>
+                    {value?.trim() || "Not provided"}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+        </CardContent>
+      </Card>
+      </div>
+
+      <Tabs
+        value={workflowTab}
+        onValueChange={(value) => setWorkflowTab(value as "resume" | "questions")}
+        className="order-2 min-w-0 gap-4"
+      >
+        <TabsList className="grid h-auto w-full grid-cols-2 gap-1 rounded-xl p-1.5">
+          <TabsTrigger
+            value="resume"
+            className="group h-auto min-w-0 flex-col items-start gap-1 whitespace-normal rounded-lg px-4 py-3 text-left data-[state=active]:border-blue-800 data-[state=active]:bg-blue-700 data-[state=active]:text-white data-[state=active]:shadow-md dark:data-[state=active]:border-blue-300 dark:data-[state=active]:bg-blue-700 dark:data-[state=active]:text-white"
+          >
+            <span className="flex items-center gap-2 font-semibold">
+              <span className="flex h-6 w-6 items-center justify-center rounded-full bg-primary text-xs text-primary-foreground">
+                {resumeData ? <Check className="h-3.5 w-3.5" /> : "1"}
+              </span>
+              <Briefcase className="h-4 w-4" />
+              Resume Generation
+            </span>
+            <span className="hidden pl-8 text-xs font-normal text-muted-foreground group-data-[state=active]:text-blue-100 sm:block">
+              Scan the job, generate files, and review the result
+            </span>
+          </TabsTrigger>
+          <TabsTrigger
+            value="questions"
+            className="group h-auto min-w-0 flex-col items-start gap-1 whitespace-normal rounded-lg px-4 py-3 text-left data-[state=active]:border-blue-800 data-[state=active]:bg-blue-700 data-[state=active]:text-white data-[state=active]:shadow-md dark:data-[state=active]:border-blue-300 dark:data-[state=active]:bg-blue-700 dark:data-[state=active]:text-white"
+          >
+            <span className="flex items-center gap-2 font-semibold">
+              <span className="flex h-6 w-6 items-center justify-center rounded-full bg-primary text-xs text-primary-foreground">
+                {applicationAnswers.length ? <Check className="h-3.5 w-3.5" /> : "2"}
+              </span>
+              <MessagesSquare className="h-4 w-4" />
+              Application Questions
+            </span>
+            <span className="hidden pl-8 text-xs font-normal text-muted-foreground group-data-[state=active]:text-blue-100 sm:block">
+              Scan questions, write answers, and fill the application
+            </span>
+          </TabsTrigger>
+        </TabsList>
+
+      <TabsContent value="resume" className="mt-0">
       <Card>
         <CardHeader>
           <div className="flex items-start justify-between gap-4">
             <div className="min-w-0">
               <CardTitle className="flex items-center gap-2">
                 <Briefcase className="h-5 w-5" />
-                Job Description
+                Job Description & Resume
               </CardTitle>
               <CardDescription className="mt-2">
                 Scanned from the active job page when possible. You can always edit or paste it manually.
@@ -709,16 +980,28 @@ export function ProfileWorkspace({
           }}
         />
 
-        <div className="flex items-center gap-3 flex-wrap">
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => void handleScanPage("page")}
-            disabled={isScanningPage || isGenerating}
-          >
-            <RefreshCw className={`h-4 w-4 mr-2 ${isScanningPage ? "animate-spin" : ""}`} />
-            {isScanningPage ? "Scanning Page..." : "Scan Current Page"}
-          </Button>
+        <div className="space-y-2">
+          <p className="text-sm font-semibold text-foreground">Job page actions</p>
+          <div className="max-w-xl">
+            <Button
+              type="button"
+              onClick={() => void handleScanPage("page")}
+              disabled={isScanningPage || isGenerating}
+              className="group h-auto min-h-14 w-full justify-start whitespace-normal border border-blue-800 bg-blue-700 px-4 py-3 text-left text-white shadow-sm hover:bg-blue-800 hover:text-white focus-visible:border-blue-900 focus-visible:ring-blue-500/60 disabled:border-slate-300 disabled:bg-slate-200 disabled:text-slate-600 disabled:opacity-100 dark:border-blue-400 dark:bg-blue-700 dark:hover:bg-blue-600 dark:disabled:border-slate-700 dark:disabled:bg-slate-800 dark:disabled:text-slate-400"
+            >
+              <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-white/15">
+                <RefreshCw className={isScanningPage ? "animate-spin" : ""} />
+              </span>
+              <span className="min-w-0">
+                <span className="block font-semibold">
+                  {isScanningPage ? "Scanning Current Page..." : "Scan Current Page"}
+                </span>
+                <span className="block text-xs font-normal text-blue-100 group-disabled:text-current">
+                  Import the active job description
+                </span>
+              </span>
+            </Button>
+          </div>
           {pageScanMessage && <p className="text-sm text-muted-foreground">{pageScanMessage}</p>}
         </div>
 
@@ -729,23 +1012,50 @@ export function ProfileWorkspace({
           </Alert>
         )}
 
-        <div className="flex gap-3 flex-wrap">
-          <Button disabled={isGenerating} onClick={() => void handleGenerate()}>
-            {isGenerating ? "Generating..." : "Generate Resume"}
-          </Button>
+        <div className="space-y-3">
+          <div className="flex gap-3 flex-wrap">
+            <Button disabled={isGenerating} onClick={() => void handleGenerate()}>
+              {isGenerating ? "Generating..." : "Generate Resume"}
+            </Button>
+            <Button
+              onClick={() => setPreviewOpen(true)}
+              disabled={!resumeData}
+              className="min-h-10 border border-violet-800 bg-violet-700 px-4 text-white shadow-sm hover:bg-violet-800 hover:text-white focus-visible:border-violet-900 focus-visible:ring-violet-500/60 disabled:border-slate-300 disabled:bg-slate-200 disabled:text-slate-600 disabled:opacity-100 dark:border-violet-400 dark:bg-violet-700 dark:hover:bg-violet-600 dark:disabled:border-slate-700 dark:disabled:bg-slate-800 dark:disabled:text-slate-400"
+            >
+              <Eye />
+              Preview Resume
+            </Button>
+            {resumeData && (
+              <Button variant="secondary" onClick={() => setWorkflowTab("questions")}>
+                Continue to Application Questions
+                <MessagesSquare className="h-4 w-4" />
+              </Button>
+            )}
+          </div>
           <Button
-          variant="outline"
-          onClick={() => setPreviewOpen(true)}
-          disabled={!resumeData}
+            type="button"
+            onClick={() => void handleLoadLastApplication()}
+            disabled={!profile.workspaceId || isLoadingLastApplication || isGenerating}
+            className="group h-auto min-h-14 w-full max-w-xl justify-start whitespace-normal border border-slate-950 bg-slate-900 px-4 py-3 text-left text-white shadow-sm hover:bg-slate-700 hover:text-white focus-visible:border-slate-950 focus-visible:ring-slate-500/60 disabled:border-slate-300 disabled:bg-slate-200 disabled:text-slate-600 disabled:opacity-100 dark:border-slate-100 dark:bg-slate-100 dark:text-slate-950 dark:hover:bg-white dark:hover:text-slate-950 dark:disabled:border-slate-700 dark:disabled:bg-slate-800 dark:disabled:text-slate-400"
           >
-          Preview Resume
+            <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-white/15 dark:bg-black/10">
+              <History className={isLoadingLastApplication ? "animate-spin" : ""} />
+            </span>
+            <span className="min-w-0">
+              <span className="block font-semibold">
+                {isLoadingLastApplication ? "Loading Last Application..." : "Load Last Application"}
+              </span>
+              <span className="block text-xs font-normal text-slate-200 group-disabled:text-current dark:text-slate-600 dark:group-disabled:text-current">
+                Restore its resume and saved answers
+              </span>
+            </span>
           </Button>
         </div>
         </CardContent>
       </Card>
-      </div>
+      </TabsContent>
 
-      <div className="order-2 min-w-0">
+      <TabsContent value="questions" className="mt-0">
       <Card>
         <CardHeader>
           <CardTitle>Application Questions</CardTitle>
@@ -754,6 +1064,22 @@ export function ProfileWorkspace({
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
+          {!resumeData && (
+            <Alert>
+              <AlertCircle className="h-4 w-4" />
+              <AlertDescription>
+                You can scan questions now. Generate or load a resume in Step 1 before asking AI to write answers.
+              </AlertDescription>
+            </Alert>
+          )}
+          {resumeData && !conversationId && (
+            <Alert>
+              <AlertCircle className="h-4 w-4" />
+              <AlertDescription>
+                The resume is available, but its answer conversation has expired. Generate a new resume to write new answers.
+              </AlertDescription>
+            </Alert>
+          )}
           <Textarea
             placeholder="Why are you interested in this role?\nDescribe a relevant project or achievement."
             value={applicationQuestions}
@@ -772,18 +1098,19 @@ export function ProfileWorkspace({
           <div className="flex items-center gap-3 flex-wrap">
             <Button
               type="button"
-              variant="outline"
               onClick={() => void handleScanPage("questions")}
               disabled={isScanningPage || isGeneratingAnswers}
+              className="min-h-10 border border-blue-800 bg-blue-700 px-4 text-white shadow-sm hover:bg-blue-800 hover:text-white focus-visible:border-blue-900 focus-visible:ring-blue-500/60 disabled:border-slate-300 disabled:bg-slate-200 disabled:text-slate-600 disabled:opacity-100 dark:border-blue-400 dark:bg-blue-700 dark:hover:bg-blue-600 dark:disabled:border-slate-700 dark:disabled:bg-slate-800 dark:disabled:text-slate-400"
             >
-              <RefreshCw className={`h-4 w-4 mr-2 ${isScanningPage ? "animate-spin" : ""}`} />
+              <RefreshCw className={isScanningPage ? "animate-spin" : ""} />
               {isScanningPage ? "Scanning Questions..." : "Scan Questions"}
             </Button>
             <Button
-              variant="outline"
               onClick={() => void handleGenerateAnswers()}
               disabled={!resumeData || !conversationId || isGeneratingAnswers || isGenerating || isScanningPage}
+              className="min-h-10 border border-violet-800 bg-violet-700 px-4 text-white shadow-sm hover:bg-violet-800 hover:text-white focus-visible:border-violet-900 focus-visible:ring-violet-500/60 disabled:border-slate-300 disabled:bg-slate-200 disabled:text-slate-600 disabled:opacity-100 dark:border-violet-400 dark:bg-violet-700 dark:hover:bg-violet-600 dark:disabled:border-slate-700 dark:disabled:bg-slate-800 dark:disabled:text-slate-400"
             >
+              <MessagesSquare />
               {isGeneratingAnswers ? "Writing Answers..." : "Generate Answers"}
             </Button>
             <Button
@@ -792,7 +1119,7 @@ export function ProfileWorkspace({
               disabled={isFillingPage || isGeneratingAnswers}
             >
               <ClipboardCheck className="h-4 w-4 mr-2" />
-              {isFillingPage ? "Filling Page..." : "Autofill Profile + Answers"}
+              {isFillingPage ? "Filling Text Boxes..." : "Fill Text Boxes"}
             </Button>
           </div>
           {questionScanMessage && <p className="text-sm text-muted-foreground">{questionScanMessage}</p>}
@@ -804,7 +1131,8 @@ export function ProfileWorkspace({
                   <div className="font-medium">{item.question}</div>
                   <Textarea
                     value={item.answer}
-                    className="min-h-28"
+                    className={`min-h-28 ${answersReadOnly ? "bg-muted" : ""}`}
+                    readOnly={answersReadOnly}
                     onChange={(event) => setApplicationAnswers((current) => current.map((answer, answerIndex) =>
                       answerIndex === index ? { ...answer, answer: event.target.value } : answer,
                     ))}
@@ -815,10 +1143,11 @@ export function ProfileWorkspace({
           )}
         </CardContent>
       </Card>
+      </TabsContent>
+      </Tabs>
       </div>
       </div>
       <FunnyLoadingBar isLoading={isGenerating || isGeneratingAnswers} profileName={tabLabel || profile.name || undefined} />
-      </div>
 
       {/* Preview dialog */}
       <Dialog

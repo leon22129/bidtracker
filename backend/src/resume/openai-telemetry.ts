@@ -6,6 +6,32 @@ export interface OpenAiUsage {
   total_tokens?: number;
 }
 
+export function combineOpenAiUsage(
+  usages: Array<OpenAiUsage | undefined>,
+): OpenAiUsage | undefined {
+  const available = usages.filter((usage): usage is OpenAiUsage => usage !== undefined);
+  if (!available.length) return undefined;
+
+  return available.reduce<OpenAiUsage>((total, usage) => {
+    const inputTokens = usage.input_tokens ?? 0;
+    const outputTokens = usage.output_tokens ?? 0;
+    return {
+      input_tokens: (total.input_tokens ?? 0) + inputTokens,
+      input_tokens_details: {
+        cached_tokens: (total.input_tokens_details?.cached_tokens ?? 0)
+          + (usage.input_tokens_details?.cached_tokens ?? 0),
+      },
+      output_tokens: (total.output_tokens ?? 0) + outputTokens,
+      output_tokens_details: {
+        reasoning_tokens: (total.output_tokens_details?.reasoning_tokens ?? 0)
+          + (usage.output_tokens_details?.reasoning_tokens ?? 0),
+      },
+      total_tokens: (total.total_tokens ?? 0)
+        + (usage.total_tokens ?? inputTokens + outputTokens),
+    };
+  }, {});
+}
+
 function rate(name: string): number | null {
   const raw = process.env[name]?.trim();
   if (!raw) return null;
@@ -60,4 +86,10 @@ export function openAiUsageFields(usage?: OpenAiUsage): Record<string, unknown> 
     cached_input_rate_usd_per_1m_tokens: cachedInputRate,
     output_rate_usd_per_1m_tokens: outputRate,
   };
+}
+
+export function prefixedOpenAiUsageFields(prefix: string, usage?: OpenAiUsage) {
+  return Object.fromEntries(
+    Object.entries(openAiUsageFields(usage)).map(([key, value]) => [`${prefix}_${key}`, value]),
+  );
 }

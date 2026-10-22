@@ -1,4 +1,4 @@
-import { Body, Controller, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
 import { ApplicationGenerationService } from './resume.service';
 import {
   AnswerApplicationQuestionsDto,
@@ -26,5 +26,13 @@ export class ResumeController {
   @Post('answers')
   answerQuestions(@CurrentUser() user: AuthUser, @Body() dto: AnswerApplicationQuestionsDto) {
     return this.generation.answerQuestions(user, dto);
+  }
+
+  @Get('answers/:conversationId')
+  restoreAnswers(
+    @CurrentUser() user: AuthUser,
+    @Param('conversationId') conversationId: string,
+  ) {
+    return this.generation.getConversationAnswers(user, conversationId);
   }
 }

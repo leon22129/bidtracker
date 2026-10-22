@@ -18,6 +18,7 @@ interface Props {
   onFiltersChange: (next: ApplicationFilters) => void;
   summary: WorkspaceSummary | null;
   onReload: () => void;
+  canEdit: boolean;
 }
 
 /**
@@ -30,7 +31,7 @@ interface Props {
 export function TableToolbar(props: Props) {
   const {
     workspaceId, workspaceName, ownerUsername, user, filters, onFiltersChange, summary,
-    onReload,
+    onReload, canEdit,
   } = props;
 
   const [searchText, setSearchText] = useState(filters.search ?? '');
@@ -76,6 +77,7 @@ export function TableToolbar(props: Props) {
           <h1 className="truncate text-sm font-semibold leading-tight">{workspaceName}</h1>
           <p className="text-2xs text-gray-500">
             Owner {ownerUsername}
+            {!canEdit && <span className="ml-1 font-medium text-amber-700">· Read-only</span>}
             {summary && (
               <>
                 {' · '}
@@ -140,12 +142,16 @@ export function TableToolbar(props: Props) {
           ↻
         </button>
 
-        <Link href={`/workspaces/${workspaceId}/add`} className="btn-primary btn-xs">
-          Add application
-        </Link>
-        <Link href={`/workspaces/${workspaceId}/import`} className="btn-secondary btn-xs">
-          Import Excel/CSV
-        </Link>
+        {canEdit && (
+          <>
+            <Link href={`/workspaces/${workspaceId}/add`} className="btn-primary btn-xs">
+              Add application
+            </Link>
+            <Link href={`/workspaces/${workspaceId}/import`} className="btn-secondary btn-xs">
+              Import Excel/CSV
+            </Link>
+          </>
+        )}
       </div>
 
       {showMore && (
@@ -232,7 +238,7 @@ function FilterGroup({ label, children }: { label: string; children: React.React
   );
 }
 
-/** The four application statuses are the most-used filter, so they stay on the main row. */
+/** Application statuses are the most-used filter, so they stay on the main row. */
 function StatusChips({
   filters,
   onToggle,

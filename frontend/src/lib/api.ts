@@ -120,11 +120,11 @@ export const api = {
 
   // ---- users (admin) ----
   listUsers: () => request<User[]>('/users'),
-  createUser: (data: { username: string; email: string; password: string; role: Role }) =>
+  createUser: (data: { username: string; email: string; password: string; role: Role; manager_user_id?: string | null }) =>
     request<User>('/users', { method: 'POST', body: JSON.stringify(data) }),
   updateUser: (
     id: string,
-    data: Partial<{ username: string; email: string; role: Role; is_active: boolean }>,
+    data: Partial<{ username: string; email: string; role: Role; is_active: boolean; manager_user_id: string | null }>,
   ) => request<User>(`/users/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   resetUserPassword: (id: string, newPassword: string) =>
     request<{ success: boolean }>(`/users/${id}/reset-password`, {
@@ -137,7 +137,7 @@ export const api = {
   listWorkspaces: (includeArchived = false) =>
     request<Workspace[]>(`/workspaces${qs({ includeArchived: includeArchived || undefined })}`),
   getWorkspace: (id: string) => request<Workspace>(`/workspaces/${id}`),
-  createWorkspace: (data: { name: string; owner_user_id: string }) =>
+  createWorkspace: (data: { name: string; owner_user_id: string; manager_user_id?: string }) =>
     request<Workspace>('/workspaces', { method: 'POST', body: JSON.stringify(data) }),
   updateWorkspace: (
     id: string,
@@ -160,6 +160,14 @@ export const api = {
     }>,
   ) => request<Workspace>(`/workspaces/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   assignedProfiles: () => request<Array<{ id: string; name: string }>>('/workspaces/profiles/assigned'),
+  assignWorkspaceManager: (id: string, managerUserId: string | null) =>
+    request<Workspace>(`/workspaces/${id}/manager`, {
+      method: 'PATCH', body: JSON.stringify({ manager_user_id: managerUserId }),
+    }),
+  assignWorkspaceBidder: (id: string, ownerUserId: string) =>
+    request<Workspace>(`/workspaces/${id}/bidder`, {
+      method: 'PATCH', body: JSON.stringify({ owner_user_id: ownerUserId }),
+    }),
   deleteWorkspace: (id: string) =>
     request<{ success: boolean; deleted_applications: number }>(`/workspaces/${id}`, {
       method: 'DELETE',
@@ -170,12 +178,20 @@ export const api = {
     page: number,
     pageSize: number,
     filters: ApplicationFilters = {},
+    pagination: {
+      cursorAfter?: string;
+      cursorBefore?: string;
+      includeTotal?: boolean;
+    } = {},
   ) =>
     request<Paginated<JobApplication>>(
       `/applications${qs({
         workspace_id: workspaceId,
         page,
         page_size: pageSize,
+        cursor_after: pagination.cursorAfter,
+        cursor_before: pagination.cursorBefore,
+        include_total: pagination.includeTotal,
         search: filters.search,
         application_status: filters.application_status,
         pipeline_status: filters.pipeline_status,

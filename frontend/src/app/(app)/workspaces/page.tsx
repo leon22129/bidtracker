@@ -14,6 +14,7 @@ export default function WorkspacesPage() {
   const { user } = useAuth();
   const toast = useToast();
   const admin = canManageWorkspaces(user);
+  const bidderManager = user?.role === 'bidder_manager';
   const canEditProfiles = user?.role === 'admin' || user?.role === 'super_admin';
 
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
@@ -21,11 +22,14 @@ export default function WorkspacesPage() {
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState('');
-  const [newOwner, setNewOwner] = useState('');
-  const [reassigning, setReassigning] = useState<Workspace | null>(null);
+  const [newManager, setNewManager] = useState('');
+  const [assigningManager, setAssigningManager] = useState<Workspace | null>(null);
+  const [assigningBidder, setAssigningBidder] = useState<Workspace | null>(null);
   const [editingProfile, setEditingProfile] = useState<Workspace | null>(null);
+  const [viewingProfile, setViewingProfile] = useState<Workspace | null>(null);
   const [workspaceFilter, setWorkspaceFilter] = useState<WorkspaceFilter>('active');
   const [selectedBidderId, setSelectedBidderId] = useState('all');
+  const [selectedManagerId, setSelectedManagerId] = useState('all');
 
   const workspaceCounts = useMemo(() => ({
     all: workspaces.length,
@@ -34,10 +38,14 @@ export default function WorkspacesPage() {
   }), [workspaces]);
   const filteredWorkspaces = useMemo(
     () => workspaces.filter((workspace) => (
-      workspaceFilter === 'all'
-      || (workspaceFilter === 'archived' ? workspace.is_archived : !workspace.is_archived)
+      (workspaceFilter === 'all'
+        || (workspaceFilter === 'archived' ? workspace.is_archived : !workspace.is_archived))
+      && (selectedManagerId === 'all'
+        || (selectedManagerId === 'unassigned'
+          ? !workspace.manager_user_id
+          : workspace.manager_user_id === selectedManagerId))
     )),
-    [workspaceFilter, workspaces],
+    [selectedManagerId, workspaceFilter, workspaces],
   );
   const activeWorkspaceActivity = useMemo(
     () => workspaces.filter((workspace) => !workspace.is_archived),
@@ -87,14 +95,14 @@ export default function WorkspacesPage() {
     try {
       const list = await api.listWorkspaces(true);
       setWorkspaces(list);
-      if (admin) setUsers(await api.listUsers());
+      if (admin || bidderManager) setUsers(await api.listUsers());
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to load workspaces');
     } finally {
       setLoading(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [admin]);
+  }, [admin, bidderManager]);
 
   useEffect(() => {
     void load();
@@ -102,13 +110,17 @@ export default function WorkspacesPage() {
 
   async function createWorkspace(e: React.FormEvent) {
     e.preventDefault();
-    if (!newName.trim() || !newOwner) return;
+    if (!newName.trim() || !newManager) return;
     setCreating(true);
     try {
-      await api.createWorkspace({ name: newName.trim(), owner_user_id: newOwner });
+      await api.createWorkspace({
+        name: newName.trim(),
+        owner_user_id: newManager,
+        manager_user_id: newManager,
+      });
       toast.success(`Created "${newName.trim()}"`);
       setNewName('');
-      setNewOwner('');
+      setNewManager('');
       await load();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Could not create workspace');
@@ -147,8 +159,7 @@ export default function WorkspacesPage() {
         <div>
           <h1 className="text-lg font-semibold">Dashboard</h1>
           <p className="mt-0.5 text-xs text-gray-500">
-            Each workspace (tab) belongs to one bidder — that owner receives the payment credit for its
-            applied rows, regardless of who entered them.
+            Admins assign profiles to bidder managers; managers assign those profiles to bidders on their team.
           </p>
         </div>
       </div>
@@ -209,7 +220,7 @@ export default function WorkspacesPage() {
         <form onSubmit={createWorkspace} className="card mb-6 flex flex-wrap items-end gap-3 p-4">
           <div className="min-w-48 flex-1">
             <label className="label" htmlFor="ws-name">
-              Workspace name
+              Profile name
             </label>
             <input
               id="ws-name"
@@ -220,44 +231,62 @@ export default function WorkspacesPage() {
             />
           </div>
           <div className="min-w-48 flex-1">
-            <label className="label" htmlFor="ws-owner">
-              Owner (gets paid for this tab)
+            <label className="label" htmlFor="ws-manager">
+              Bidder manager
             </label>
             <select
-              id="ws-owner"
+              id="ws-manager"
               className="input"
-              value={newOwner}
-              onChange={(e) => setNewOwner(e.target.value)}
+              value={newManager}
+              onChange={(e) => setNewManager(e.target.value)}
             >
-              <option value="">Select a bidder…</option>
+              <option value="">Select a bidder manager…</option>
               {users
-                .filter((u) => u.is_active)
+                .filter((u) => u.is_active && u.role === 'bidder_manager')
                 .map((u) => (
                   <option key={u.id} value={u.id}>
-                    {u.username} ({u.role})
+                    {u.username}
                   </option>
                 ))}
             </select>
           </div>
-          <button type="submit" className="btn-primary" disabled={creating || !newName || !newOwner}>
-            {creating ? 'Creating…' : 'Create workspace'}
+          <button type="submit" className="btn-primary" disabled={creating || !newName || !newManager}>
+            {creating ? 'Creating…' : 'Create profile'}
           </button>
         </form>
       )}
 
       {!loading && workspaces.length > 0 && (
-        <div className="mb-4 flex flex-wrap gap-1.5" role="group" aria-label="Filter workspaces by status">
-          {(['active', 'archived', 'all'] as const).map((filter) => (
-            <button
-              key={filter}
-              type="button"
-              className={workspaceFilter === filter ? 'btn-primary btn-xs' : 'btn-secondary btn-xs'}
-              onClick={() => setWorkspaceFilter(filter)}
-              aria-pressed={workspaceFilter === filter}
-            >
-              {filter[0].toUpperCase() + filter.slice(1)} ({workspaceCounts[filter]})
-            </button>
-          ))}
+        <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
+          <div className="flex flex-wrap gap-1.5" role="group" aria-label="Filter workspaces by status">
+            {(['active', 'archived', 'all'] as const).map((filter) => (
+              <button
+                key={filter}
+                type="button"
+                className={workspaceFilter === filter ? 'btn-primary btn-xs' : 'btn-secondary btn-xs'}
+                onClick={() => setWorkspaceFilter(filter)}
+                aria-pressed={workspaceFilter === filter}
+              >
+                {filter[0].toUpperCase() + filter.slice(1)} ({workspaceCounts[filter]})
+              </button>
+            ))}
+          </div>
+          {admin && (
+            <label className="label min-w-56">
+              Profiles by bidder manager
+              <select
+                className="input mt-1"
+                value={selectedManagerId}
+                onChange={(event) => setSelectedManagerId(event.target.value)}
+              >
+                <option value="all">All managers</option>
+                <option value="unassigned">Unassigned</option>
+                {users.filter((item) => item.role === 'bidder_manager').map((manager) => (
+                  <option key={manager.id} value={manager.id}>{manager.username}</option>
+                ))}
+              </select>
+            </label>
+          )}
         </div>
       )}
 
@@ -294,6 +323,9 @@ export default function WorkspacesPage() {
                     Owner: {w.owner.username}
                     {w.is_archived && ' · archived'}
                   </p>
+                  <p className="mt-0.5 text-2xs text-gray-500">
+                    Manager: {w.manager?.username ?? 'Unassigned'}
+                  </p>
                 </div>
               </div>
 
@@ -328,20 +360,33 @@ export default function WorkspacesPage() {
                     Edit profile
                   </button>
                 )}
-                <Link href={`/workspaces/${w.id}/add`} className="btn-primary btn-xs">
-                  Add application
-                </Link>
-                <Link href={`/workspaces/${w.id}/import`} className="btn-secondary btn-xs">
-                  Import Excel/CSV
-                </Link>
+                {user?.role === 'bidder_manager' && w.profile && (
+                  <button
+                    type="button"
+                    className="btn-secondary btn-xs"
+                    onClick={() => setViewingProfile(w)}
+                  >
+                    View profile
+                  </button>
+                )}
+                {w.can_edit && (
+                  <>
+                    <Link href={`/workspaces/${w.id}/add`} className="btn-primary btn-xs">
+                      Add application
+                    </Link>
+                    <Link href={`/workspaces/${w.id}/import`} className="btn-secondary btn-xs">
+                      Import Excel/CSV
+                    </Link>
+                  </>
+                )}
                 {admin && (
                   <>
                     <button
                       type="button"
                       className="btn-secondary btn-xs"
-                      onClick={() => setReassigning(w)}
+                      onClick={() => setAssigningManager(w)}
                     >
-                      Reassign owner
+                      Assign manager
                     </button>
                     <button
                       type="button"
@@ -359,24 +404,114 @@ export default function WorkspacesPage() {
                     </button>
                   </>
                 )}
+                {bidderManager && w.manager_user_id === user?.id && (
+                  <button
+                    type="button"
+                    className="btn-primary btn-xs"
+                    onClick={() => setAssigningBidder(w)}
+                  >
+                    Choose assignee
+                  </button>
+                )}
               </div>
             </div>
           ))}
         </div>
       )}
 
-      {reassigning && admin && (
-        <OwnerModal
-          workspace={reassigning}
+      {assigningManager && admin && (
+        <ManagerAssignmentModal
+          workspace={assigningManager}
           users={users}
-          onClose={() => setReassigning(null)}
+          onClose={() => setAssigningManager(null)}
+          onChanged={load}
+        />
+      )}
+      {assigningBidder && bidderManager && (
+        <BidderAssignmentModal
+          workspace={assigningBidder}
+          users={users}
+          managerId={user?.id ?? ''}
+          managerName={user?.username ?? 'me'}
+          onClose={() => setAssigningBidder(null)}
           onChanged={load}
         />
       )}
       {editingProfile && (
         <ProfileModal workspace={editingProfile} onClose={() => setEditingProfile(null)} onChanged={load} />
       )}
+      {viewingProfile && (
+        <ProfileViewModal workspace={viewingProfile} onClose={() => setViewingProfile(null)} />
+      )}
     </main>
+  );
+}
+
+function ProfileViewModal({ workspace, onClose }: { workspace: Workspace; onClose: () => void }) {
+  const profile = workspace.profile;
+  if (!profile) return null;
+  const personal = profile.personal_info;
+  const details = [
+    ['Full name', personal.fullName], ['Title', personal.title], ['Email', personal.email],
+    ['Phone', personal.phone], ['Location', personal.location], ['Country', personal.country],
+    ['Address', [personal.address1, personal.city, personal.county, personal.state, personal.zip].filter(Boolean).join(', ')],
+    ['LinkedIn', personal.linkedin], ['U.S. work status', personal.usWorkStatus],
+    ['Requires sponsorship', personal.requiresSponsorship],
+    ['Authorized to work in U.S.', personal.legallyAuthorizedUs], ['Gender', personal.gender],
+    ['Hispanic/Latino', personal.hispanicLatino], ['Race / ethnicity', personal.ethnicity],
+  ].filter(([, value]) => Boolean(value));
+
+  return (
+    <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/30 p-4">
+      <div className="card max-h-[90vh] w-full max-w-2xl overflow-y-auto p-5">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h2 className="text-sm font-semibold">Resume profile — {workspace.owner.username}</h2>
+            <p className="mt-0.5 text-2xs text-gray-500">Read-only · {profile.name}</p>
+          </div>
+          <button type="button" className="text-gray-400 hover:text-gray-700" onClick={onClose} aria-label="Close">×</button>
+        </div>
+
+        <dl className="mt-4 grid gap-x-6 gap-y-3 sm:grid-cols-2">
+          {details.map(([label, value]) => (
+            <div key={label}>
+              <dt className="text-2xs font-medium uppercase tracking-wide text-gray-500">{label}</dt>
+              <dd className="mt-0.5 whitespace-pre-wrap text-xs text-gray-900">{value}</dd>
+            </div>
+          ))}
+        </dl>
+
+        <section className="mt-5">
+          <h3 className="text-xs font-semibold">Career path</h3>
+          <p className="mt-1 whitespace-pre-wrap rounded bg-gray-50 p-3 text-xs text-gray-700">
+            {profile.career_path || 'Not provided'}
+          </p>
+        </section>
+
+        <section className="mt-5 grid gap-5 sm:grid-cols-2">
+          <div>
+            <h3 className="text-xs font-semibold">Education</h3>
+            {profile.education.length ? profile.education.map((item, index) => (
+              <p key={index} className="mt-1 text-xs text-gray-700">
+                {[item.degree, item.school, item.year].filter(Boolean).join(' · ')}
+              </p>
+            )) : <p className="mt-1 text-xs text-gray-500">Not provided</p>}
+          </div>
+          <div>
+            <h3 className="text-xs font-semibold">Certifications</h3>
+            {profile.certifications.length ? profile.certifications.map((item, index) => (
+              <p key={index} className="mt-1 text-xs text-gray-700">
+                {[item.name, item.issuer, item.year].filter(Boolean).join(' · ')}
+              </p>
+            )) : <p className="mt-1 text-xs text-gray-500">Not provided</p>}
+          </div>
+        </section>
+
+        <div className="mt-5 flex justify-end">
+          <button type="button" className="btn-secondary" onClick={onClose}>Close</button>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -592,7 +727,7 @@ function ProfileSelect({ label, value, options, onChange }: { label: string; val
   );
 }
 
-function OwnerModal({
+function ManagerAssignmentModal({
   workspace,
   users,
   onClose,
@@ -604,20 +739,19 @@ function OwnerModal({
   onChanged: () => Promise<void>;
 }) {
   const toast = useToast();
-  const [ownerId, setOwnerId] = useState(workspace.owner_user_id);
+  const [managerId, setManagerId] = useState(workspace.manager_user_id ?? '');
   const [busy, setBusy] = useState(false);
+  const managers = users.filter((item) => item.role === 'bidder_manager' && item.is_active);
 
-  async function reassign() {
-    if (!ownerId || ownerId === workspace.owner_user_id) return;
+  async function save() {
     setBusy(true);
     try {
-      await api.updateWorkspace(workspace.id, { owner_user_id: ownerId });
-      const owner = users.find((user) => user.id === ownerId);
-      toast.success(`Owner changed to ${owner?.username ?? 'the selected user'}`);
+      await api.assignWorkspaceManager(workspace.id, managerId || null);
+      toast.success('Profile assigned to bidder manager');
       await onChanged();
       onClose();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Could not reassign owner');
+      toast.error(err instanceof Error ? err.message : 'Could not assign manager');
     } finally {
       setBusy(false);
     }
@@ -626,46 +760,111 @@ function OwnerModal({
   return (
     <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/30 p-4">
       <div className="card w-full max-w-md p-5">
-        <h2 className="text-sm font-semibold">Reassign owner — {workspace.name}</h2>
+        <h2 className="text-sm font-semibold">Assign manager — {workspace.profile?.name ?? workspace.name}</h2>
         <p className="mt-1 text-2xs text-gray-500">
-          The new owner receives payment credit for future applied rows in this workspace. Existing
-          payment records are unchanged.
+          The selected manager can view this profile and assign it to one of their bidders.
         </p>
-
-        <div className="mt-4">
-          <label className="label" htmlFor="workspace-owner">
-            New owner
-          </label>
-          <select
-            id="workspace-owner"
-            className="input"
-            value={ownerId}
-            onChange={(e) => setOwnerId(e.target.value)}
-          >
-            {users
-              .filter((user) => user.is_active)
-              .map((user) => (
-                <option key={user.id} value={user.id}>
-                  {user.username} ({user.role})
-                </option>
-              ))}
-          </select>
-        </div>
-
+        <label className="label mt-4" htmlFor="profile-manager">Bidder manager</label>
+        <select
+          id="profile-manager"
+          className="input"
+          value={managerId}
+          onChange={(event) => setManagerId(event.target.value)}
+        >
+          <option value="">Select a bidder manager…</option>
+          {managers.map((manager) => (
+            <option key={manager.id} value={manager.id}>{manager.username}</option>
+          ))}
+        </select>
         <div className="mt-5 flex justify-end gap-2">
-          <button type="button" className="btn-secondary" onClick={onClose} disabled={busy}>
-            Cancel
-          </button>
-          <button
-            type="button"
-            className="btn-primary"
-            onClick={() => void reassign()}
-            disabled={busy || ownerId === workspace.owner_user_id}
-          >
-            {busy ? 'Saving…' : 'Save owner'}
+          <button type="button" className="btn-secondary" onClick={onClose} disabled={busy}>Cancel</button>
+          <button type="button" className="btn-primary" onClick={() => void save()} disabled={busy || !managerId}>
+            {busy ? 'Saving…' : 'Save manager'}
           </button>
         </div>
       </div>
     </div>
   );
 }
+
+function BidderAssignmentModal({
+  workspace,
+  users,
+  managerId,
+  managerName,
+  onClose,
+  onChanged,
+}: {
+  workspace: Workspace;
+  users: User[];
+  managerId: string;
+  managerName: string;
+  onClose: () => void;
+  onChanged: () => Promise<void>;
+}) {
+  const toast = useToast();
+  const eligibleBidders = users.filter((item) => item.role === 'bidder' && item.is_active);
+  const [bidderId, setBidderId] = useState(
+    workspace.owner_user_id === managerId
+      ? managerId
+      : eligibleBidders.some((item) => item.id === workspace.owner_user_id) ? workspace.owner_user_id : '',
+  );
+  const [busy, setBusy] = useState(false);
+
+  async function save() {
+    if (!bidderId) return;
+    setBusy(true);
+    try {
+      await api.assignWorkspaceBidder(workspace.id, bidderId);
+      const bidder = eligibleBidders.find((item) => item.id === bidderId);
+      toast.success(bidderId === managerId
+        ? 'Profile assigned to you'
+        : `Profile assigned to ${bidder?.username ?? 'bidder'}`);
+      await onChanged();
+      onClose();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not assign bidder');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/30 p-4">
+      <div className="card w-full max-w-md p-5">
+        <h2 className="text-sm font-semibold">Choose assignee — {workspace.profile?.name ?? workspace.name}</h2>
+        <p className="mt-1 text-2xs text-gray-500">
+          Work on this profile yourself or assign it to an active bidder allocated to you.
+        </p>
+        <label className="label mt-4" htmlFor="profile-bidder">Profile assignee</label>
+        <select
+          id="profile-bidder"
+          className="input"
+          value={bidderId}
+          onChange={(event) => setBidderId(event.target.value)}
+        >
+          <option value="">Select an assignee…</option>
+          <option value={managerId}>Work on it myself ({managerName})</option>
+          {eligibleBidders.map((bidder) => (
+            <option key={bidder.id} value={bidder.id}>{bidder.username}</option>
+          ))}
+        </select>
+        {eligibleBidders.length === 0 && (
+          <p className="mt-2 text-xs text-gray-500">No active bidders are allocated to you yet.</p>
+        )}
+        <div className="mt-5 flex justify-end gap-2">
+          <button type="button" className="btn-secondary" onClick={onClose} disabled={busy}>Cancel</button>
+          <button
+            type="button"
+            className="btn-primary"
+            onClick={() => void save()}
+            disabled={busy || !bidderId}
+          >
+            {busy ? 'Saving…' : 'Save assignee'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
