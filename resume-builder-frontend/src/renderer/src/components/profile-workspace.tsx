@@ -131,20 +131,6 @@ function comparableJobUrl(raw: string): string {
   }
 }
 
-function formatAddressLines(personalInfo: PersonalInfo): string[] {
-  const cityStateZip = [
-    personalInfo.city?.trim(),
-    [personalInfo.state?.trim(), personalInfo.zip?.trim()].filter(Boolean).join(" "),
-  ].filter(Boolean).join(", ");
-  const structured = [
-    personalInfo.address1?.trim(),
-    cityStateZip,
-    personalInfo.county?.trim() ? `County: ${personalInfo.county.trim()}` : "",
-    personalInfo.country?.trim(),
-  ].filter(Boolean);
-  return structured.length ? structured : [personalInfo.location?.trim()].filter(Boolean);
-}
-
 export function ProfileWorkspace({
   profile,
   tabLabel,
@@ -223,7 +209,6 @@ export function ProfileWorkspace({
   const [previewEditable, setPreviewEditable] = useState(false);
   const [downloadLocationPromptOpen, setDownloadLocationPromptOpen] = useState(false);
   const [workflowTab, setWorkflowTab] = useState<"resume" | "questions">("resume");
-  const addressLines = formatAddressLines(personalInfo);
 
   const syncFromProfile = (p: AiProfile) => {
     setSelectedTemplate(
@@ -789,8 +774,8 @@ export function ProfileWorkspace({
       <div className={`relative flex-1 min-h-0 ${previewOpen || settingsOpen ? "overflow-hidden" : "overflow-y-auto"}`}>
       <div className="grid items-start gap-6">
       <div className="order-1 min-w-0">
-      <Card>
-        <CardHeader className="pb-3">
+      <Card className="gap-3 py-4">
+        <CardHeader className="gap-1 px-4 pb-0">
           <CardTitle className="flex items-center gap-2">
             <UserRound className="h-5 w-5" />
             Personal Information
@@ -799,63 +784,96 @@ export function ProfileWorkspace({
             The contact details used for this profile's resume and application autofill.
           </CardDescription>
         </CardHeader>
-        <CardContent>
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
-            <div className="min-w-0 rounded-md border bg-muted/30 p-3">
-              <div className="mb-1 flex items-center gap-2 text-xs font-medium text-muted-foreground">
-                <UserRound className="h-3.5 w-3.5" /> Full name
-              </div>
-              <div className="truncate text-sm font-medium" title={personalInfo.fullName || undefined}>
-                {personalInfo.fullName || "Not provided"}
-              </div>
-            </div>
-            <div className="min-w-0 rounded-md border bg-muted/30 p-3 sm:col-span-2">
-              <div className="mb-1 flex items-center gap-2 text-xs font-medium text-muted-foreground">
-                <MapPin className="h-3.5 w-3.5" /> Full address
-              </div>
-              {addressLines.length ? (
-                <div className="text-sm font-medium" title={addressLines.join(", ")}>
-                  {addressLines.map((line) => <div key={line} className="truncate">{line}</div>)}
+        <CardContent className="space-y-3 px-4">
+          <section className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+            {[
+              ["Full name", personalInfo.fullName],
+              ["First name", personalInfo.firstName],
+              ["Middle name", personalInfo.middleName],
+              ["Last name", personalInfo.lastName],
+              ["Email", personalInfo.email],
+              ["Phone", personalInfo.phone],
+              ["LinkedIn", personalInfo.linkedin],
+            ].map(([label, value]) => (
+              <div key={label} className="min-w-0 rounded-md border bg-muted/30 px-3 py-2">
+                <div className="mb-1 flex items-center gap-2 text-xs font-medium text-muted-foreground">
+                  {label === "Email" ? <Mail className="h-3.5 w-3.5" />
+                    : label === "Phone" ? <Phone className="h-3.5 w-3.5" />
+                    : label === "LinkedIn" ? <Linkedin className="h-3.5 w-3.5" />
+                    : <UserRound className="h-3.5 w-3.5" />}
+                  {label}
                 </div>
-              ) : <div className="text-sm font-medium">Not provided</div>}
-            </div>
-            <div className="min-w-0 rounded-md border bg-muted/30 p-3">
-              <div className="mb-1 flex items-center gap-2 text-xs font-medium text-muted-foreground">
-                <Mail className="h-3.5 w-3.5" /> Email
+                {label === "Email" && value?.trim() ? (
+                  <a className="break-words text-sm font-medium text-primary hover:underline" href={`mailto:${value}`}>
+                    {value}
+                  </a>
+                ) : label === "Phone" && value?.trim() ? (
+                  <a className="break-words text-sm font-medium text-primary hover:underline" href={`tel:${value}`}>
+                    {value}
+                  </a>
+                ) : label === "LinkedIn" && value?.trim() ? (
+                  <a
+                    className="break-words text-sm font-medium text-primary hover:underline"
+                    href={/^https?:\/\//i.test(value) ? value : `https://${value}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    {value}
+                  </a>
+                ) : (
+                  <div className="break-words text-sm font-medium" title={value || undefined}>
+                    {value?.trim() || "Not provided"}
+                  </div>
+                )}
               </div>
-              {personalInfo.email ? (
-                <a className="block truncate text-sm font-medium text-primary hover:underline" href={`mailto:${personalInfo.email}`} title={personalInfo.email}>
-                  {personalInfo.email}
-                </a>
-              ) : <div className="text-sm font-medium">Not provided</div>}
+            ))}
+          </section>
+
+          <section className="rounded-lg border p-3">
+            <h3 className="mb-2 flex items-center gap-2 text-sm font-semibold">
+              <MapPin className="h-4 w-4" /> Full address
+            </h3>
+            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+              {[
+                ["Street address", personalInfo.address1],
+                ["City", personalInfo.city],
+                ["State", personalInfo.state],
+                ["ZIP code", personalInfo.zip],
+                ["County", personalInfo.county],
+                ["Country", personalInfo.country],
+              ].map(([label, value]) => (
+                <div key={label} className="min-w-0 rounded-md bg-muted/30 px-3 py-2">
+                  <div className="mb-1 text-xs font-medium text-muted-foreground">{label}</div>
+                  <div className="break-words text-sm font-medium" title={value || undefined}>
+                    {value?.trim() || "Not provided"}
+                  </div>
+                </div>
+              ))}
             </div>
-            <div className="min-w-0 rounded-md border bg-muted/30 p-3">
-              <div className="mb-1 flex items-center gap-2 text-xs font-medium text-muted-foreground">
-                <Phone className="h-3.5 w-3.5" /> Phone
-              </div>
-              {personalInfo.phone ? (
-                <a className="block truncate text-sm font-medium text-primary hover:underline" href={`tel:${personalInfo.phone}`} title={personalInfo.phone}>
-                  {personalInfo.phone}
-                </a>
-              ) : <div className="text-sm font-medium">Not provided</div>}
+          </section>
+
+          <section className="rounded-lg border p-3">
+            <h3 className="mb-2 flex items-center gap-2 text-sm font-semibold">
+              <Briefcase className="h-4 w-4" /> Demographics and work authorization
+            </h3>
+            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+              {[
+                ["Gender", personalInfo.gender],
+                ["Hispanic / Latino", personalInfo.hispanicLatino],
+                ["Race / ethnicity", personalInfo.ethnicity],
+                ["US work status", personalInfo.usWorkStatus],
+                ["Legally authorized to work in the US", personalInfo.legallyAuthorizedUs],
+                ["Requires sponsorship now or later", personalInfo.requiresSponsorship],
+              ].map(([label, value]) => (
+                <div key={label} className="min-w-0 rounded-md bg-muted/30 px-3 py-2">
+                  <div className="mb-1 text-xs font-medium text-muted-foreground">{label}</div>
+                  <div className="break-words text-sm font-medium" title={value || undefined}>
+                    {value?.trim() || "Not provided"}
+                  </div>
+                </div>
+              ))}
             </div>
-            <div className="min-w-0 rounded-md border bg-muted/30 p-3">
-              <div className="mb-1 flex items-center gap-2 text-xs font-medium text-muted-foreground">
-                <Linkedin className="h-3.5 w-3.5" /> LinkedIn
-              </div>
-              {personalInfo.linkedin ? (
-                <a
-                  className="block truncate text-sm font-medium text-primary hover:underline"
-                  href={/^https?:\/\//i.test(personalInfo.linkedin) ? personalInfo.linkedin : `https://${personalInfo.linkedin}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  title={personalInfo.linkedin}
-                >
-                  {personalInfo.linkedin}
-                </a>
-              ) : <div className="text-sm font-medium">Not provided</div>}
-            </div>
-          </div>
+          </section>
         </CardContent>
       </Card>
       </div>
