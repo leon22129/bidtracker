@@ -49,7 +49,10 @@ describe('ApplicationGenerationService application metadata eligibility', () => 
         updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
     };
-    const access = { assertCanEdit: jest.fn().mockResolvedValue(undefined) };
+    const access = {
+      assertCanEdit: jest.fn().mockResolvedValue(undefined),
+      assertCanView: jest.fn().mockResolvedValue(undefined),
+    };
     const duplicates = {
       classifyBatch: jest.fn().mockResolvedValue([{ is_duplicate: false }]),
       findRecentCompanyMatch: jest.fn().mockResolvedValue(null),
@@ -64,11 +67,6 @@ describe('ApplicationGenerationService application metadata eligibility', () => 
       createEligibilityRejectedApplication: jest.fn().mockImplementation(async (_user, application) => ({
         id: 'rejected-application-1',
         application_status: 'Rejected',
-        ...application,
-      })),
-      createDuplicateApplication: jest.fn().mockImplementation(async (_user, application) => ({
-        id: 'duplicate-application-1',
-        application_status: 'Duplicated',
         ...application,
       })),
       createGenerated: jest.fn().mockImplementation(async (_user, application) => ({
@@ -263,21 +261,13 @@ describe('ApplicationGenerationService application metadata eligibility', () => 
       duplicate_type: 'company',
       cooldown_days: 90,
       existing_application: existing,
-      application: { application_status: 'Duplicated' },
     });
     expect(duplicates.findRecentCompanyMatch).toHaveBeenCalledWith(
       dto.workspace_id,
       'Acme',
     );
     expect(openAi).toHaveBeenCalledTimes(1);
-    expect(applications.createDuplicateApplication).toHaveBeenCalledWith(
-      user,
-      expect.objectContaining({
-        workspace_id: dto.workspace_id,
-        company_name: 'Acme',
-        job_title: 'Software Engineer',
-      }),
-    );
+    expect(applications.createGenerated).not.toHaveBeenCalled();
     expect(applications.createEligibilityRejectedApplication).not.toHaveBeenCalled();
   });
 

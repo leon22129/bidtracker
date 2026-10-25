@@ -1,7 +1,8 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthUser } from '../common/decorators/current-user.decorator';
 import { Prisma } from '@prisma/client';
+import { isAdmin } from '../common/policies/application.policy';
 
 /**
  * Workspace scope authorization based on creator/owner relationships plus the manager's read-only
@@ -15,14 +16,15 @@ import { Prisma } from '@prisma/client';
 export class WorkspaceAccessService {
   constructor(private readonly prisma: PrismaService) {}
 
-  private async workspaceAccessRecord(workspaceId: string) {
-    const workspace = await this.prisma.workspace.findUnique({
+  private async workspaceAccessRecord(workspaceId: string, db: Prisma.TransactionClient = this.prisma) {
+    const workspace = await db.workspace.findUnique({
       where: { id: workspaceId },
       select: {
         id: true,
         owner_user_id: true,
         manager_user_id: true,
         created_by_user_id: true,
+        is_archived: true,
         owner: { select: { manager_user_id: true } },
       },
     });
@@ -48,10 +50,18 @@ export class WorkspaceAccessService {
     }
   }
 
-  async assertCanEdit(user: AuthUser, workspaceId: string): Promise<void> {
-    const workspace = await this.workspaceAccessRecord(workspaceId);
+  /** Archived profiles reject writes unless an admin is explicitly maintaining existing data. */
+  async assertCanEdit(
+    user: AuthUser,
+    workspaceId: string,
+    options: { allowArchived?: boolean; db?: Prisma.TransactionClient } = {},
+  ): Promise<void> {
+    const workspace = await this.workspaceAccessRecord(workspaceId, options.db);
     if (!this.canEditRecord(user, workspace)) {
       throw new NotFoundException('Workspace not found');
+    }
+    if (workspace.is_archived && !(options.allowArchived && isAdmin(user.role))) {
+      throw new ForbiddenException('This profile is archived. Ask an admin to unarchive it before applying.');
     }
   }
 

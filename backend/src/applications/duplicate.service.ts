@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
-import { BANNED_URL_NOTE, normalizeUrl } from '../common/utils/url.util';
+import { normalizeUrl } from '../common/utils/url.util';
 import { normalizeCompanyIdentity } from '../common/utils/job-fingerprint.util';
 
 /** Exact URL detection plus a workspace-local cooldown for recent applications at a company. */
@@ -12,28 +13,18 @@ export class DuplicateService {
     workspaceId: string,
     items: Array<{ company_name?: string | null }>,
     excludeIds: string[] = [],
+    db: Prisma.TransactionClient = this.prisma,
   ): Promise<CompanyIdentityVerdict[]> {
     const identities = items.map((item) => item.company_name?.trim()
       ? normalizeCompanyIdentity(item.company_name)
       : null);
     const requested = new Set(identities.filter((value): value is string => Boolean(value)));
-    const cutoff = this.companyCooldownCutoff();
     const existing = new Map<string, ExistingRef>();
     const select = existingRefSelect();
 
     if (requested.size) {
-      const rows = await this.prisma.jobApplication.findMany({
-        where: {
-          workspace_id: workspaceId,
-          date: { gte: cutoff },
-          company_name: { not: null },
-          application_status: { not: 'Duplicated' },
-          NOT: [
-            { note: BANNED_URL_NOTE },
-            { note: { startsWith: 'job eligibility check failed -' } },
-          ],
-          ...(excludeIds.length ? { id: { notIn: excludeIds } } : {}),
-        },
+      const rows = await db.jobApplication.findMany({
+        where: this.companyCooldownWhere(workspaceId, excludeIds),
         select,
         orderBy: [{ date: 'desc' }, { created_at: 'desc' }],
       });
@@ -66,23 +57,14 @@ export class DuplicateService {
     workspaceId: string,
     companyName?: string | null,
     excludeId?: string,
+    db: Prisma.TransactionClient = this.prisma,
   ): Promise<ExistingRef | null> {
     if (!companyName?.trim()) return null;
     const companyIdentity = normalizeCompanyIdentity(companyName);
     if (!companyIdentity) return null;
 
-    const rows = await this.prisma.jobApplication.findMany({
-      where: {
-        workspace_id: workspaceId,
-        date: { gte: this.companyCooldownCutoff() },
-        company_name: { not: null },
-        application_status: { not: 'Duplicated' },
-        NOT: [
-          { note: BANNED_URL_NOTE },
-          { note: { startsWith: 'job eligibility check failed -' } },
-        ],
-        ...(excludeId ? { id: { not: excludeId } } : {}),
-      },
+    const rows = await db.jobApplication.findMany({
+      where: this.companyCooldownWhere(workspaceId, excludeId ? [excludeId] : []),
       select: existingRefSelect(),
       orderBy: [{ date: 'desc' }, { created_at: 'desc' }],
     });
@@ -102,6 +84,16 @@ export class DuplicateService {
       : 90;
   }
 
+  private companyCooldownWhere(workspaceId: string, excludeIds: string[]): Prisma.JobApplicationWhereInput {
+    return {
+      workspace_id: workspaceId,
+      date: { gte: this.companyCooldownCutoff() },
+      company_name: { not: null },
+      // Every recorded company row occupies the cooldown, regardless of status or note.
+      ...(excludeIds.length ? { id: { notIn: excludeIds } } : {}),
+    };
+  }
+
   private companyCooldownCutoff() {
     return new Date(Date.now() - this.companyCooldownDays() * 24 * 60 * 60 * 1000);
   }
@@ -110,6 +102,7 @@ export class DuplicateService {
     workspaceId: string,
     urls: string[],
     excludeId?: string,
+    db: Prisma.TransactionClient = this.prisma,
   ): Promise<Map<string, ExistingRef>> {
     const normalized = urls.map(normalizeUrl);
     const byNormalized = new Map<string, ExistingRef>();
@@ -117,7 +110,7 @@ export class DuplicateService {
     // Bounded chunks keep query payloads predictable for very large imports.
     const CHUNK = 400;
     for (let i = 0; i < normalized.length; i += CHUNK) {
-      const rows = await this.prisma.jobApplication.findMany({
+      const rows = await db.jobApplication.findMany({
         where: {
           workspace_id: workspaceId,
           ...(excludeId ? { id: { not: excludeId } } : {}),
@@ -150,8 +143,9 @@ export class DuplicateService {
     workspaceId: string,
     urls: string[],
     excludeId?: string,
+    db: Prisma.TransactionClient = this.prisma,
   ): Promise<DuplicateVerdict[]> {
-    const existing = await this.findExisting(workspaceId, urls, excludeId);
+    const existing = await this.findExisting(workspaceId, urls, excludeId, db);
     const seenNormalized = new Set<string>();
 
     return urls.map((url) => {

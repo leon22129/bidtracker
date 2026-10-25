@@ -68,9 +68,9 @@ export class WorkspacesService {
       created_at: w.created_at,
       updated_at: w.updated_at,
       profile: w.resumeProfile ? this.toProfile(w.resumeProfile) : null,
-      can_edit: user.role === 'super_admin'
+      can_edit: (!w.is_archived || isAdmin(user.role)) && (user.role === 'super_admin'
         || (user.role === 'admin' && w.created_by_user_id === user.id)
-        || (user.role !== 'admin' && w.owner_user_id === user.id),
+        || (user.role !== 'admin' && w.owner_user_id === user.id)),
       application_count: w._count.applications,
       applied_today_by_user: todayGroups
         .filter((group) => group.workspace_id === w.id)
@@ -132,7 +132,7 @@ export class WorkspacesService {
   }
 
   async update(id: string, dto: UpdateWorkspaceDto, user: AuthUser) {
-    await this.access.assertCanEdit(user, id);
+    await this.access.assertCanEdit(user, id, { allowArchived: true });
     const workspace = await this.prisma.workspace.findUnique({ where: { id } });
     if (!workspace) throw new NotFoundException('Workspace not found');
 
@@ -182,7 +182,7 @@ export class WorkspacesService {
   }
 
   async assignManager(id: string, managerUserId: string | null, user: AuthUser) {
-    await this.access.assertCanEdit(user, id);
+    await this.access.assertCanEdit(user, id, { allowArchived: true });
     if (!managerUserId) throw new BadRequestException('A bidder manager is required');
     const validatedManagerId = await this.validateManager(managerUserId, user);
     return this.prisma.workspace.update({
@@ -277,7 +277,7 @@ export class WorkspacesService {
       select: { id: true, workspace_id: true },
     });
     if (!profile) throw new NotFoundException('Profile not found');
-    await this.access.assertCanEdit(user, profile.workspace_id);
+    await this.access.assertCanEdit(user, profile.workspace_id, { allowArchived: true });
 
     const data = this.profileData(dto);
     if (Object.keys(data).length) {
@@ -394,7 +394,7 @@ export class WorkspacesService {
 
   /** Cascades to applications, the resume profile, and conversations. Admin-only, irreversible. */
   async remove(id: string, user: AuthUser) {
-    await this.access.assertCanEdit(user, id);
+    await this.access.assertCanEdit(user, id, { allowArchived: true });
     const workspace = await this.prisma.workspace.findUnique({
       where: { id },
       include: { _count: { select: { applications: true } } },

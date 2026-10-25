@@ -1,5 +1,6 @@
 import { ApplicationsService } from './applications.service';
 import { Prisma } from '@prisma/client';
+import { DuplicateService } from './duplicate.service';
 
 describe('ApplicationsService generated-application duplicate-click protection', () => {
   const user = {
@@ -29,7 +30,8 @@ describe('ApplicationsService generated-application duplicate-click protection',
 
   function setup() {
     const prisma = {
-      $transaction: jest.fn(async (operations) => Promise.all(operations)),
+      $transaction: jest.fn(async (operations) => typeof operations === 'function' ? operations(prisma) : Promise.all(operations)),
+      $queryRaw: jest.fn().mockResolvedValue([]),
       jobApplication: {
         count: jest.fn(),
         findMany: jest.fn(),
@@ -51,6 +53,8 @@ describe('ApplicationsService generated-application duplicate-click protection',
     const duplicates = {
       scope: 'workspace',
       classifyBatch: jest.fn(),
+      classifyCompanyIdentities: jest.fn(async (_workspaceId, items: unknown[]) =>
+        items.map(() => ({ is_duplicate: false }))),
       findRecentCompanyMatch: jest.fn().mockResolvedValue(null),
       companyCooldownDays: jest.fn().mockReturnValue(90),
     };
@@ -139,11 +143,13 @@ describe('ApplicationsService generated-application duplicate-click protection',
 
   it('treats a database race won in the same workspace as a successful retry', async () => {
     const { service, prisma, duplicates } = setup();
-    duplicates.classifyBatch.mockResolvedValue([{
+    duplicates.classifyBatch.mockResolvedValueOnce([{
       normalized_url: existing.normalized_url,
       is_duplicate: false,
+    }]).mockResolvedValueOnce([{
+      normalized_url: existing.normalized_url, is_duplicate: true, duplicate_type: 'url', existing,
     }]);
-    prisma.jobApplication.create.mockRejectedValue(new Prisma.PrismaClientKnownRequestError(
+    prisma.jobApplication.create.mockRejectedValueOnce(new Prisma.PrismaClientKnownRequestError(
       'Active URL collision',
       {
         code: 'P2002',
@@ -151,16 +157,14 @@ describe('ApplicationsService generated-application duplicate-click protection',
         meta: { target: ['workspace_id', 'normalized_url'] },
       },
     ));
-    prisma.jobApplication.findFirst.mockResolvedValue(existing);
+    prisma.jobApplication.findUnique.mockResolvedValue(existing);
 
     await expect(service.createGenerated(user, dto)).resolves.toMatchObject({
       success: true,
       already_added: true,
       application: existing,
     });
-    expect(prisma.jobApplication.findFirst).toHaveBeenCalledWith(expect.objectContaining({
-      where: expect.objectContaining({ workspace_id: dto.workspace_id }),
-    }));
+    expect(prisma.$transaction).toHaveBeenCalledTimes(2);
     expect(prisma.jobApplication.create).toHaveBeenCalledTimes(1);
   });
 
@@ -206,8 +210,85 @@ describe('ApplicationsService generated-application duplicate-click protection',
     expect(duplicates.findRecentCompanyMatch).toHaveBeenCalledWith(
       dto.workspace_id,
       dto.company_name,
+      undefined, expect.anything(),
     );
     expect(numbering.withNextNumber).not.toHaveBeenCalled();
+  });
+
+  it.each(['bidder', 'admin'] as const)(
+    'checks the company when %s changes only Pending to Applied', async (role) => {
+      const { service, prisma, duplicates } = setup();
+      prisma.jobApplication.findUnique.mockResolvedValue({
+        ...existing, application_status: 'Pending', paid: false,
+      });
+      duplicates.findRecentCompanyMatch.mockResolvedValue({
+        ...existing, id: 'other-application', job_title: 'A different job title',
+      });
+      const update = service.update({ ...user, role }, existing.id, { application_status: 'Applied' });
+
+      await expect(update).rejects.toThrow('company cooldown');
+      expect(prisma.jobApplication.update).not.toHaveBeenCalled();
+      expect(duplicates.findRecentCompanyMatch).toHaveBeenCalledWith(
+        dto.workspace_id, dto.company_name, existing.id, prisma,
+      );
+    },
+  );
+
+  it('blocks same-company applications with different titles in a bulk status update', async () => {
+    const { service, prisma, duplicates } = setup();
+    const rows = ['Engineer', 'Designer'].map((job_title, index) => ({
+      ...existing, id: `pending-${index}`, job_title, application_status: 'Pending', paid: false,
+    }));
+    prisma.jobApplication.findMany.mockResolvedValue(rows);
+    const realDuplicates = new DuplicateService({
+      jobApplication: { findMany: jest.fn().mockResolvedValue([]) },
+    } as any);
+    duplicates.classifyCompanyIdentities.mockImplementation(
+      (workspaceId, items) => realDuplicates.classifyCompanyIdentities(workspaceId, items as any),
+    );
+
+    await expect(service.bulkUpdate(user, {
+      ids: rows.map((row) => row.id), patch: { application_status: 'Applied' },
+    })).resolves.toMatchObject({
+      updated: 1, updated_ids: ['pending-0'],
+      failed: [{ id: 'pending-1', reason: expect.stringContaining('company cooldown') }],
+    });
+    expect(prisma.jobApplication.updateMany).toHaveBeenCalledWith({
+      where: { id: { in: ['pending-0'] } }, data: { application_status: 'Applied' },
+    });
+  });
+
+  it('keeps selected Applied rows as company history when applying other rows in bulk', async () => {
+    const { service, prisma, duplicates } = setup();
+    prisma.jobApplication.findMany.mockResolvedValue([
+      { ...existing, application_status: 'Applied', paid: false },
+      { ...existing, id: 'pending', job_title: 'Designer', application_status: 'Pending', paid: false },
+    ]);
+    duplicates.classifyCompanyIdentities.mockResolvedValue([{ is_duplicate: true }]);
+
+    await expect(service.bulkUpdate(user, {
+      ids: [existing.id, 'pending'], patch: { application_status: 'Applied' },
+    })).resolves.toMatchObject({
+      updated_ids: [existing.id], failed: [{ id: 'pending', reason: expect.stringContaining('company cooldown') }],
+    });
+    expect(duplicates.classifyCompanyIdentities).toHaveBeenCalledWith(
+      dto.workspace_id, [{ company_name: dto.company_name, job_title: 'Designer' }], ['pending'], prisma,
+    );
+  });
+
+  it('does not let locked rows reserve a company during a bulk status update', async () => {
+    const { service, prisma, duplicates } = setup();
+    prisma.jobApplication.findMany.mockResolvedValue([
+      { ...existing, id: 'locked', application_status: 'Pending', paid: true },
+      { ...existing, id: 'pending', job_title: 'Designer', application_status: 'Pending', paid: false },
+    ]);
+
+    await expect(service.bulkUpdate(user, {
+      ids: ['locked', 'pending'], patch: { application_status: 'Applied' },
+    })).resolves.toMatchObject({ updated_ids: ['pending'], failed: [{ id: 'locked', reason: expect.any(String) }] });
+    expect(duplicates.classifyCompanyIdentities).toHaveBeenCalledWith(
+      dto.workspace_id, [{ company_name: dto.company_name, job_title: 'Designer' }], ['pending'], prisma,
+    );
   });
 
   it('persists an eligibility rejection with its note and job details', async () => {
@@ -236,36 +317,6 @@ describe('ApplicationsService generated-application duplicate-click protection',
         job_title: dto.job_title,
         job_description: 'A remote engineering role that requires clearance.',
         note: 'job eligibility check failed - it requires clearance',
-        created_by_user_id: user.id,
-      }),
-    }));
-    expect(slackNotifications.notifyApplicationCreated).toHaveBeenCalledWith(user.id);
-  });
-
-  it('persists a company-cooldown attempt as a Duplicated application', async () => {
-    const { service, prisma, slackNotifications } = setup();
-    prisma.jobApplication.create.mockImplementation(async ({ data }: any) => ({
-      id: 'duplicate-application-1',
-      ...data,
-    }));
-
-    await expect(service.createDuplicateApplication(user, {
-      ...dto,
-      job_description: 'A fully remote engineering role.',
-      note: 'Company duplicate within 90-day cooldown; original application #1.',
-    })).resolves.toMatchObject({
-      application_status: 'Duplicated',
-      company_name: dto.company_name,
-      job_title: dto.job_title,
-    });
-
-    expect(prisma.jobApplication.create).toHaveBeenCalledWith(expect.objectContaining({
-      data: expect.objectContaining({
-        application_status: 'Duplicated',
-        pipeline_status: 'Not Started',
-        company_name: dto.company_name,
-        job_title: dto.job_title,
-        job_description: 'A fully remote engineering role.',
         created_by_user_id: user.id,
       }),
     }));

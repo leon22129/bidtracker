@@ -111,6 +111,9 @@ cd backend  && npm run build && npm test      # backend unit and service tests
 cd frontend && npm run typecheck && npm run build
 ```
 
+After building the backend, `cd backend && npm run test:company-cooldown` verifies simultaneous
+company submissions against PostgreSQL. It creates and removes an isolated schema for its fixtures.
+
 The unit tests cover the policy functions in isolation. Two scripts cover what they cannot — that the
 guards are actually mounted, the DTOs actually validate, and every deny rule holds over real HTTP.
 Both need a **running server** and both **write data**, which is why neither is part of the Jest suite:
@@ -216,6 +219,10 @@ whitelist projection, not by deleting fields from a Prisma row.
 | DELETE | `/workspaces/:id`                     | 🛡     | Cascades to its applications; returns the deleted count                            |
 
 Requesting a workspace you can't see returns **404, not 403** — a 403 would confirm the id exists.
+
+Archived profiles reject new applications, imports, and resume/answer generation on the server,
+including requests from already-open clients. Existing history remains readable, and admins can
+maintain historical records or unarchive the profile to resume applying.
 
 ### Applications — `/api/applications`
 
@@ -812,8 +819,10 @@ The canonical list lives in `COLUMN_ALIASES` at
   `Pending` plus an explanatory line in the skip list; only an admin can set it, because it determines
   who gets paid.
 - **A company has a 90-day cooldown per profile.** A second row for the same normalized company is
-  marked as a duplicate even when the title or job-board URL differs. Rows that were only skipped as
-  banned or ineligible do not start or extend the cooldown.
+  rejected even when the title or job-board URL differs; imports report it in the skip list.
+  The configured `COMPANY_APPLICATION_COOLDOWN_DAYS` applies to all recorded company rows,
+  regardless of status or note. Duplicate attempts create no additional table row.
+  Checks and writes share a database transaction and workspace lock, including concurrent requests.
 - **`Rejected` is a one-way door.** The transition allow-list is `Pending → Applied` and
   `Applied → Rejected`, and it applies to imports too. Importing `Rejected` directly is fine; getting
   back out of it needs an admin.

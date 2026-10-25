@@ -4,7 +4,7 @@ import { Readable } from 'node:stream';
 import * as unzipper from 'unzipper';
 import { PrismaService } from '../prisma/prisma.service';
 import { WorkspaceAccessService } from '../workspaces/workspace-access.service';
-import { ApplicationsService } from '../applications/applications.service';
+import { ApplicationsService, WorkspaceWriteContext } from '../applications/applications.service';
 import { DuplicateService } from '../applications/duplicate.service';
 import { NumberingService } from '../applications/numbering.service';
 import { AuthUser } from '../common/decorators/current-user.decorator';
@@ -66,8 +66,11 @@ export class ImportService {
     workspaceId: string,
     file: { originalname: string; buffer: Buffer; mimetype: string },
     options: { defaultDate?: string } = {},
+    context?: WorkspaceWriteContext,
   ): Promise<ImportResult> {
-    await this.access.assertCanEdit(user, workspaceId);
+    if (!context) return this.applications.withWorkspaceWrite(workspaceId, (write) => this.import(user, workspaceId, file, options, write));
+    const db = context.db;
+    await this.access.assertCanEdit(user, workspaceId, { db });
 
     if (!file?.buffer?.length) throw new BadRequestException('No file uploaded');
 
@@ -187,17 +190,18 @@ export class ImportService {
     const urlVerdicts = await this.duplicates.classifyBatch(
       workspaceId,
       parsed.map((p) => p.url),
+      undefined, db,
     );
 
     // --- Pass 3: enforce the per-profile company cooldown -------------------
-    const bannedVerdicts = await this.bannedUrls.matchMany(parsed.map((row) => row.url));
+    const bannedVerdicts = await this.bannedUrls.matchMany(parsed.map((row) => row.url), db);
     const identityVerdicts = await this.duplicates.classifyCompanyIdentities(
       workspaceId,
-      parsed.map((row, index) => ({
-        // A banned URL does not count as an application to the company.
-        company_name: bannedVerdicts[index] ? null : row.company_name,
+      parsed.map((row) => ({
+        company_name: row.company_name,
         job_title: row.job_title,
       })),
+      [], db,
     );
     const verdicts = urlVerdicts.map((verdict, index) => {
       const identity = identityVerdicts[index];
@@ -216,7 +220,11 @@ export class ImportService {
 
     // --- Pass 4: allocate numbers per date, then batch insert ---------------
     const byDate = new Map<number, ParsedRow[]>();
-    for (const row of parsed) {
+    for (const [index, row] of parsed.entries()) {
+      if (identityVerdicts[index].is_duplicate) {
+        skipped.push({ row: row.rowNumber, reason: `Company already exists within this profile's ${this.duplicates.companyCooldownDays()}-day cooldown` });
+        continue;
+      }
       const key = row.date.getTime();
       if (!byDate.has(key)) byDate.set(key, []);
       byDate.get(key)!.push(row);
@@ -225,7 +233,7 @@ export class ImportService {
     const inserts: any[] = [];
     for (const [time, rows] of byDate) {
       const date = new Date(time);
-      const start = await this.numbering.reserveBlock(this.prisma, workspaceId, date, rows.length);
+      const start = await this.numbering.reserveBlock(db, workspaceId, date, rows.length);
       rows.forEach((row, idx) => {
         const verdict = verdictByRow.get(row);
         const banned = bannedByRow.get(row) ?? false;
@@ -248,7 +256,7 @@ export class ImportService {
       });
     }
 
-    const created = await this.applications.insertChunked(inserts, workspaceId);
+    const created = await this.applications.insertChunked(inserts, workspaceId, context);
 
     this.logger.log(
       `Import into ${workspaceId} by ${user.username}: ${created} created, ` +
