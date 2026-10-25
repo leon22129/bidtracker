@@ -122,6 +122,7 @@ export interface JobApplication {
   paid: boolean;
   resume_generated_at: string | null;
   cover_letter_template: string | null;
+  screenshot: { captured_at: string; expires_at: string } | null;
   created_by_user_id: string | null;
   created_at: string;
   updated_at: string;

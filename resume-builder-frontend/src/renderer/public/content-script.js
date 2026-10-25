@@ -1838,3 +1838,70 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return true;
   }
 });
+// Notify the service worker only after the final application submission action. The worker ignores
+// this signal unless resume generation armed this exact tab with an application id.
+(() => {
+  if (typeof document?.addEventListener !== "function") return;
+  let lastSignalAt = 0;
+  const signalSubmission = () => {
+    const now = Date.now();
+    if (now - lastSignalAt < 3000) return;
+    lastSignalAt = now;
+    setTimeout(() => {
+      chrome.runtime.sendMessage({ type: "APPLICATION_FORM_SUBMITTED" }).catch(() => undefined);
+    }, 1200);
+  };
+
+  const isFinalSubmitLabel = (target) => {
+    const label = (target?.textContent || target?.getAttribute?.("value") || target?.getAttribute?.("aria-label") || "")
+      .trim().toLowerCase();
+    return /^(submit|submit (?:my |your |this |the )?application|send application|complete application|finish application|apply now)$/.test(label);
+  };
+
+  const confirmationPatterns = [
+    /\bapplication (?:has been|was|is) (?:successfully )?submitted\b/,
+    /\b(?:you(?:'ve| have) )?successfully submitted your application\b/,
+    /\bthank you for (?:submitting your application|applying)\b/,
+    /\bthanks for (?:submitting your application|applying)\b/,
+    /\bwe(?:'ve| have) received your application\b/,
+    /\byour application (?:has been received|is complete)\b/,
+  ];
+
+  const hasSubmissionConfirmation = () => {
+    const text = (document.body?.innerText || document.body?.textContent || "")
+      .replace(/\s+/g, " ")
+      .toLowerCase();
+    if (confirmationPatterns.some((pattern) => pattern.test(text))) return true;
+    const path = globalThis.location?.pathname || "";
+    return /\/(?:application[-_/]?)?(?:submitted|confirmation|thank[-_]?you)(?:[/?#]|$)/i.test(path);
+  };
+
+  let confirmationScanQueued = false;
+  const scanForConfirmation = () => {
+    if (confirmationScanQueued) return;
+    confirmationScanQueued = true;
+    setTimeout(() => {
+      confirmationScanQueued = false;
+      if (hasSubmissionConfirmation()) signalSubmission();
+    }, 250);
+  };
+
+  document.addEventListener("submit", (event) => {
+    if (isFinalSubmitLabel(event.submitter)) signalSubmission();
+  }, true);
+  document.addEventListener("click", (event) => {
+    const target = event.target instanceof Element
+      ? event.target.closest('button, input[type="submit"], [role="button"]')
+      : null;
+    if (!target) return;
+    if (isFinalSubmitLabel(target)) signalSubmission();
+  }, true);
+
+  scanForConfirmation();
+  if (typeof MutationObserver === "function" && document.documentElement) {
+    new MutationObserver(scanForConfirmation).observe(document.documentElement, {
+      childList: true,
+      subtree: true,
+    });
+  }
+})();

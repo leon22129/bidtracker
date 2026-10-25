@@ -19,6 +19,9 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { toast } from "@/components/ui/use-toast";
 import { ResumePreview } from "@/components/resume-preview";
 import { FunnyLoadingBar } from "@/components/funny-loading-bar";
+import { DashboardSection } from "@/components/dashboard-section";
+import { PersonalInformationPanel } from "@/components/personal-information-panel";
+import { WorkspaceSidebar, type WorkspaceView } from "@/components/workspace-sidebar";
 import {
   Dialog,
   DialogContent,
@@ -37,11 +40,6 @@ import {
   ClipboardCheck,
   Eye,
   History,
-  UserRound,
-  MapPin,
-  Mail,
-  Phone,
-  Linkedin,
   MessagesSquare,
 } from "lucide-react";
 import {
@@ -70,6 +68,7 @@ import {
 } from "@/lib/profile-utils";
 import {
   canScanCurrentPage,
+  armApplicationScreenshot,
   chooseProfileDirectory,
   fillCurrentPageAnswers,
   getCurrentBrowserTabUrl,
@@ -209,6 +208,7 @@ export function ProfileWorkspace({
   const [previewEditable, setPreviewEditable] = useState(false);
   const [downloadLocationPromptOpen, setDownloadLocationPromptOpen] = useState(false);
   const [workflowTab, setWorkflowTab] = useState<"resume" | "questions">("resume");
+  const [workspaceView, setWorkspaceView] = useState<WorkspaceView>("builder");
 
   const syncFromProfile = (p: AiProfile) => {
     setSelectedTemplate(
@@ -378,6 +378,8 @@ export function ProfileWorkspace({
       setConversationId(data.conversationId);
       setApplicationAnswers(data.answers ?? []);
       setAnswersReadOnly(false);
+
+      if (data.application?.id) await armApplicationScreenshot(data.application.id);
 
       if (shouldAutoDownload) {
         await handleDownloadPDF(
@@ -770,159 +772,83 @@ export function ProfileWorkspace({
   };
 
   return (
-    <div className="relative max-w-[1400px] mx-auto py-8 px-4 sm:px-10 lg:px-20 h-full flex flex-col overflow-hidden">
-      <div className={`relative flex-1 min-h-0 ${previewOpen || settingsOpen ? "overflow-hidden" : "overflow-y-auto"}`}>
-      <div className="grid items-start gap-6">
-      <div className="order-1 min-w-0">
-      <Card className="gap-3 py-4">
-        <CardHeader className="gap-1 px-4 pb-0">
-          <CardTitle className="flex items-center gap-2">
-            <UserRound className="h-5 w-5" />
-            Personal Information
-          </CardTitle>
-          <CardDescription>
-            The contact details used for this profile's resume and application autofill.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-3 px-4">
-          <section className="flex flex-wrap gap-2">
-            {[
-              ["Full name", personalInfo.fullName],
-              ["First name", personalInfo.firstName],
-              ["Middle name", personalInfo.middleName],
-              ["Last name", personalInfo.lastName],
-              ["Email", personalInfo.email],
-              ["Phone", personalInfo.phone],
-              ["LinkedIn", personalInfo.linkedin],
-            ].map(([label, value]) => (
-              <div key={label} className="flex w-full min-w-0 max-w-full items-baseline gap-2 rounded-md border bg-muted/30 px-3 py-2 sm:w-auto">
-                <div className="flex shrink-0 items-center gap-2 text-xs font-medium text-muted-foreground">
-                  {label === "Email" ? <Mail className="h-3.5 w-3.5" />
-                    : label === "Phone" ? <Phone className="h-3.5 w-3.5" />
-                    : label === "LinkedIn" ? <Linkedin className="h-3.5 w-3.5" />
-                    : <UserRound className="h-3.5 w-3.5" />}
-                  {label}
-                </div>
-                {label === "Email" && value?.trim() ? (
-                  <a className="break-words text-sm font-medium text-primary hover:underline" href={`mailto:${value}`}>
-                    {value}
-                  </a>
-                ) : label === "Phone" && value?.trim() ? (
-                  <a className="break-words text-sm font-medium text-primary hover:underline" href={`tel:${value}`}>
-                    {value}
-                  </a>
-                ) : label === "LinkedIn" && value?.trim() ? (
-                  <a
-                    className="break-words text-sm font-medium text-primary hover:underline"
-                    href={/^https?:\/\//i.test(value) ? value : `https://${value}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  >
-                    {value}
-                  </a>
-                ) : (
-                  <div className="break-words text-sm font-medium" title={value || undefined}>
-                    {value?.trim() || "Not provided"}
-                  </div>
-                )}
-              </div>
-            ))}
-          </section>
-
-          <section className="rounded-lg border p-3">
-            <h3 className="mb-2 flex items-center gap-2 text-sm font-semibold">
-              <MapPin className="h-4 w-4" /> Full address
-            </h3>
-            <div className="flex flex-wrap">
-              {[
-                ["Street address", personalInfo.address1],
-                ["City", personalInfo.city],
-                ["State", personalInfo.state],
-                ["ZIP code", personalInfo.zip],
-                ["County", personalInfo.county],
-                ["Country", personalInfo.country],
-              ].map(([label, value]) => (
-                <div key={label} className="flex w-full min-w-0 max-w-full items-baseline gap-2 rounded-md bg-muted/30 px-3 py-2 sm:w-auto">
-                  <div className="shrink-0 text-xs font-medium text-muted-foreground">{label}</div>
-                  <div className="break-words text-sm font-medium" title={value || undefined}>
-                    {value?.trim() || "Not provided"}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </section>
-
-          <section className="rounded-lg border p-3">
-            <h3 className="mb-2 flex items-center gap-2 text-sm font-semibold">
-              <Briefcase className="h-4 w-4" /> Demographics and work authorization
-            </h3>
-            <div className="flex flex-wrap">
-              {[
-                ["Gender", personalInfo.gender],
-                ["Hispanic / Latino", personalInfo.hispanicLatino],
-                ["Race / ethnicity", personalInfo.ethnicity],
-                ["US work status", personalInfo.usWorkStatus],
-                ["Legally authorized to work in the US", personalInfo.legallyAuthorizedUs],
-                ["Requires sponsorship now or later", personalInfo.requiresSponsorship],
-              ].map(([label, value]) => (
-                <div key={label} className="flex w-full min-w-0 max-w-full items-baseline gap-2 rounded-md bg-muted/30 px-3 py-2 sm:w-auto">
-                  <div className="shrink-0 text-xs font-medium text-muted-foreground">{label}</div>
-                  <div className="break-words text-sm font-medium" title={value || undefined}>
-                    {value?.trim() || "Not provided"}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </section>
-        </CardContent>
-      </Card>
+    <div className="relative flex h-full min-h-0 overflow-hidden">
+      <WorkspaceSidebar
+        activeView={workspaceView}
+        onViewChange={setWorkspaceView}
+        profileName={tabLabel || profile.name}
+      />
+      <div className={`relative min-h-0 min-w-0 flex-1 ${previewOpen || settingsOpen ? "overflow-hidden" : "overflow-y-auto"}`}>
+      <div className="mx-auto w-full max-w-5xl px-4 py-6 sm:px-7 sm:py-8 xl:px-10">
+      <div hidden={workspaceView !== "personal"}>
+        <PersonalInformationPanel personalInfo={personalInfo} />
       </div>
+
+      <div hidden={workspaceView !== "builder"}>
+
+      <Button
+        type="button"
+        onClick={() => void handleLoadLastApplication()}
+        disabled={!profile.workspaceId || isLoadingLastApplication || isGenerating}
+        variant="secondary"
+        className="group mb-5 h-auto min-h-14 w-full max-w-xl justify-start whitespace-normal border border-input px-4 py-3 text-left"
+      >
+        <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-background">
+          <History className={isLoadingLastApplication ? "animate-spin" : ""} />
+        </span>
+        <span className="min-w-0">
+          <span className="block font-semibold">
+            {isLoadingLastApplication ? "Loading Last Application..." : "Load Last Application"}
+          </span>
+          <span className="block text-xs font-normal text-muted-foreground group-disabled:text-current">
+            Restore its resume and saved answers
+          </span>
+        </span>
+      </Button>
 
       <Tabs
         value={workflowTab}
         onValueChange={(value) => setWorkflowTab(value as "resume" | "questions")}
-        className="order-2 min-w-0 gap-4"
+        className="min-w-0 gap-5"
       >
-        <TabsList className="grid h-auto w-full grid-cols-2 gap-1 rounded-xl p-1.5">
+        <TabsList className="grid h-auto w-full grid-cols-2 gap-1 rounded-xl border border-white/[0.08] bg-white/[0.025] p-1">
           <TabsTrigger
             value="resume"
-            className="group h-auto min-w-0 flex-col items-start gap-1 whitespace-normal rounded-lg px-4 py-3 text-left data-[state=active]:border-blue-800 data-[state=active]:bg-blue-700 data-[state=active]:text-white data-[state=active]:shadow-md dark:data-[state=active]:border-blue-300 dark:data-[state=active]:bg-blue-700 dark:data-[state=active]:text-white"
+            className="group h-auto min-w-0 flex-col items-start gap-1 whitespace-normal rounded-lg px-2 py-3 text-left data-[state=active]:border-primary data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-none sm:px-4"
           >
-            <span className="flex items-center gap-2 font-semibold">
-              <span className="flex h-6 w-6 items-center justify-center rounded-full bg-primary text-xs text-primary-foreground">
+            <span className="flex min-w-0 items-center gap-2 text-xs font-semibold sm:text-sm">
+              <span className="hidden h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary text-xs text-primary-foreground sm:flex">
                 {resumeData ? <Check className="h-3.5 w-3.5" /> : "1"}
               </span>
-              <Briefcase className="h-4 w-4" />
-              Resume Generation
+              Resume
             </span>
-            <span className="hidden pl-8 text-xs font-normal text-muted-foreground group-data-[state=active]:text-blue-100 sm:block">
+            <span className="hidden pl-8 text-xs font-normal text-muted-foreground sm:block">
               Scan the job, generate files, and review the result
             </span>
           </TabsTrigger>
           <TabsTrigger
             value="questions"
-            className="group h-auto min-w-0 flex-col items-start gap-1 whitespace-normal rounded-lg px-4 py-3 text-left data-[state=active]:border-blue-800 data-[state=active]:bg-blue-700 data-[state=active]:text-white data-[state=active]:shadow-md dark:data-[state=active]:border-blue-300 dark:data-[state=active]:bg-blue-700 dark:data-[state=active]:text-white"
+            className="group h-auto min-w-0 flex-col items-start gap-1 whitespace-normal rounded-lg px-2 py-3 text-left data-[state=active]:border-primary data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-none sm:px-4"
           >
-            <span className="flex items-center gap-2 font-semibold">
-              <span className="flex h-6 w-6 items-center justify-center rounded-full bg-primary text-xs text-primary-foreground">
+            <span className="flex min-w-0 items-center gap-2 text-xs font-semibold sm:text-sm">
+              <span className="hidden h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary text-xs text-primary-foreground sm:flex">
                 {applicationAnswers.length ? <Check className="h-3.5 w-3.5" /> : "2"}
               </span>
-              <MessagesSquare className="h-4 w-4" />
-              Application Questions
+              Questions
             </span>
-            <span className="hidden pl-8 text-xs font-normal text-muted-foreground group-data-[state=active]:text-blue-100 sm:block">
+            <span className="hidden pl-8 text-xs font-normal text-muted-foreground sm:block">
               Scan questions, write answers, and fill the application
             </span>
           </TabsTrigger>
         </TabsList>
 
       <TabsContent value="resume" className="mt-0">
-      <Card>
-        <CardHeader>
-          <div className="flex items-start justify-between gap-4">
+      <Card className="border-0 bg-transparent py-8">
+        <CardHeader className="px-0">
+          <div className="flex flex-col items-start justify-between gap-4 xl:flex-row">
             <div className="min-w-0">
-              <CardTitle className="flex items-center gap-2">
-                <Briefcase className="h-5 w-5" />
+              <CardTitle className="flex items-center gap-2 text-base sm:text-lg">
+                <Briefcase className="h-5 w-5 text-primary" />
                 Job Description & Resume
               </CardTitle>
               <CardDescription className="mt-2">
@@ -932,11 +858,9 @@ export function ProfileWorkspace({
             <Tooltip>
               <TooltipTrigger asChild>
                 <div
-                  className={`w-72 shrink-0 rounded-md border px-3 py-2 text-sm ${
+                  className={`w-full shrink-0 rounded-xl border border-white/[0.08] bg-white/[0.025] px-3 py-2 text-sm xl:w-60 ${
                     resumeData?.annualSalary && resumeData.hourlyRate
-                      ? resumeData.rateInJd
-                        ? "border-green-500/50 bg-green-50 text-green-950 dark:bg-green-950/30 dark:text-green-100"
-                        : "border-pink-500/50 bg-pink-50 text-pink-950 dark:bg-pink-950/30 dark:text-pink-100"
+                      ? "text-foreground"
                       : ""
                   }`}
                 >
@@ -961,7 +885,7 @@ export function ProfileWorkspace({
             </Tooltip>
           </div>
         </CardHeader>
-        <CardContent className="space-y-4">
+        <CardContent className="space-y-5 px-0">
         <Textarea
           placeholder={`Paste the job description here...
 
@@ -987,7 +911,7 @@ export function ProfileWorkspace({
               type="button"
               onClick={() => void handleScanPage("page")}
               disabled={isScanningPage || isGenerating}
-              className="group h-auto min-h-14 w-full justify-start whitespace-normal border border-blue-800 bg-blue-700 px-4 py-3 text-left text-white shadow-sm hover:bg-blue-800 hover:text-white focus-visible:border-blue-900 focus-visible:ring-blue-500/60 disabled:border-slate-300 disabled:bg-slate-200 disabled:text-slate-600 disabled:opacity-100 dark:border-blue-400 dark:bg-blue-700 dark:hover:bg-blue-600 dark:disabled:border-slate-700 dark:disabled:bg-slate-800 dark:disabled:text-slate-400"
+              className="group h-auto min-h-14 w-full justify-start whitespace-normal px-4 py-3 text-left"
             >
               <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-white/15">
                 <RefreshCw className={isScanningPage ? "animate-spin" : ""} />
@@ -996,7 +920,7 @@ export function ProfileWorkspace({
                 <span className="block font-semibold">
                   {isScanningPage ? "Scanning Current Page..." : "Scan Current Page"}
                 </span>
-                <span className="block text-xs font-normal text-blue-100 group-disabled:text-current">
+                <span className="block text-xs font-normal text-primary-foreground group-disabled:text-current">
                   Import the active job description
                 </span>
               </span>
@@ -1013,57 +937,37 @@ export function ProfileWorkspace({
         )}
 
         <div className="space-y-3">
-          <div className="flex gap-3 flex-wrap">
+          <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap">
             <Button disabled={isGenerating} onClick={() => void handleGenerate()}>
               {isGenerating ? "Generating..." : "Generate Resume"}
             </Button>
             <Button
               onClick={() => setPreviewOpen(true)}
               disabled={!resumeData}
-              className="min-h-10 border border-violet-800 bg-violet-700 px-4 text-white shadow-sm hover:bg-violet-800 hover:text-white focus-visible:border-violet-900 focus-visible:ring-violet-500/60 disabled:border-slate-300 disabled:bg-slate-200 disabled:text-slate-600 disabled:opacity-100 dark:border-violet-400 dark:bg-violet-700 dark:hover:bg-violet-600 dark:disabled:border-slate-700 dark:disabled:bg-slate-800 dark:disabled:text-slate-400"
+              variant="outline"
+              className="min-h-10 px-4"
             >
               <Eye />
               Preview Resume
             </Button>
             {resumeData && (
-              <Button variant="secondary" onClick={() => setWorkflowTab("questions")}>
+              <Button variant="secondary" className="h-auto min-h-9 whitespace-normal py-2" onClick={() => setWorkflowTab("questions")}>
                 Continue to Application Questions
                 <MessagesSquare className="h-4 w-4" />
               </Button>
             )}
           </div>
-          <Button
-            type="button"
-            onClick={() => void handleLoadLastApplication()}
-            disabled={!profile.workspaceId || isLoadingLastApplication || isGenerating}
-            className="group h-auto min-h-14 w-full max-w-xl justify-start whitespace-normal border border-slate-950 bg-slate-900 px-4 py-3 text-left text-white shadow-sm hover:bg-slate-700 hover:text-white focus-visible:border-slate-950 focus-visible:ring-slate-500/60 disabled:border-slate-300 disabled:bg-slate-200 disabled:text-slate-600 disabled:opacity-100 dark:border-slate-100 dark:bg-slate-100 dark:text-slate-950 dark:hover:bg-white dark:hover:text-slate-950 dark:disabled:border-slate-700 dark:disabled:bg-slate-800 dark:disabled:text-slate-400"
-          >
-            <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-white/15 dark:bg-black/10">
-              <History className={isLoadingLastApplication ? "animate-spin" : ""} />
-            </span>
-            <span className="min-w-0">
-              <span className="block font-semibold">
-                {isLoadingLastApplication ? "Loading Last Application..." : "Load Last Application"}
-              </span>
-              <span className="block text-xs font-normal text-slate-200 group-disabled:text-current dark:text-slate-600 dark:group-disabled:text-current">
-                Restore its resume and saved answers
-              </span>
-            </span>
-          </Button>
         </div>
         </CardContent>
       </Card>
       </TabsContent>
 
       <TabsContent value="questions" className="mt-0">
-      <Card>
-        <CardHeader>
-          <CardTitle>Application Questions</CardTitle>
-          <CardDescription>
-            Click Scan Questions on each application page, then edit the results or enter one question per line.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
+      <DashboardSection
+        title="Application questions"
+        description="Scan each application page, write tailored answers, and fill its text fields."
+        icon={<MessagesSquare className="h-5 w-5" />}
+      >
           {!resumeData && (
             <Alert>
               <AlertCircle className="h-4 w-4" />
@@ -1100,7 +1004,8 @@ export function ProfileWorkspace({
               type="button"
               onClick={() => void handleScanPage("questions")}
               disabled={isScanningPage || isGeneratingAnswers}
-              className="min-h-10 border border-blue-800 bg-blue-700 px-4 text-white shadow-sm hover:bg-blue-800 hover:text-white focus-visible:border-blue-900 focus-visible:ring-blue-500/60 disabled:border-slate-300 disabled:bg-slate-200 disabled:text-slate-600 disabled:opacity-100 dark:border-blue-400 dark:bg-blue-700 dark:hover:bg-blue-600 dark:disabled:border-slate-700 dark:disabled:bg-slate-800 dark:disabled:text-slate-400"
+              variant="outline"
+              className="min-h-10 px-4"
             >
               <RefreshCw className={isScanningPage ? "animate-spin" : ""} />
               {isScanningPage ? "Scanning Questions..." : "Scan Questions"}
@@ -1108,7 +1013,7 @@ export function ProfileWorkspace({
             <Button
               onClick={() => void handleGenerateAnswers()}
               disabled={!resumeData || !conversationId || isGeneratingAnswers || isGenerating || isScanningPage}
-              className="min-h-10 border border-violet-800 bg-violet-700 px-4 text-white shadow-sm hover:bg-violet-800 hover:text-white focus-visible:border-violet-900 focus-visible:ring-violet-500/60 disabled:border-slate-300 disabled:bg-slate-200 disabled:text-slate-600 disabled:opacity-100 dark:border-violet-400 dark:bg-violet-700 dark:hover:bg-violet-600 dark:disabled:border-slate-700 dark:disabled:bg-slate-800 dark:disabled:text-slate-400"
+              className="min-h-10 px-4"
             >
               <MessagesSquare />
               {isGeneratingAnswers ? "Writing Answers..." : "Generate Answers"}
@@ -1141,10 +1046,10 @@ export function ProfileWorkspace({
               ))}
             </div>
           )}
-        </CardContent>
-      </Card>
+      </DashboardSection>
       </TabsContent>
       </Tabs>
+      </div>
       </div>
       </div>
       <FunnyLoadingBar isLoading={isGenerating || isGeneratingAnswers} profileName={tabLabel || profile.name || undefined} />
@@ -1187,7 +1092,7 @@ export function ProfileWorkspace({
 
         <TabsContent value="resume" className="flex-1 overflow-y-auto">
           {resumeData && (
-          <div className="border rounded-lg overflow-hidden shadow-sm my-4">
+          <div className="my-4 overflow-hidden rounded-xl border border-white/[0.08]">
             <ResumePreview
             data={resumeData}
             editable={previewEditable}

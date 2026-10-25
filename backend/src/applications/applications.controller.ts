@@ -1,6 +1,9 @@
 import {
-  Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Query, UseGuards,
+  Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Query, Res, UploadedFile,
+  UseGuards, UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import type { Response } from 'express';
 import { ApplicationsService } from './applications.service';
 import {
   BulkIdsDto, BulkUpdateApplicationsDto, CreateGeneratedApplicationDto, CreateManualApplicationDto,
@@ -17,6 +20,7 @@ import { BannedUrlService } from './banned-url.service';
 import { CreateBannedUrlPatternDto } from './dto/banned-url.dto';
 import { ApplicationGenerationService } from '../resume/resume.service';
 import { GenerateApplicationDto } from '../resume/dto/generate.dto';
+import { ApplicationScreenshotService } from './application-screenshot.service';
 
 @Controller('applications')
 @UseGuards(RolesGuard)
@@ -25,6 +29,7 @@ export class ApplicationsController {
     private readonly applications: ApplicationsService,
     private readonly bannedUrls: BannedUrlService,
     private readonly generation: ApplicationGenerationService,
+    private readonly screenshots: ApplicationScreenshotService,
   ) {}
 
   /** Enum catalogue so the frontend never hardcodes a list that could drift from the backend. */
@@ -79,6 +84,35 @@ export class ApplicationsController {
   @Get(':id/resume')
   getResume(@CurrentUser() user: AuthUser, @Param('id') id: string) {
     return this.applications.getResume(user, id);
+  }
+
+  @Post(':id/screenshot')
+  @UseInterceptors(FileInterceptor('screenshot', {
+    limits: { fileSize: 5 * 1024 * 1024, files: 1 },
+  }))
+  uploadScreenshot(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @UploadedFile() file?: Express.Multer.File,
+  ) {
+    return this.screenshots.save(user, id, file);
+  }
+
+  @Get(':id/screenshot')
+  async getScreenshot(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Res() response: Response,
+  ) {
+    const screenshot = await this.screenshots.get(user, id);
+    response.set({
+      'Content-Type': screenshot.content_type,
+      'Content-Length': screenshot.image_data.length.toString(),
+      'Cache-Control': 'private, no-store',
+      'X-Screenshot-Captured-At': screenshot.captured_at.toISOString(),
+      'X-Screenshot-Expires-At': screenshot.expires_at.toISOString(),
+    });
+    response.send(screenshot.image_data);
   }
 
   @Get('banned-patterns')

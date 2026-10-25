@@ -80,6 +80,19 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   return (await res.json()) as T;
 }
 
+async function requestBlob(path: string): Promise<Blob> {
+  const token = tokenStore.get();
+  const res = await fetch(`${BASE}/api${path}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    cache: 'no-store',
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new ApiError(body?.message ?? `Request failed (${res.status})`, res.status, body);
+  }
+  return res.blob();
+}
+
 function qs(params: Record<string, unknown>): string {
   const sp = new URLSearchParams();
   for (const [key, value] of Object.entries(params)) {
@@ -244,6 +257,8 @@ export const api = {
     }),
   getApplicationResume: (id: string) =>
     request<ResumeArtifact>(`/applications/${id}/resume`),
+  getApplicationScreenshot: (id: string) =>
+    requestBlob(`/applications/${encodeURIComponent(id)}/screenshot`),
   listBannedPatterns: () => request<BannedUrlPattern[]>('/applications/banned-patterns'),
   createBannedPattern: (pattern: string) =>
     request<BannedUrlPattern>('/applications/banned-patterns', {

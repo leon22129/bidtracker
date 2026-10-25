@@ -41,7 +41,7 @@ const OPENAI_API_BASE = 'https://api.openai.com/v1';
 const MODEL = process.env.OPENAI_MODEL || 'gpt-6.1-sol';
 
 type OpenAiError = { message?: string; type?: string; code?: string; param?: string };
-type OpenAiResponse = { id?: string; output_text?: string; output?: Array<{ type?: string; role?: string; content?: Array<{ type?: string; text?: string }> }>; usage?: OpenAiUsage; error?: OpenAiError };
+type OpenAiResponse = { id?: string; status?: string; output_text?: string; output?: Array<{ type?: string; role?: string; content?: Array<{ type?: string; text?: string }> }>; usage?: OpenAiUsage; error?: OpenAiError };
 type OpenAiConversationResponse = { id?: string; error?: OpenAiError };
 type OpenAiConversationItem = {
   id?: string;
@@ -748,7 +748,11 @@ ${JSON.stringify(resume)}`;
     const aiRequestId = randomUUID();
     const startedAt = performance.now();
     const input = requestText(body);
-    const serializedBody = body === undefined ? undefined : JSON.stringify(body);
+    const shouldStream = path === '/responses' && method === 'POST' && body !== undefined;
+    const requestBody = shouldStream && body && typeof body === 'object'
+      ? { ...(body as Record<string, unknown>), stream: true }
+      : body;
+    const serializedBody = requestBody === undefined ? undefined : JSON.stringify(requestBody);
     const includeContent = envEnabled('AI_LOG_CONTENT');
     const maxContentChars = contentLimit();
     const apiKey = process.env.OPENAI_API_KEY?.trim();
@@ -777,30 +781,54 @@ ${JSON.stringify(resume)}`;
     });
 
     let response: Response;
-    try {
-      response = await fetch(`${OPENAI_API_BASE}${path}`, {
-        method,
-        headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-        signal: AbortSignal.timeout(120000),
-        ...(serializedBody === undefined ? {} : { body: serializedBody }),
-      });
-    } catch (error) {
-      logEvent(this.logger, 'error', 'openai_request_failed', {
-        ai_request_id: aiRequestId,
-        operation,
-        method,
-        endpoint: path,
-        model: path === '/responses' ? MODEL : undefined,
-        duration_ms: Number((performance.now() - startedAt).toFixed(2)),
-        failure_type: 'network',
-        ...errorFields(error),
-      });
-      if (error instanceof DOMException && error.name === 'TimeoutError') {
-        throw new BadGatewayException('The AI provider took too long to generate a response. Please try again.');
+    let data: OpenAiResponse | null;
+    const maxAttempts = 3;
+    for (let attempt = 1; ; attempt++) {
+      try {
+        response = await fetch(`${OPENAI_API_BASE}${path}`, {
+          method,
+          headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+          signal: AbortSignal.timeout(120000),
+          ...(serializedBody === undefined ? {} : { body: serializedBody }),
+        });
+        data = response.ok && shouldStream
+          ? await this.readOpenAiResponseStream(response)
+          : await response.json().catch(() => null) as OpenAiResponse | null;
+        break;
+      } catch (error) {
+        if (attempt < maxAttempts) {
+          const delayMs = attempt * 750;
+          logEvent(this.logger, 'warn', 'openai_request_retrying', {
+            ai_request_id: aiRequestId,
+            operation,
+            method,
+            endpoint: path,
+            model: path === '/responses' ? MODEL : undefined,
+            attempt,
+            next_attempt: attempt + 1,
+            delay_ms: delayMs,
+            ...errorFields(error),
+          });
+          await new Promise((resolve) => setTimeout(resolve, delayMs));
+          continue;
+        }
+        logEvent(this.logger, 'error', 'openai_request_failed', {
+          ai_request_id: aiRequestId,
+          operation,
+          method,
+          endpoint: path,
+          model: path === '/responses' ? MODEL : undefined,
+          attempts: attempt,
+          duration_ms: Number((performance.now() - startedAt).toFixed(2)),
+          failure_type: 'network',
+          ...errorFields(error),
+        });
+        if (error instanceof DOMException && error.name === 'TimeoutError') {
+          throw new BadGatewayException('The AI provider took too long to generate a response. Please try again.');
+        }
+        throw new BadGatewayException('Unable to reach the AI provider after 3 attempts. Please try again.');
       }
-      throw new BadGatewayException('Unable to reach the AI provider. Please try again.');
     }
-    const data = await response.json().catch(() => null) as OpenAiResponse | null;
     const output = responseText(data);
     const commonFields = {
       ai_request_id: aiRequestId,
@@ -833,6 +861,48 @@ ${JSON.stringify(resume)}`;
       output_preview: includeContent ? truncate(output, maxContentChars) : undefined,
     });
     return data;
+  }
+
+  /** Consume Responses API server-sent events and retain the same final object shape as JSON mode. */
+  private async readOpenAiResponseStream(response: Response): Promise<OpenAiResponse> {
+    if (!response.body) throw new Error('OpenAI streaming response had no body');
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let completed: OpenAiResponse | null = null;
+
+    const consumeEvent = (block: string) => {
+      const payload = block
+        .split(/\r?\n/)
+        .filter((line) => line.startsWith('data:'))
+        .map((line) => line.slice(5).trimStart())
+        .join('\n');
+      if (!payload || payload === '[DONE]') return;
+      const event = JSON.parse(payload) as {
+        type?: string;
+        response?: OpenAiResponse;
+        error?: OpenAiError;
+      };
+      if (event.type === 'response.completed' && event.response) completed = event.response;
+      if (event.type === 'response.failed') {
+        completed = event.response || { status: 'failed', error: event.error };
+      }
+      if (event.type === 'error') {
+        completed = { status: 'failed', error: event.error || { message: 'OpenAI stream failed' } };
+      }
+    };
+
+    while (true) {
+      const { done, value } = await reader.read();
+      buffer += decoder.decode(value, { stream: !done });
+      const blocks = buffer.split(/\r?\n\r?\n/);
+      buffer = blocks.pop() || '';
+      for (const block of blocks) consumeEvent(block);
+      if (done) break;
+    }
+    if (buffer.trim()) consumeEvent(buffer);
+    if (!completed) throw new Error('OpenAI stream ended before response.completed');
+    return completed;
   }
 
   private parseJson(value: string): Record<string, unknown> {

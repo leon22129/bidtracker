@@ -851,3 +851,9 @@ Start-Process powershell -ArgumentList '-NoExit','-Command','Set-Location .\back
 ```command
 cloudflared tunnel --url http://localhost:3000
 ```
+
+
+# Cloudflared download URL
+```
+https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.msi
+```

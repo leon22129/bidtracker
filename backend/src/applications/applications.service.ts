@@ -37,6 +37,7 @@ const ROW_SELECT = {
   url: true, normalized_url: true, job_source: true, application_status: true, pipeline_status: true,
   interview_date: true, interview_note: true, note: true, paid: true,
   resume_generated_at: true, cover_letter_template: true,
+  screenshot: { select: { captured_at: true, expires_at: true } },
   created_by_user_id: true, created_at: true, updated_at: true,
 } as const;
 

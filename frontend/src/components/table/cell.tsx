@@ -16,6 +16,7 @@ interface CellProps {
   onDownloadJobDescription?: (row: JobApplication) => void;
   onDownloadCoverLetter?: (row: JobApplication) => void;
   onViewApplicationAnswers?: (row: JobApplication) => void;
+  onDownloadScreenshot?: (row: JobApplication) => void;
 }
 
 /**
@@ -31,7 +32,7 @@ interface CellProps {
  */
 export function Cell({
   row, column, user, boundary, onCommit, onDownloadResume, onDownloadJobDescription,
-  onDownloadCoverLetter, onViewApplicationAnswers,
+  onDownloadCoverLetter, onViewApplicationAnswers, onDownloadScreenshot,
 }: CellProps) {
   const [editing, setEditing] = useState(false);
   const [customSource, setCustomSource] = useState(false);
@@ -87,6 +88,15 @@ export function Cell({
           onClick={() => onViewApplicationAnswers?.(row)}
         >
           Q&amp;A
+        </button>
+        <button
+          type="button"
+          className="rounded border border-gray-400 bg-white px-1.5 py-0.5 text-2xs font-semibold text-gray-800 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-40"
+          disabled={!row.screenshot}
+          title={row.screenshot ? `Download submission screenshot (expires ${new Date(row.screenshot.expires_at).toLocaleString()})` : 'No active submission screenshot'}
+          onClick={() => onDownloadScreenshot?.(row)}
+        >
+          Proof.png
         </button>
       </div>
     );

@@ -299,7 +299,7 @@ exit `$LASTEXITCODE
 
         [BidTrackerProcessJob]::AddProcess($Process.Handle)
         if (!$Ready.WaitOne(10000)) {
-            throw "npm process helper did not initialize within 10 seconds"
+            throw "npm process helper did not initialize within 100 seconds"
         }
         $Gate.Set() | Out-Null
         return $Process

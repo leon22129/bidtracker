@@ -288,6 +288,21 @@ export default function WorkspaceTablePage() {
     }
   }, [toast]);
 
+  const downloadScreenshot = useCallback(async (row: JobApplication) => {
+    try {
+      const blob = await api.getApplicationScreenshot(row.id);
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = `application-${row.number}-proof.png`;
+      anchor.click();
+      URL.revokeObjectURL(url);
+      toast.success('Submission screenshot downloaded.');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not download the screenshot');
+    }
+  }, [toast]);
+
   // ---- render --------------------------------------------------------------
   if (loadError) {
     return (
@@ -362,6 +377,7 @@ export default function WorkspaceTablePage() {
           onDownloadJobDescription={downloadJobDescription}
           onDownloadCoverLetter={downloadCoverLetter}
           onViewApplicationAnswers={viewApplicationAnswers}
+          onDownloadScreenshot={downloadScreenshot}
           readOnly={!workspace.can_edit}
         />
       </div>

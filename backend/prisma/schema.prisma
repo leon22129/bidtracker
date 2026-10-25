@@ -196,6 +196,7 @@ model JobApplication {
   workspace     Workspace           @relation(fields: [workspace_id], references: [id], onDelete: Cascade)
   createdByUser User                @relation("CreatedBy", fields: [created_by_user_id], references: [id], onDelete: Restrict)
   conversation  ResumeConversation? @relation(fields: [conversation_id], references: [id], onDelete: SetNull)
+  screenshot    ApplicationScreenshot?
 
   // Guarantees the "number resets per date" invariant at the storage layer, and doubles as the
   // covering index for the default table sort (date desc, number asc).
@@ -222,6 +223,19 @@ model JobApplication {
   // Prisma cannot represent partial indexes in schema syntax.
   @@index([workspace_id, date(sort: Desc), number(sort: Asc)], map: "job_applications_workspace_date_desc_number_asc_idx")
   @@map("job_applications")
+}
+
+model ApplicationScreenshot {
+  application_id String   @id
+  image_data     Bytes
+  content_type   String   @default("image/png")
+  captured_at    DateTime @default(now())
+  expires_at     DateTime
+
+  application JobApplication @relation(fields: [application_id], references: [id], onDelete: Cascade)
+
+  @@index([expires_at])
+  @@map("application_screenshots")
 }
 
 // ---------------------------------------------------------------------------
