@@ -794,7 +794,7 @@ export function ProfileWorkspace({
         profileName={tabLabel || profile.name}
       />
       <div className={`relative min-h-0 min-w-0 flex-1 ${previewOpen || settingsOpen ? "overflow-hidden" : "overflow-y-auto"}`}>
-      <div className="mx-auto w-full max-w-5xl px-4 py-6 sm:px-7 sm:py-8 xl:px-10">
+      <div className={`mx-auto w-full max-w-5xl px-4 sm:px-7 xl:px-10 ${workspaceView === "personal" ? "py-2 sm:py-4" : "py-6 sm:py-8"}`}>
       <div hidden={workspaceView !== "personal"}>
         <PersonalInformationPanel personalInfo={personalInfo} />
       </div>

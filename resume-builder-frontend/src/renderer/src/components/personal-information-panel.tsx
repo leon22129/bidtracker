@@ -1,12 +1,12 @@
 import { Briefcase, MapPin, UserRound } from "lucide-react";
+import type { ReactNode } from "react";
 import type { PersonalInfo } from "@/lib/parse-resume";
-import { DashboardSection } from "@/components/dashboard-section";
 
 type Detail = readonly [label: string, value: string | undefined];
 
 function DetailList({ items }: { items: Detail[] }) {
   return (
-    <dl className="grid gap-x-8 sm:grid-cols-2 xl:grid-cols-3">
+    <dl className="grid gap-x-5 md:grid-cols-3">
       {items.map(([label, value]) => {
         const href = !value?.trim() ? null
           : label === "Email" ? `mailto:${value}`
@@ -14,9 +14,9 @@ function DetailList({ items }: { items: Detail[] }) {
           : label === "LinkedIn" ? (/^https?:\/\//i.test(value) ? value : `https://${value}`)
           : null;
         return (
-          <div key={label} className="min-w-0 border-b border-border/60 py-4">
-            <dt className="text-xs font-medium text-muted-foreground">{label}</dt>
-            <dd className="mt-1.5 break-words text-sm leading-6 text-foreground [overflow-wrap:anywhere]">
+          <div key={label} className="grid min-w-0 grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)] items-baseline gap-x-3 border-b border-border/40 py-0.5 md:block md:py-1">
+            <dt className="text-xs font-medium leading-4 text-muted-foreground">{label}</dt>
+            <dd className="min-w-0 break-words text-[13px] leading-[18px] text-foreground [overflow-wrap:anywhere] md:mt-1 md:text-sm md:leading-5">
               {href ? (
                 <a
                   href={href}
@@ -34,14 +34,24 @@ function DetailList({ items }: { items: Detail[] }) {
   );
 }
 
+function InfoSection({ title, icon, children }: { title: string; icon: ReactNode; children: ReactNode }) {
+  return (
+    <section>
+      <h2 className="mb-1 flex items-center gap-2 text-sm font-semibold tracking-tight">
+        <span className="shrink-0 text-primary" aria-hidden="true">{icon}</span>
+        {title}
+      </h2>
+      {children}
+    </section>
+  );
+}
+
 export function PersonalInformationPanel({ personalInfo }: { personalInfo: PersonalInfo }) {
   return (
-    <div>
-      <DashboardSection
+    <div className="space-y-2 md:space-y-4">
+      <InfoSection
         title="Personal information"
-        description="The profile details used in your resume and application autofill."
-        icon={<UserRound className="size-5" />}
-        className="pt-0 sm:pt-0"
+        icon={<UserRound className="size-4" />}
       >
         <DetailList items={[
           ["Full name", personalInfo.fullName],
@@ -52,8 +62,8 @@ export function PersonalInformationPanel({ personalInfo }: { personalInfo: Perso
           ["Phone", personalInfo.phone],
           ["LinkedIn", personalInfo.linkedin],
         ]} />
-      </DashboardSection>
-      <DashboardSection title="Full address" icon={<MapPin className="size-5" />}>
+      </InfoSection>
+      <InfoSection title="Full address" icon={<MapPin className="size-4" />}>
         <DetailList items={[
           ["Street address", personalInfo.address1],
           ["City", personalInfo.city],
@@ -62,17 +72,17 @@ export function PersonalInformationPanel({ personalInfo }: { personalInfo: Perso
           ["County", personalInfo.county],
           ["Country", personalInfo.country],
         ]} />
-      </DashboardSection>
-      <DashboardSection title="Demographics and work authorization" icon={<Briefcase className="size-5" />}>
+      </InfoSection>
+      <InfoSection title="Demographics & work" icon={<Briefcase className="size-4" />}>
         <DetailList items={[
           ["Gender", personalInfo.gender],
           ["Hispanic / Latino", personalInfo.hispanicLatino],
           ["Race / ethnicity", personalInfo.ethnicity],
           ["US work status", personalInfo.usWorkStatus],
-          ["Legally authorized to work in the US", personalInfo.legallyAuthorizedUs],
-          ["Requires sponsorship now or later", personalInfo.requiresSponsorship],
+          ["US work authorization", personalInfo.legallyAuthorizedUs],
+          ["Sponsorship required", personalInfo.requiresSponsorship],
         ]} />
-      </DashboardSection>
+      </InfoSection>
     </div>
   );
 }
