@@ -52,6 +52,7 @@ import type { WebAuthStatus } from "../../shared/auth";
 import { ProfileWorkspace } from "@/components/profile-workspace";
 import { ProfileSettingsOnlyDialog } from "@/components/profile-settings-only-dialog";
 import { ExtensionSettingsDialog } from "@/components/extension-settings-dialog";
+import { ApplicationScreenshots } from "@/components/application-screenshots";
 import { toast } from "@/components/ui/use-toast";
 import { ToastAction } from "@/components/ui/toast";
 import {
@@ -125,78 +126,6 @@ export default function Home() {
 
   const legacyProfileIdRef = useRef<string | null>(null);
   const notificationDismissersRef = useRef<Map<string, () => void>>(new Map());
-
-  useEffect(() => {
-    const chromeApi = (globalThis as { chrome?: { runtime?: {
-      sendMessage: (message: unknown) => Promise<any>;
-      onMessage: {
-        addListener: (listener: (message: any) => void) => void;
-        removeListener: (listener: (message: any) => void) => void;
-      };
-    } } }).chrome;
-    if (!chromeApi?.runtime) return;
-
-    const showScreenshotToast = (item: { tabId: number; applicationId: string }) => {
-      let dismissToast: (() => void) | undefined;
-      const { dismiss } = toast({
-        title: "Application submitted",
-        description: "Save the visible confirmation page with this application.",
-        duration: Infinity,
-        action: (
-          <ToastAction
-            altText="Take screenshot"
-            onClick={async () => {
-              dismissToast?.();
-              toast({ title: "Taking screenshot…", description: "Keep the submitted page open." });
-              const result = await chromeApi.runtime!.sendMessage({
-                type: "CAPTURE_APPLICATION_SCREENSHOT",
-                tabId: item.tabId,
-                applicationId: item.applicationId,
-              }).catch((error: unknown) => ({
-                ok: false,
-                error: error instanceof Error ? error.message : String(error),
-              }));
-              if (result?.ok) {
-                toast({
-                  title: "Screenshot saved",
-                  description: "It will remain attached to the application for 8 days.",
-                });
-              } else {
-                toast({
-                  variant: "destructive",
-                  title: "Screenshot not saved",
-                  description: result?.error || "Please try again.",
-                  duration: Infinity,
-                  action: (
-                    <ToastAction altText="Try again" onClick={() => showScreenshotToast(item)}>
-                      Try again
-                    </ToastAction>
-                  ),
-                });
-              }
-            }}
-          >
-            Take screenshot
-          </ToastAction>
-        ),
-      });
-      dismissToast = dismiss;
-    };
-
-    const onMessage = (message: any) => {
-      if (message?.type === "APPLICATION_SCREENSHOT_READY") {
-        showScreenshotToast({ tabId: Number(message.tabId), applicationId: message.applicationId });
-      }
-    };
-    chromeApi.runtime.onMessage.addListener(onMessage);
-    void chromeApi.runtime.sendMessage({ type: "GET_PENDING_SCREENSHOTS" })
-      .then((result: any) => {
-        const latest = Array.isArray(result?.items) ? result.items.at(-1) : null;
-        if (latest) showScreenshotToast(latest);
-      })
-      .catch(() => undefined);
-    return () => chromeApi.runtime!.onMessage.removeListener(onMessage);
-  }, []);
 
   // ─── Data loading ────────────────────────────────────────────────────────────
 
@@ -725,6 +654,8 @@ export default function Home() {
           </div>
         </div>
       </div>
+
+      <ApplicationScreenshots />
 
       {/* Content area — flex-1 so it fills the remaining viewport height */}
       <div className="flex-1 min-h-0 overflow-hidden relative">

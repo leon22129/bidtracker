@@ -144,6 +144,7 @@ export interface ApplicationFilters {
   pipeline_status?: PipelineStatus[];
   job_source?: JobSource[];
   paid?: boolean;
+  has_screenshot?: boolean;
   date_from?: string;
   date_to?: string;
   sort_by?: string;

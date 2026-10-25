@@ -123,6 +123,41 @@ describe('ApplicationsService generated-application duplicate-click protection',
     }));
   });
 
+  it.each([
+    ['forward', { cursor_after: 'current-row' }, 1],
+    ['backward', { cursor_before: 'current-row' }, -1],
+  ])('finds the next active screenshot %s in the filtered table order', async (_direction, cursor, take) => {
+    const { service, prisma } = setup();
+    prisma.jobApplication.findMany.mockResolvedValue([existing]);
+    const before = new Date();
+
+    await service.findAll(user, {
+      workspace_id: dto.workspace_id,
+      ...cursor,
+      page_size: 1,
+      has_screenshot: true,
+      include_total: false,
+      application_status: ['Applied'],
+      sort_by: 'company_name',
+      sort_dir: 'asc',
+    });
+
+    const options = prisma.jobApplication.findMany.mock.calls[0][0];
+    expect(options).toMatchObject({
+      where: {
+        workspace_id: dto.workspace_id,
+        application_status: { in: ['Applied'] },
+        screenshot: { is: { expires_at: { gt: expect.any(Date) } } },
+      },
+      cursor: { id: 'current-row' },
+      skip: 1,
+      take,
+      orderBy: [{ company_name: 'asc' }, { date: 'asc' }, { number: 'asc' }, { id: 'asc' }],
+    });
+    expect(options.where.screenshot.is.expires_at.gt.getTime()).toBeGreaterThanOrEqual(before.getTime());
+    expect(prisma.jobApplication.count).not.toHaveBeenCalled();
+  });
+
   it('treats an existing identical URL in the workspace as a successful retry', async () => {
     const { service, prisma, numbering, duplicates } = setup();
     duplicates.classifyBatch.mockResolvedValue([{

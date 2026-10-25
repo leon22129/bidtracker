@@ -93,7 +93,10 @@ export async function getCurrentBrowserTabUrl(): Promise<string> {
   return url;
 }
 
-export async function armApplicationScreenshot(applicationId: string): Promise<void> {
+export async function armApplicationScreenshot(
+  applicationId: string,
+  details: { companyName?: string; jobTitle?: string } = {},
+): Promise<void> {
   const chromeApi = (globalThis as { chrome?: {
     tabs?: { query: (queryInfo: { active: boolean; currentWindow: boolean }) => Promise<Array<{ id?: number }>> };
     runtime?: { sendMessage: (message: unknown) => Promise<{ ok?: boolean; error?: string }> };
@@ -105,6 +108,7 @@ export async function armApplicationScreenshot(applicationId: string): Promise<v
     type: "ARM_APPLICATION_SCREENSHOT",
     tabId: tab.id,
     applicationId,
+    ...details,
   });
   if (!result?.ok) throw new Error(result?.error || "Unable to watch for application submission.");
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
@@ -184,6 +184,7 @@ export function ProfileWorkspace({
 
   // Per-generation data
   const [jobDescription, setJobDescription] = useState("");
+  const resumeJobDescription = useRef("");
   const [resumeData, setResumeData] = useState<ResumeData | null>(null);
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [coverLetterText, setCoverLetterText] = useState<string | null>(null);
@@ -378,8 +379,15 @@ export function ProfileWorkspace({
       setConversationId(data.conversationId);
       setApplicationAnswers(data.answers ?? []);
       setAnswersReadOnly(false);
+      // Keep the generated resume's description for downloads after the editor is cleared.
+      resumeJobDescription.current = data.jobDescription?.trim() || jobDescription;
 
-      if (data.application?.id) await armApplicationScreenshot(data.application.id);
+      if (data.application?.id) {
+        await armApplicationScreenshot(data.application.id, {
+          companyName: generatedCompanyName,
+          jobTitle: generatedJobTitle,
+        });
+      }
 
       if (shouldAutoDownload) {
         await handleDownloadPDF(
@@ -393,6 +401,7 @@ export function ProfileWorkspace({
         );
       }
 
+      setJobDescription("");
       onGenerationComplete(profile.id, effectiveCompanyName || undefined);
     } catch (err) {
       console.error("Generation error:", err);
@@ -418,7 +427,13 @@ export function ProfileWorkspace({
         throw new Error("The saved resume is not valid.");
       }
 
+      await armApplicationScreenshot(saved.id, {
+        companyName: saved.company_name || undefined,
+        jobTitle: saved.job_title || undefined,
+      });
+
       setJobDescription(saved.job_description ?? "");
+      resumeJobDescription.current = saved.job_description ?? "";
       setResumeData(loadedResume);
       setPersonalInfo(loadedResume.personalInfo);
       setEducation(loadedResume.education ?? []);
@@ -660,8 +675,8 @@ export function ProfileWorkspace({
       const safeFullName = "Resume";
       const savedJobDescription = downloadJDWithPDF
         ? targetResumeData.rateInJd === false && targetResumeData.annualSalary && targetResumeData.hourlyRate
-          ? `${jobDescription.trim()}\n\nEstimated Salary Expectation (salary not mentioned in this JD)\nAnnual: ${targetResumeData.annualSalary}\nHourly: ${targetResumeData.hourlyRate}`
-          : jobDescription
+          ? `${resumeJobDescription.current.trim()}\n\nEstimated Salary Expectation (salary not mentioned in this JD)\nAnnual: ${targetResumeData.annualSalary}\nHourly: ${targetResumeData.hourlyRate}`
+          : resumeJobDescription.current
         : undefined;
 
       let folderPath: string | undefined;
@@ -896,7 +911,7 @@ export function ProfileWorkspace({
   - Experience with cloud platforms (AWS, GCP)
   - Strong system design skills
   ...`}
-          className="min-h-[280px] max-h-[55vh] overflow-y-auto font-mono text-sm"
+          className="field-sizing-fixed h-36 min-h-24 max-h-64 resize-y overflow-y-auto font-mono text-sm"
           value={jobDescription}
           onChange={(e) => {
           setJobDescription(e.target.value);

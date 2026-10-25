@@ -73,6 +73,11 @@ export class QueryApplicationsDto {
   paid?: boolean;
 
   @IsOptional()
+  @Transform(toBool)
+  @IsBoolean()
+  has_screenshot?: boolean;
+
+  @IsOptional()
   @IsDateString()
   date_from?: string;
 

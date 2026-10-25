@@ -927,6 +927,12 @@ export class ApplicationsService {
     if (query.pipeline_status?.length) where.pipeline_status = { in: query.pipeline_status };
     if (query.job_source?.length) where.job_source = { in: query.job_source };
     if (query.paid !== undefined) where.paid = query.paid;
+    if (query.has_screenshot !== undefined) {
+      const activeScreenshot = { expires_at: { gt: new Date() } };
+      where.screenshot = query.has_screenshot
+        ? { is: activeScreenshot }
+        : { isNot: activeScreenshot };
+    }
 
     if (query.date_from || query.date_to) {
       where.date = {

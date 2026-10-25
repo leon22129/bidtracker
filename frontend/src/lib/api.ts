@@ -210,6 +210,7 @@ export const api = {
         pipeline_status: filters.pipeline_status,
         job_source: filters.job_source,
         paid: filters.paid,
+        has_screenshot: filters.has_screenshot,
         date_from: filters.date_from,
         date_to: filters.date_to,
         sort_by: filters.sort_by,

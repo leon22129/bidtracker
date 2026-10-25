@@ -29,7 +29,7 @@ interface Props {
   onDownloadJobDescription: (row: JobApplication) => void;
   onDownloadCoverLetter: (row: JobApplication) => void;
   onViewApplicationAnswers: (row: JobApplication) => void;
-  onDownloadScreenshot: (row: JobApplication) => void;
+  onViewScreenshot: (row: JobApplication) => void;
   readOnly?: boolean;
 }
 
@@ -53,7 +53,7 @@ export function ApplicationsTable(props: Props) {
     user, total, loading, getRow, ensureRange, filters, onSortChange,
     selectedIds, onToggleSelect, onSelectAllVisible, onEditCell,
     onDownloadResume, onDownloadJobDescription, onDownloadCoverLetter, onViewApplicationAnswers,
-    onDownloadScreenshot,
+    onViewScreenshot,
     readOnly = false,
   } = props;
 
@@ -349,7 +349,7 @@ export function ApplicationsTable(props: Props) {
                         onDownloadJobDescription={onDownloadJobDescription}
                         onDownloadCoverLetter={onDownloadCoverLetter}
                         onViewApplicationAnswers={onViewApplicationAnswers}
-                        onDownloadScreenshot={onDownloadScreenshot}
+                        onViewScreenshot={onViewScreenshot}
                       />
                     </div>
                   ))}

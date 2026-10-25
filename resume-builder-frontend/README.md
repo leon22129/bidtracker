@@ -17,6 +17,24 @@ When installed as the Chrome extension, Resume Builder scans the active tab for 
 
 The same scan collects visible application questions. Questions present during resume generation are sent with the resume request; later pages can be handled with **Scan Next Page** and the existing backend conversation. Review the generated answers, choose **Autofill Profile + Answers**, and verify the form before continuing. Contact and optional demographic fields use saved profile values rather than AI inference; veteran status uses the fixed non-veteran default. The extension never submits an application, and file uploads remain manual.
 
+## Submission screenshots
+
+The Chrome extension keeps a **Submission screenshots** section below the profile tabs. After
+generating an application, select it there and click **Take screenshot** while its confirmation
+page is still open. The button is always in the same place and does not depend on a toast or
+automatic submission detection. Saved status and upload errors appear in the section; retry with
+the same button. Multiple applications remain selectable when generated in the same browser tab.
+
+Recent applications and saved status are retained locally for eight days and restored when the
+side panel is reopened. Uploaded images are available in BidTracker for eight days. Refresh the
+workspace table and click **View screenshot** in the pinned **Screenshot** column beside **#**.
+In the viewer, use **Right Arrow** for the next screenshot and **Left Arrow** for the previous one,
+following the table's current filters and sort order and skipping applications without active
+screenshots. **Escape** closes the viewer; **Download** saves the current PNG.
+If the original tab was closed, reopen the confirmation page and use **Load last application** to
+associate that page with the workspace's most recent application before taking its screenshot.
+No screenshot can be recovered from a closed page unless it was already captured and uploaded.
+
 ## Scripts
 
 | Command | Description |

@@ -84,6 +84,25 @@ function responseText(data: OpenAiResponse | null) {
     .join('') || '';
 }
 
+function retryableOpenAiStatus(status: number) {
+  return [408, 409, 429].includes(status) || status >= 500;
+}
+
+function openAiRetryDelay(response: Response | undefined, attempt: number): number | null {
+  const retryAfterMs = response?.headers.get('retry-after-ms');
+  const retryAfter = response?.headers.get('retry-after');
+  let delayMs = NaN;
+  if (retryAfterMs?.trim()) delayMs = Number(retryAfterMs);
+  if (!Number.isFinite(delayMs) && retryAfter?.trim()) {
+    delayMs = Number(retryAfter) * 1000;
+    if (!Number.isFinite(delayMs)) delayMs = Date.parse(retryAfter) - Date.now();
+  }
+  // Do not retry before a long provider cooldown, or hold the request open indefinitely.
+  if (Number.isFinite(delayMs) && delayMs > 60_000) return null;
+  if (Number.isFinite(delayMs) && delayMs >= 0) return delayMs;
+  return 750 * 2 ** (attempt - 1) * (1 + Math.random() * 0.25);
+}
+
 function requestText(body: unknown) {
   if (!body || typeof body !== 'object') return '';
   const record = body as Record<string, unknown>;
@@ -780,10 +799,12 @@ ${JSON.stringify(resume)}`;
       content_logging_enabled: includeContent,
     });
 
-    let response: Response;
-    let data: OpenAiResponse | null;
+    let response: Response | undefined;
+    let data: OpenAiResponse | null = null;
     const maxAttempts = 3;
     for (let attempt = 1; ; attempt++) {
+      response = undefined;
+      data = null;
       try {
         response = await fetch(`${OPENAI_API_BASE}${path}`, {
           method,
@@ -794,10 +815,12 @@ ${JSON.stringify(resume)}`;
         data = response.ok && shouldStream
           ? await this.readOpenAiResponseStream(response)
           : await response.json().catch(() => null) as OpenAiResponse | null;
-        break;
+        if (response.ok && (!data || typeof data !== 'object')) {
+          throw new Error('The AI provider returned an invalid response');
+        }
       } catch (error) {
         if (attempt < maxAttempts) {
-          const delayMs = attempt * 750;
+          const delayMs = openAiRetryDelay(undefined, attempt)!;
           logEvent(this.logger, 'warn', 'openai_request_retrying', {
             ai_request_id: aiRequestId,
             operation,
@@ -828,39 +851,66 @@ ${JSON.stringify(resume)}`;
         }
         throw new BadGatewayException('Unable to reach the AI provider after 3 attempts. Please try again.');
       }
-    }
-    const output = responseText(data);
-    const commonFields = {
-      ai_request_id: aiRequestId,
-      provider_request_id: response.headers.get('x-request-id') || undefined,
-      response_id: data?.id,
-      operation,
-      method,
-      endpoint: path,
-      model: path === '/responses' ? MODEL : undefined,
-      status_code: response.status,
-      duration_ms: Number((performance.now() - startedAt).toFixed(2)),
-      output_characters: output.length,
-    };
-    if (!response.ok) {
-      logEvent(this.logger, 'error', 'openai_request_failed', {
+      const output = responseText(data);
+      const commonFields = {
+        ai_request_id: aiRequestId,
+        provider_request_id: response.headers.get('x-request-id') || undefined,
+        response_id: data?.id,
+        operation,
+        method,
+        endpoint: path,
+        model: path === '/responses' ? MODEL : undefined,
+        status_code: response.status,
+        attempts: attempt,
+        response_status: data?.status,
+        duration_ms: Number((performance.now() - startedAt).toFixed(2)),
+        output_characters: output.length,
+      };
+      if (!response.ok || data?.error || data?.status === 'failed') {
+        const providerMessage = data?.error?.message
+          || (response.ok ? 'The AI provider failed to generate a response. Please try again.'
+            : retryableOpenAiStatus(response.status)
+              ? `The AI provider is temporarily unavailable (HTTP ${response.status}). Please try again.`
+              : `The AI provider rejected the request (HTTP ${response.status}). Contact your administrator.`);
+        const providerFields = {
+          ...commonFields,
+          failure_type: 'provider',
+          provider_error_type: data?.error?.type,
+          provider_error_code: data?.error?.code,
+          provider_error_param: data?.error?.param,
+          provider_error_message: truncate(providerMessage, 1000),
+        };
+        const permanentError = data?.error?.type === 'insufficient_quota'
+          || ['insufficient_quota', 'billing_hard_limit_reached',
+            'billing_not_active', 'usage_limit_reached',
+            'organization_spend_limit_exceeded', 'project_spend_limit_exceeded',
+            'organization_usage_limit_exceeded'].includes(data?.error?.code || '');
+        const retryable = !permanentError && (retryableOpenAiStatus(response.status)
+          || ['server_error', 'internal_error', 'rate_limit_exceeded', 'server_is_overloaded']
+            .includes(data?.error?.code || ''));
+        const delayMs = openAiRetryDelay(response, attempt);
+        if (retryable && attempt < maxAttempts && delayMs !== null) {
+          logEvent(this.logger, 'warn', 'openai_request_retrying', {
+            ...providerFields,
+            attempt,
+            next_attempt: attempt + 1,
+            delay_ms: delayMs,
+          });
+          await new Promise((resolve) => setTimeout(resolve, delayMs));
+          continue;
+        }
+        logEvent(this.logger, 'error', 'openai_request_failed', {
+          ...providerFields,
+        });
+        throw new BadGatewayException(providerMessage);
+      }
+      logEvent(this.logger, 'log', 'openai_request_completed', {
         ...commonFields,
-        failure_type: 'provider',
-        provider_error_type: data?.error?.type,
-        provider_error_code: data?.error?.code,
-        provider_error_param: data?.error?.param,
-        provider_error_message: data?.error?.message
-          ? truncate(data.error.message, 1000)
-          : 'OpenAI request failed',
+        ...openAiUsageFields(data?.usage),
+        output_preview: includeContent ? truncate(output, maxContentChars) : undefined,
       });
-      throw new BadGatewayException(data?.error?.message || 'OpenAI request failed');
+      return data;
     }
-    logEvent(this.logger, 'log', 'openai_request_completed', {
-      ...commonFields,
-      ...openAiUsageFields(data?.usage),
-      output_preview: includeContent ? truncate(output, maxContentChars) : undefined,
-    });
-    return data;
   }
 
   /** Consume Responses API server-sent events and retain the same final object shape as JSON mode. */

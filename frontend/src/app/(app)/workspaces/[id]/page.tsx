@@ -15,6 +15,7 @@ import { TableToolbar } from '@/components/table/toolbar';
 import { useToast } from '@/components/ui/toast';
 import { ADMIN_ONLY_FIELDS } from '@/lib/permissions';
 import { ApplicationAnswersModal } from '@/components/table/application-answers-modal';
+import { ApplicationScreenshotModal } from '@/components/table/application-screenshot-modal';
 import { downloadJobDescription as downloadSavedJobDescription } from '@/lib/artifact-download';
 import { copyText } from '@/lib/clipboard';
 
@@ -46,6 +47,7 @@ export default function WorkspaceTablePage() {
   const [summary, setSummary] = useState<WorkspaceSummary | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [answersArtifact, setAnswersArtifact] = useState<ResumeArtifact | null>(null);
+  const [screenshotApplication, setScreenshotApplication] = useState<JobApplication | null>(null);
 
   const [filters, setFilters] = useState<ApplicationFilters>({
     sort_by: 'date',
@@ -288,21 +290,6 @@ export default function WorkspaceTablePage() {
     }
   }, [toast]);
 
-  const downloadScreenshot = useCallback(async (row: JobApplication) => {
-    try {
-      const blob = await api.getApplicationScreenshot(row.id);
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement('a');
-      anchor.href = url;
-      anchor.download = `application-${row.number}-proof.png`;
-      anchor.click();
-      URL.revokeObjectURL(url);
-      toast.success('Submission screenshot downloaded.');
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Could not download the screenshot');
-    }
-  }, [toast]);
-
   // ---- render --------------------------------------------------------------
   if (loadError) {
     return (
@@ -377,7 +364,7 @@ export default function WorkspaceTablePage() {
           onDownloadJobDescription={downloadJobDescription}
           onDownloadCoverLetter={downloadCoverLetter}
           onViewApplicationAnswers={viewApplicationAnswers}
-          onDownloadScreenshot={downloadScreenshot}
+          onViewScreenshot={setScreenshotApplication}
           readOnly={!workspace.can_edit}
         />
       </div>
@@ -396,6 +383,14 @@ export default function WorkspaceTablePage() {
         <ApplicationAnswersModal
           artifact={answersArtifact}
           onClose={() => setAnswersArtifact(null)}
+        />
+      )}
+      {screenshotApplication && (
+        <ApplicationScreenshotModal
+          key={screenshotApplication.id}
+          application={screenshotApplication}
+          filters={filters}
+          onClose={() => setScreenshotApplication(null)}
         />
       )}
     </div>
