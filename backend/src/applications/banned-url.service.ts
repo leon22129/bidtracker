@@ -1,5 +1,6 @@
 import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { Prisma } from '@prisma/client';
 
 @Injectable()
 export class BannedUrlService {
@@ -32,24 +33,24 @@ export class BannedUrlService {
     return { success: true };
   }
 
-  async matches(url: string): Promise<boolean> {
+  async matches(url: string, db: Prisma.TransactionClient = this.prisma): Promise<boolean> {
     const value = url.trim().toLowerCase();
     if (!value) return false;
-    const patterns = await this.patterns();
+    const patterns = await this.patterns(db);
     return patterns.some((pattern) => value.includes(pattern));
   }
 
-  async matchMany(urls: string[]): Promise<boolean[]> {
-    const patterns = await this.patterns();
+  async matchMany(urls: string[], db: Prisma.TransactionClient = this.prisma): Promise<boolean[]> {
+    const patterns = await this.patterns(db);
     return urls.map((url) => {
       const value = url.trim().toLowerCase();
       return Boolean(value) && patterns.some((pattern) => value.includes(pattern));
     });
   }
 
-  private async patterns() {
+  private async patterns(db: Prisma.TransactionClient) {
     if (this.cache && this.cache.expiresAt > Date.now()) return this.cache.patterns;
-    const rows = await this.prisma.bannedUrlPattern.findMany({ select: { pattern: true } });
+    const rows = await db.bannedUrlPattern.findMany({ select: { pattern: true } });
     const patterns = rows.map((row) => row.pattern);
     this.cache = { patterns, expiresAt: Date.now() + 30_000 };
     return patterns;

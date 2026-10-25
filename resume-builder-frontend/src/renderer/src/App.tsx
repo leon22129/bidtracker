@@ -52,6 +52,7 @@ import type { WebAuthStatus } from "../../shared/auth";
 import { ProfileWorkspace } from "@/components/profile-workspace";
 import { ProfileSettingsOnlyDialog } from "@/components/profile-settings-only-dialog";
 import { ExtensionSettingsDialog } from "@/components/extension-settings-dialog";
+import { ApplicationScreenshots } from "@/components/application-screenshots";
 import { toast } from "@/components/ui/use-toast";
 import { ToastAction } from "@/components/ui/toast";
 import {
@@ -394,9 +395,9 @@ export default function Home() {
 
   if (!webAuthStatus) {
     return (
-      <main className="min-h-screen bg-background px-4 py-8">
+      <main className="min-h-screen bg-background px-5 py-10">
         <div className="mx-auto flex min-h-[calc(100vh-4rem)] max-w-lg items-center justify-center">
-          <Card className="w-full">
+          <Card className="w-full border-white/10 bg-card/60">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <User className="h-5 w-5" />
@@ -413,9 +414,9 @@ export default function Home() {
 
   if (!webAuthStatus.authenticated) {
     return (
-      <main className="min-h-screen bg-background px-4 py-8">
+      <main className="min-h-screen bg-background px-5 py-10">
         <div className="mx-auto flex min-h-[calc(100vh-4rem)] max-w-lg items-center justify-center">
-          <Card className="w-full">
+          <Card className="w-full border-white/10 bg-card/60">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <User className="h-5 w-5" />
@@ -488,19 +489,23 @@ export default function Home() {
   const activeTab = tabs.find((t) => t.tabId === activeTabId);
 
   return (
-    <main className="h-screen flex flex-col overflow-hidden bg-background">
+    <main className="flex h-screen flex-col overflow-hidden bg-background">
       {/* Header */}
-      <div className="border-b bg-background/95 backdrop-blur sticky top-0 z-10">
-        <div className="max-w-5xl mx-auto px-4 flex items-center justify-between h-14">
-          <h1 className="text-lg font-semibold text-foreground">
-            Resume Builder v{__APP_VERSION__}
-          </h1>
+      <div className="sticky top-0 z-20 border-b border-white/[0.08] bg-background/90 backdrop-blur-xl">
+        <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 sm:px-8">
+          <div className="flex min-w-0 items-center gap-3">
+            <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary text-xs font-black text-primary-foreground">RB</span>
+            <div className="min-w-0">
+              <h1 className="truncate text-sm font-semibold tracking-tight text-foreground">Resume Builder</h1>
+              <p className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">Workspace · v{__APP_VERSION__}</p>
+            </div>
+          </div>
 
           <div className="flex items-center gap-2">
             {/* Profiles dropdown */}
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button type="button" variant="outline" size="sm">
+                <Button type="button" variant="ghost" size="sm">
                   Profiles
                 </Button>
               </DropdownMenuTrigger>
@@ -535,11 +540,10 @@ export default function Home() {
             </DropdownMenu>
 
 
-            <Button type="button" variant="outline" size="sm" onClick={() => void handleWebLogout()}>
-              <LogOut className="h-4 w-4 mr-1" />
-              Sign out
+            <Button type="button" variant="ghost" size="icon-sm" onClick={() => void handleWebLogout()} aria-label="Sign out">
+              <LogOut className="h-4 w-4" />
             </Button>
-            <Button type="button" variant="outline" size="sm" onClick={() => setSettingsOpen(true)} aria-label="Open settings">
+            <Button type="button" variant="ghost" size="icon-sm" onClick={() => setSettingsOpen(true)} aria-label="Open settings">
               <Settings className="h-4 w-4" />
             </Button>
           </div>
@@ -547,9 +551,9 @@ export default function Home() {
       </div>
 
       {/* Tab bar */}
-      <div className="border-b bg-background sticky top-14 z-10">
-        <div className="max-w-5xl mx-auto px-4">
-          <div className="flex items-end gap-0 overflow-x-auto">
+      <div className="sticky top-16 z-10 border-b border-white/[0.06] bg-background/95">
+        <div className="mx-auto max-w-7xl px-4 sm:px-8">
+          <div className="flex items-center gap-1 overflow-x-auto py-2">
             {tabs.map((tab) => {
               const isActive = tab.tabId === activeTabId;
               const isGenerating = generatingProfiles.has(tab.tabId);
@@ -558,10 +562,10 @@ export default function Home() {
               return (
                 <div
                   key={tab.tabId}
-                  className={`group flex items-center gap-1 border-b-2 transition-colors ${
+                  className={`group flex items-center gap-1 rounded-lg border transition-colors ${
                     isActive
-                      ? "border-primary"
-                      : "border-transparent hover:border-muted-foreground"
+                      ? "border-primary/30 bg-primary/10"
+                      : "border-transparent hover:bg-white/[0.04]"
                   }`}
                 >
                   <Tooltip>
@@ -569,9 +573,9 @@ export default function Home() {
                       <button
                         type="button"
                         onClick={() => handleTabClick(tab.tabId)}
-                        className={`flex items-center gap-1.5 pl-4 pr-2 py-2.5 text-sm font-medium whitespace-nowrap transition-colors ${
+                        className={`flex items-center gap-1.5 py-1.5 pl-3 pr-2 text-xs font-medium whitespace-nowrap transition-colors ${
                           isActive
-                            ? "text-foreground"
+                            ? "text-primary"
                             : "text-muted-foreground group-hover:text-foreground"
                         }`}
                       >
@@ -579,7 +583,7 @@ export default function Home() {
                           <Loader2 className="h-3 w-3 animate-spin text-primary" />
                         )}
                         {hasPendingResult && !isActive && !isGenerating && (
-                          <span className="h-2 w-2 rounded-full bg-green-500 animate-pulse" />
+                          <span className="h-2 w-2 animate-pulse rounded-full bg-primary" />
                         )}
                         {tab.label}
                       </button>
@@ -596,7 +600,7 @@ export default function Home() {
                       e.stopPropagation();
                       handleCloseTab(tab.tabId);
                     }}
-                    className="flex h-5 w-5 mr-1 items-center justify-center rounded text-muted-foreground opacity-0 group-hover:opacity-100 hover:bg-accent hover:text-foreground transition-opacity"
+                    className="mr-1 flex h-5 w-5 items-center justify-center rounded text-muted-foreground opacity-60 transition-opacity hover:bg-accent hover:text-foreground sm:opacity-0 sm:group-hover:opacity-100"
                     aria-label={`Close ${tab.label} tab`}
                   >
                     <X className="h-3 w-3" />
@@ -610,7 +614,7 @@ export default function Home() {
               <DropdownMenuTrigger asChild>
                 <button
                   type="button"
-                  className="flex items-center gap-1 px-3 py-2.5 text-sm text-muted-foreground hover:text-foreground border-b-2 border-transparent transition-colors"
+                  className="flex items-center gap-1 rounded-lg px-2.5 py-2 text-sm text-muted-foreground transition-colors hover:bg-white/[0.04] hover:text-foreground"
                   aria-label="Open profile tab"
                 >
                   <Plus className="h-4 w-4" />
@@ -651,11 +655,13 @@ export default function Home() {
         </div>
       </div>
 
+      <ApplicationScreenshots />
+
       {/* Content area — flex-1 so it fills the remaining viewport height */}
       <div className="flex-1 min-h-0 overflow-hidden relative">
         {/* Empty state */}
         {tabs.length === 0 && (
-          <div className="max-w-3xl mx-auto px-4 py-24 text-center">
+          <div className="mx-auto max-w-3xl px-5 py-24 text-center">
             <h2 className="text-xl font-semibold mb-2">No tabs open</h2>
             <p className="text-muted-foreground mb-6">
               {profiles.length > 0

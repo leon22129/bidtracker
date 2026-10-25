@@ -41,7 +41,7 @@ const OPENAI_API_BASE = 'https://api.openai.com/v1';
 const MODEL = process.env.OPENAI_MODEL || 'gpt-6.1-sol';
 
 type OpenAiError = { message?: string; type?: string; code?: string; param?: string };
-type OpenAiResponse = { id?: string; output_text?: string; output?: Array<{ type?: string; role?: string; content?: Array<{ type?: string; text?: string }> }>; usage?: OpenAiUsage; error?: OpenAiError };
+type OpenAiResponse = { id?: string; status?: string; output_text?: string; output?: Array<{ type?: string; role?: string; content?: Array<{ type?: string; text?: string }> }>; usage?: OpenAiUsage; error?: OpenAiError };
 type OpenAiConversationResponse = { id?: string; error?: OpenAiError };
 type OpenAiConversationItem = {
   id?: string;
@@ -82,6 +82,25 @@ function responseText(data: OpenAiResponse | null) {
     .filter((item) => item.type === 'output_text')
     .map((item) => item.text || '')
     .join('') || '';
+}
+
+function retryableOpenAiStatus(status: number) {
+  return [408, 409, 429].includes(status) || status >= 500;
+}
+
+function openAiRetryDelay(response: Response | undefined, attempt: number): number | null {
+  const retryAfterMs = response?.headers.get('retry-after-ms');
+  const retryAfter = response?.headers.get('retry-after');
+  let delayMs = NaN;
+  if (retryAfterMs?.trim()) delayMs = Number(retryAfterMs);
+  if (!Number.isFinite(delayMs) && retryAfter?.trim()) {
+    delayMs = Number(retryAfter) * 1000;
+    if (!Number.isFinite(delayMs)) delayMs = Date.parse(retryAfter) - Date.now();
+  }
+  // Do not retry before a long provider cooldown, or hold the request open indefinitely.
+  if (Number.isFinite(delayMs) && delayMs > 60_000) return null;
+  if (Number.isFinite(delayMs) && delayMs >= 0) return delayMs;
+  return 750 * 2 ** (attempt - 1) * (1 + Math.random() * 0.25);
 }
 
 function requestText(body: unknown) {
@@ -221,21 +240,12 @@ export class ApplicationGenerationService {
     );
     if (recentCompanyApplication) {
       const cooldownDays = this.duplicates.companyCooldownDays();
-      const application = await this.applications.createDuplicateApplication(user, {
-        workspace_id: workspace.id,
-        url: dto.url.trim(),
-        job_title: jobTitle,
-        company_name: companyName,
-        job_description: normalizedDescription,
-        note: `Company duplicate within ${cooldownDays}-day cooldown; original application #${recentCompanyApplication.number}.`,
-      });
       return {
         success: false,
         duplicate: true,
         duplicate_type: 'company',
         cooldown_days: cooldownDays,
         existing_application: recentCompanyApplication,
-        application,
       };
     }
 
@@ -401,7 +411,7 @@ export class ApplicationGenerationService {
       throw new BadRequestException('Conversation not found');
     }
     if (conversation.workspace_id) {
-      await this.access.assertCanEdit(user, conversation.workspace_id);
+      await this.access.assertCanView(user, conversation.workspace_id);
     }
 
     const savedApplication = await this.prisma.jobApplication.findFirst({
@@ -757,7 +767,11 @@ ${JSON.stringify(resume)}`;
     const aiRequestId = randomUUID();
     const startedAt = performance.now();
     const input = requestText(body);
-    const serializedBody = body === undefined ? undefined : JSON.stringify(body);
+    const shouldStream = path === '/responses' && method === 'POST' && body !== undefined;
+    const requestBody = shouldStream && body && typeof body === 'object'
+      ? { ...(body as Record<string, unknown>), stream: true }
+      : body;
+    const serializedBody = requestBody === undefined ? undefined : JSON.stringify(requestBody);
     const includeContent = envEnabled('AI_LOG_CONTENT');
     const maxContentChars = contentLimit();
     const apiKey = process.env.OPENAI_API_KEY?.trim();
@@ -785,63 +799,160 @@ ${JSON.stringify(resume)}`;
       content_logging_enabled: includeContent,
     });
 
-    let response: Response;
-    try {
-      response = await fetch(`${OPENAI_API_BASE}${path}`, {
-        method,
-        headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-        signal: AbortSignal.timeout(120000),
-        ...(serializedBody === undefined ? {} : { body: serializedBody }),
-      });
-    } catch (error) {
-      logEvent(this.logger, 'error', 'openai_request_failed', {
+    let response: Response | undefined;
+    let data: OpenAiResponse | null = null;
+    const maxAttempts = 3;
+    for (let attempt = 1; ; attempt++) {
+      response = undefined;
+      data = null;
+      try {
+        response = await fetch(`${OPENAI_API_BASE}${path}`, {
+          method,
+          headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+          signal: AbortSignal.timeout(120000),
+          ...(serializedBody === undefined ? {} : { body: serializedBody }),
+        });
+        data = response.ok && shouldStream
+          ? await this.readOpenAiResponseStream(response)
+          : await response.json().catch(() => null) as OpenAiResponse | null;
+        if (response.ok && (!data || typeof data !== 'object')) {
+          throw new Error('The AI provider returned an invalid response');
+        }
+      } catch (error) {
+        if (attempt < maxAttempts) {
+          const delayMs = openAiRetryDelay(undefined, attempt)!;
+          logEvent(this.logger, 'warn', 'openai_request_retrying', {
+            ai_request_id: aiRequestId,
+            operation,
+            method,
+            endpoint: path,
+            model: path === '/responses' ? MODEL : undefined,
+            attempt,
+            next_attempt: attempt + 1,
+            delay_ms: delayMs,
+            ...errorFields(error),
+          });
+          await new Promise((resolve) => setTimeout(resolve, delayMs));
+          continue;
+        }
+        logEvent(this.logger, 'error', 'openai_request_failed', {
+          ai_request_id: aiRequestId,
+          operation,
+          method,
+          endpoint: path,
+          model: path === '/responses' ? MODEL : undefined,
+          attempts: attempt,
+          duration_ms: Number((performance.now() - startedAt).toFixed(2)),
+          failure_type: 'network',
+          ...errorFields(error),
+        });
+        if (error instanceof DOMException && error.name === 'TimeoutError') {
+          throw new BadGatewayException('The AI provider took too long to generate a response. Please try again.');
+        }
+        throw new BadGatewayException('Unable to reach the AI provider after 3 attempts. Please try again.');
+      }
+      const output = responseText(data);
+      const commonFields = {
         ai_request_id: aiRequestId,
+        provider_request_id: response.headers.get('x-request-id') || undefined,
+        response_id: data?.id,
         operation,
         method,
         endpoint: path,
         model: path === '/responses' ? MODEL : undefined,
+        status_code: response.status,
+        attempts: attempt,
+        response_status: data?.status,
         duration_ms: Number((performance.now() - startedAt).toFixed(2)),
-        failure_type: 'network',
-        ...errorFields(error),
-      });
-      if (error instanceof DOMException && error.name === 'TimeoutError') {
-        throw new BadGatewayException('The AI provider took too long to generate a response. Please try again.');
+        output_characters: output.length,
+      };
+      if (!response.ok || data?.error || data?.status === 'failed') {
+        const providerMessage = data?.error?.message
+          || (response.ok ? 'The AI provider failed to generate a response. Please try again.'
+            : retryableOpenAiStatus(response.status)
+              ? `The AI provider is temporarily unavailable (HTTP ${response.status}). Please try again.`
+              : `The AI provider rejected the request (HTTP ${response.status}). Contact your administrator.`);
+        const providerFields = {
+          ...commonFields,
+          failure_type: 'provider',
+          provider_error_type: data?.error?.type,
+          provider_error_code: data?.error?.code,
+          provider_error_param: data?.error?.param,
+          provider_error_message: truncate(providerMessage, 1000),
+        };
+        const permanentError = data?.error?.type === 'insufficient_quota'
+          || ['insufficient_quota', 'billing_hard_limit_reached',
+            'billing_not_active', 'usage_limit_reached',
+            'organization_spend_limit_exceeded', 'project_spend_limit_exceeded',
+            'organization_usage_limit_exceeded'].includes(data?.error?.code || '');
+        const retryable = !permanentError && (retryableOpenAiStatus(response.status)
+          || ['server_error', 'internal_error', 'rate_limit_exceeded', 'server_is_overloaded']
+            .includes(data?.error?.code || ''));
+        const delayMs = openAiRetryDelay(response, attempt);
+        if (retryable && attempt < maxAttempts && delayMs !== null) {
+          logEvent(this.logger, 'warn', 'openai_request_retrying', {
+            ...providerFields,
+            attempt,
+            next_attempt: attempt + 1,
+            delay_ms: delayMs,
+          });
+          await new Promise((resolve) => setTimeout(resolve, delayMs));
+          continue;
+        }
+        logEvent(this.logger, 'error', 'openai_request_failed', {
+          ...providerFields,
+        });
+        throw new BadGatewayException(providerMessage);
       }
-      throw new BadGatewayException('Unable to reach the AI provider. Please try again.');
-    }
-    const data = await response.json().catch(() => null) as OpenAiResponse | null;
-    const output = responseText(data);
-    const commonFields = {
-      ai_request_id: aiRequestId,
-      provider_request_id: response.headers.get('x-request-id') || undefined,
-      response_id: data?.id,
-      operation,
-      method,
-      endpoint: path,
-      model: path === '/responses' ? MODEL : undefined,
-      status_code: response.status,
-      duration_ms: Number((performance.now() - startedAt).toFixed(2)),
-      output_characters: output.length,
-    };
-    if (!response.ok) {
-      logEvent(this.logger, 'error', 'openai_request_failed', {
+      logEvent(this.logger, 'log', 'openai_request_completed', {
         ...commonFields,
-        failure_type: 'provider',
-        provider_error_type: data?.error?.type,
-        provider_error_code: data?.error?.code,
-        provider_error_param: data?.error?.param,
-        provider_error_message: data?.error?.message
-          ? truncate(data.error.message, 1000)
-          : 'OpenAI request failed',
+        ...openAiUsageFields(data?.usage),
+        output_preview: includeContent ? truncate(output, maxContentChars) : undefined,
       });
-      throw new BadGatewayException(data?.error?.message || 'OpenAI request failed');
+      return data;
     }
-    logEvent(this.logger, 'log', 'openai_request_completed', {
-      ...commonFields,
-      ...openAiUsageFields(data?.usage),
-      output_preview: includeContent ? truncate(output, maxContentChars) : undefined,
-    });
-    return data;
+  }
+
+  /** Consume Responses API server-sent events and retain the same final object shape as JSON mode. */
+  private async readOpenAiResponseStream(response: Response): Promise<OpenAiResponse> {
+    if (!response.body) throw new Error('OpenAI streaming response had no body');
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let completed: OpenAiResponse | null = null;
+
+    const consumeEvent = (block: string) => {
+      const payload = block
+        .split(/\r?\n/)
+        .filter((line) => line.startsWith('data:'))
+        .map((line) => line.slice(5).trimStart())
+        .join('\n');
+      if (!payload || payload === '[DONE]') return;
+      const event = JSON.parse(payload) as {
+        type?: string;
+        response?: OpenAiResponse;
+        error?: OpenAiError;
+      };
+      if (event.type === 'response.completed' && event.response) completed = event.response;
+      if (event.type === 'response.failed') {
+        completed = event.response || { status: 'failed', error: event.error };
+      }
+      if (event.type === 'error') {
+        completed = { status: 'failed', error: event.error || { message: 'OpenAI stream failed' } };
+      }
+    };
+
+    while (true) {
+      const { done, value } = await reader.read();
+      buffer += decoder.decode(value, { stream: !done });
+      const blocks = buffer.split(/\r?\n\r?\n/);
+      buffer = blocks.pop() || '';
+      for (const block of blocks) consumeEvent(block);
+      if (done) break;
+    }
+    if (buffer.trim()) consumeEvent(buffer);
+    if (!completed) throw new Error('OpenAI stream ended before response.completed');
+    return completed;
   }
 
   private parseJson(value: string): Record<string, unknown> {

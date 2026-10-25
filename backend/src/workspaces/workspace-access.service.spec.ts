@@ -1,4 +1,4 @@
-import { NotFoundException } from '@nestjs/common';
+import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import { AuthUser } from '../common/decorators/current-user.decorator';
 import { WorkspaceAccessService } from './workspace-access.service';
 
@@ -93,5 +93,72 @@ describe('WorkspaceAccessService', () => {
       .resolves.toBeUndefined();
     await expect(service.assertCanEdit(user('manager-1', 'bidder_manager'), 'w-1'))
       .rejects.toEqual(new NotFoundException('Workspace not found'));
+  });
+
+  it.each<AuthUser['role']>(['bidder', 'bidder_manager', 'admin', 'super_admin'])(
+    'blocks new work on archived profiles for %s while allowing history reads', async (role) => {
+      prisma.workspace.findUnique.mockResolvedValue({
+        id: 'w-1', owner_user_id: 'u-1', created_by_user_id: 'u-1', is_archived: true,
+        owner: { manager_user_id: null },
+      });
+      const service = new WorkspaceAccessService(prisma as never);
+
+      await expect(service.assertCanEdit(user('u-1', role), 'w-1'))
+        .rejects.toBeInstanceOf(ForbiddenException);
+      await expect(service.assertCanView(user('u-1', role), 'w-1')).resolves.toBeUndefined();
+    },
+  );
+
+  it.each<AuthUser['role']>(['admin', 'super_admin'])(
+    'allows %s to explicitly maintain archived profiles', async (role) => {
+      prisma.workspace.findUnique.mockResolvedValue({
+        id: 'w-1', owner_user_id: 'bidder-1', created_by_user_id: 'admin-1', is_archived: true,
+        owner: { manager_user_id: null },
+      });
+      const service = new WorkspaceAccessService(prisma as never);
+
+      await expect(service.assertCanEdit(user('admin-1', role), 'w-1', { allowArchived: true }))
+        .resolves.toBeUndefined();
+    },
+  );
+
+  it.each<AuthUser['role']>(['bidder', 'bidder_manager'])(
+    'does not let %s use the administrative archive exception', async (role) => {
+      prisma.workspace.findUnique.mockResolvedValue({
+        id: 'w-1', owner_user_id: 'u-1', created_by_user_id: 'admin-1', is_archived: true,
+        owner: { manager_user_id: null },
+      });
+      const service = new WorkspaceAccessService(prisma as never);
+
+      await expect(service.assertCanEdit(user('u-1', role), 'w-1', { allowArchived: true }))
+        .rejects.toBeInstanceOf(ForbiddenException);
+    },
+  );
+
+  it('keeps archived profiles outside the caller scope hidden', async () => {
+    prisma.workspace.findUnique.mockResolvedValue({
+      id: 'w-1', owner_user_id: 'bidder-1', created_by_user_id: 'admin-1', is_archived: true,
+      owner: { manager_user_id: null },
+    });
+    const service = new WorkspaceAccessService(prisma as never);
+
+    await expect(service.assertCanEdit(user('bidder-2', 'bidder'), 'w-1'))
+      .rejects.toEqual(new NotFoundException('Workspace not found'));
+  });
+
+  it('rechecks the archive state on every write and restores access after unarchiving', async () => {
+    const workspace = {
+      id: 'w-1', owner_user_id: 'bidder-1', created_by_user_id: 'admin-1', is_archived: false,
+      owner: { manager_user_id: null },
+    };
+    prisma.workspace.findUnique.mockImplementation(async () => ({ ...workspace }));
+    const service = new WorkspaceAccessService(prisma as never);
+    const bidder = user('bidder-1', 'bidder');
+
+    await expect(service.assertCanEdit(bidder, 'w-1')).resolves.toBeUndefined();
+    workspace.is_archived = true;
+    await expect(service.assertCanEdit(bidder, 'w-1')).rejects.toBeInstanceOf(ForbiddenException);
+    workspace.is_archived = false;
+    await expect(service.assertCanEdit(bidder, 'w-1')).resolves.toBeUndefined();
   });
 });

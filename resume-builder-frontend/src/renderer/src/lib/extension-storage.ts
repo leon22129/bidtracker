@@ -93,6 +93,26 @@ export async function getCurrentBrowserTabUrl(): Promise<string> {
   return url;
 }
 
+export async function armApplicationScreenshot(
+  applicationId: string,
+  details: { companyName?: string; jobTitle?: string } = {},
+): Promise<void> {
+  const chromeApi = (globalThis as { chrome?: {
+    tabs?: { query: (queryInfo: { active: boolean; currentWindow: boolean }) => Promise<Array<{ id?: number }>> };
+    runtime?: { sendMessage: (message: unknown) => Promise<{ ok?: boolean; error?: string }> };
+  } }).chrome;
+  if (!chromeApi?.tabs || !chromeApi.runtime) return;
+  const [tab] = await chromeApi.tabs.query({ active: true, currentWindow: true });
+  if (tab?.id === undefined) return;
+  const result = await chromeApi.runtime.sendMessage({
+    type: "ARM_APPLICATION_SCREENSHOT",
+    tabId: tab.id,
+    applicationId,
+    ...details,
+  });
+  if (!result?.ok) throw new Error(result?.error || "Unable to watch for application submission.");
+}
+
 export type PageQuestion = {
   question: string;
   fieldType: string;

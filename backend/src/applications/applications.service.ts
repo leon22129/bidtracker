@@ -1,5 +1,5 @@
 import {
-  BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException,
+  BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
@@ -37,13 +37,17 @@ const ROW_SELECT = {
   url: true, normalized_url: true, job_source: true, application_status: true, pipeline_status: true,
   interview_date: true, interview_note: true, note: true, paid: true,
   resume_generated_at: true, cover_letter_template: true,
+  screenshot: { select: { captured_at: true, expires_at: true } },
   created_by_user_id: true, created_at: true, updated_at: true,
 } as const;
 
+export interface WorkspaceWriteContext {
+  db: Prisma.TransactionClient;
+  notifyUsers: Set<string>;
+}
+
 @Injectable()
 export class ApplicationsService {
-  private readonly logger = new Logger(ApplicationsService.name);
-
   constructor(
     private readonly prisma: PrismaService,
     private readonly access: WorkspaceAccessService,
@@ -52,6 +56,32 @@ export class ApplicationsService {
     private readonly bannedUrls: BannedUrlService,
     private readonly slackNotifications: SlackNotificationService,
   ) {}
+
+  /** Serialize checks and writes across processes; release the lock only after commit. */
+  async withWorkspaceWrite<T>(
+    workspaceIds: string | string[],
+    action: (context: WorkspaceWriteContext) => Promise<T>,
+  ): Promise<T> {
+    const ids = [...new Set(Array.isArray(workspaceIds) ? workspaceIds : [workspaceIds])].sort();
+    for (let attempt = 1; ; attempt++) {
+      const notifyUsers = new Set<string>();
+      let result: T;
+      try {
+        result = await this.prisma.$transaction(async (db) => {
+          for (const id of ids) {
+            await db.$queryRaw`SELECT "id" FROM "workspaces" WHERE "id" = ${id} FOR UPDATE`;
+          }
+          return action({ db, notifyUsers });
+        }, { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted, timeout: 120_000, maxWait: 15_000 });
+      } catch (error) {
+        // Retry the whole transaction: a PostgreSQL constraint error aborts its transaction.
+        if (attempt < 3 && (isNumberCollision(error) || isActiveUrlCollision(error))) continue;
+        throw error;
+      }
+      await Promise.all([...notifyUsers].map((id) => this.slackNotifications.notifyApplicationCreated(id)));
+      return result;
+    }
+  }
 
   // -------------------------------------------------------------------------
   // Read
@@ -266,11 +296,17 @@ export class ApplicationsService {
    * The canonical write path. Order of checks is deliberate and mirrored by every other mutation:
    *   scope → paid lock → field filter → status transition → persist
    */
-  async update(user: AuthUser, id: string, dto: UpdateApplicationDto) {
-    const row = await this.prisma.jobApplication.findUnique({ where: { id } });
+  async update(user: AuthUser, id: string, dto: UpdateApplicationDto, context?: WorkspaceWriteContext) {
+    if (!context) {
+      const row = await this.prisma.jobApplication.findUnique({ where: { id } });
+      if (!row) throw new NotFoundException('Application not found');
+      return this.withWorkspaceWrite(row.workspace_id, (write) => this.update(user, id, dto, write));
+    }
+    const db = context.db;
+    const row = await db.jobApplication.findUnique({ where: { id } });
     if (!row) throw new NotFoundException('Application not found');
 
-    await this.access.assertCanEdit(user, row.workspace_id);
+    await this.access.assertCanEdit(user, row.workspace_id, { allowArchived: true, db });
     assertRowNotLocked(row, user.role);
 
     const patch = filterPatchByRole({ ...dto }, row, user.role);
@@ -294,7 +330,7 @@ export class ApplicationsService {
       data.normalized_url = normalized;
       data.job_source = detectJobSource(url);
 
-      if (await this.bannedUrls.matches(url)) {
+      if (await this.bannedUrls.matches(url, db)) {
         data.application_status = 'Banned';
         data.note = BANNED_URL_NOTE;
       } else {
@@ -302,6 +338,7 @@ export class ApplicationsService {
           row.workspace_id,
           [url],
           row.id,
+          db,
         );
         if (verdict.is_duplicate && isAdmin(user.role)) {
           data.application_status = 'Duplicated';
@@ -327,7 +364,7 @@ export class ApplicationsService {
         // Moving a row to another day means it needs a number valid for that day.
         data.date = newDate;
         data.number = await this.numbering.reserveBlock(
-          this.prisma, row.workspace_id, newDate, 1,
+          db, row.workspace_id, newDate, 1,
         );
       }
     }
@@ -345,22 +382,26 @@ export class ApplicationsService {
       data.application_status = patch.application_status;
     }
     const finalUrl = (data.url ?? row.url ?? '').toString().trim();
-    const finalIsBanned = finalUrl ? await this.bannedUrls.matches(finalUrl) : false;
+    const finalIsBanned = finalUrl ? await this.bannedUrls.matches(finalUrl, db) : false;
     if (finalIsBanned) {
       data.application_status = 'Banned';
       data.note = BANNED_URL_NOTE;
-    } else if (patch.company_name !== undefined || patch.job_title !== undefined) {
+    }
+    if (
+      patch.company_name !== undefined || patch.job_title !== undefined
+      || data.date !== undefined
+      || (data.application_status === 'Applied' && row.application_status !== 'Applied')
+    ) {
       const companyName = patch.company_name !== undefined
         ? emptyToNull(patch.company_name)
         : row.company_name;
-      const jobTitle = patch.job_title !== undefined ? emptyToNull(patch.job_title) : row.job_title;
       const similar = await this.duplicates.findRecentCompanyMatch(
         row.workspace_id,
         companyName,
         row.id,
+        db,
       );
-      if (similar && isAdmin(user.role)) data.application_status = 'Duplicated';
-      else if (similar) {
+      if (similar) {
         throw new BadRequestException(
           `An application at ${companyName} already exists within this profile's ${this.duplicates.companyCooldownDays()}-day company cooldown.`,
         );
@@ -370,7 +411,7 @@ export class ApplicationsService {
     if (patch.paid !== undefined && isAdmin(user.role)) data.paid = patch.paid;
     if (Object.keys(data).length === 0) return row;
 
-    return this.updateWithNumberRetry(id, data, row.workspace_id);
+    return db.jobApplication.update({ where: { id }, data, select: ROW_SELECT });
   }
 
   /** Admin-only pipeline update. */
@@ -378,7 +419,7 @@ export class ApplicationsService {
     const row = await this.prisma.jobApplication.findUnique({ where: { id } });
     if (!row) throw new NotFoundException('Application not found');
     if (!isAdmin(user.role)) throw new ForbiddenException('Only an admin can manage pipeline status');
-    await this.access.assertCanEdit(user, row.workspace_id);
+    await this.access.assertCanEdit(user, row.workspace_id, { allowArchived: true });
 
     return this.prisma.jobApplication.update({
       where: { id },
@@ -405,22 +446,47 @@ export class ApplicationsService {
    * failing the whole request — with 5,000 selected rows, "one row was locked" should not discard the
    * other 4,999.
    */
-  async bulkUpdate(user: AuthUser, dto: BulkUpdateApplicationsDto) {
-    const rows = await this.prisma.jobApplication.findMany({ where: { id: { in: dto.ids } } });
+  async bulkUpdate(user: AuthUser, dto: BulkUpdateApplicationsDto, context?: WorkspaceWriteContext) {
+    if (!context) {
+      const rows = await this.prisma.jobApplication.findMany({
+        where: { id: { in: dto.ids } }, select: { workspace_id: true },
+      });
+      return this.withWorkspaceWrite(rows.map((row) => row.workspace_id), (write) => this.bulkUpdate(user, dto, write));
+    }
+    const db = context.db;
+    const rows = await db.jobApplication.findMany({ where: { id: { in: dto.ids } } });
     if (rows.length === 0) throw new NotFoundException('No matching applications');
 
     // One access check per distinct workspace rather than per row.
     const workspaceIds = [...new Set(rows.map((r) => r.workspace_id))];
-    for (const wsId of workspaceIds) await this.access.assertCanEdit(user, wsId);
+    for (const wsId of workspaceIds) {
+      await this.access.assertCanEdit(user, wsId, { allowArchived: true, db });
+    }
 
     const failed: Array<{ id: string; reason: string }> = [];
-    const bannedVerdicts = await this.bannedUrls.matchMany(rows.map((row) => row.url));
+    const bannedVerdicts = await this.bannedUrls.matchMany(rows.map((row) => row.url), db);
     const bannedById = new Map(rows.map((row, index) => [row.id, bannedVerdicts[index]]));
     const identityById = new Map<string, Awaited<ReturnType<DuplicateService['classifyCompanyIdentities']>>[number]>();
 
-    if (dto.patch.company_name !== undefined || dto.patch.job_title !== undefined) {
+    const changesCompanyIdentity = dto.patch.company_name !== undefined || dto.patch.job_title !== undefined;
+    if (changesCompanyIdentity || dto.patch.application_status === 'Applied') {
       for (const workspaceId of workspaceIds) {
-        const workspaceRows = rows.filter((row) => row.workspace_id === workspaceId);
+        const workspaceRows = rows.filter((row) => {
+          if (row.workspace_id !== workspaceId) return false;
+          if (!changesCompanyIdentity && row.application_status === 'Applied') return false;
+          // Rows that cannot be updated must not reserve a company ahead of valid rows in the batch.
+          try {
+            assertRowNotLocked(row, user.role);
+            const patch = filterPatchByRole({ ...dto.patch }, row, user.role);
+            if (patch.application_status && patch.application_status !== row.application_status) {
+              assertStatusTransition(row.application_status, patch.application_status, user.role);
+            }
+            return true;
+          } catch {
+            return false;
+          }
+        });
+        if (!workspaceRows.length) continue;
         const identities = await this.duplicates.classifyCompanyIdentities(
           workspaceId,
           workspaceRows.map((row) => ({
@@ -432,6 +498,7 @@ export class ApplicationsService {
               : row.job_title,
           })),
           workspaceRows.map((row) => row.id),
+          db,
         );
         workspaceRows.forEach((row, index) => identityById.set(row.id, identities[index]));
       }
@@ -466,10 +533,9 @@ export class ApplicationsService {
           const companyName = patch.company_name !== undefined ? emptyToNull(patch.company_name) : row.company_name;
           const jobTitle = patch.job_title !== undefined ? emptyToNull(patch.job_title) : row.job_title;
           data.job_fingerprint = createJobFingerprint(companyName, jobTitle);
-          const identity = identityById.get(row.id);
-          if (identity?.is_duplicate && isAdmin(user.role)) data.application_status = 'Duplicated';
-          else if (identity?.is_duplicate) throw new BadRequestException(`An application at that company already exists within this profile's ${this.duplicates.companyCooldownDays()}-day company cooldown.`);
         }
+        const identity = identityById.get(row.id);
+        if (identity?.is_duplicate) throw new BadRequestException(`An application at that company already exists within this profile's ${this.duplicates.companyCooldownDays()}-day company cooldown.`);
         if (patch.paid !== undefined && isAdmin(user.role)) data.paid = patch.paid;
         if (bannedById.get(row.id)) {
           data.application_status = 'Banned';
@@ -489,12 +555,12 @@ export class ApplicationsService {
     }
 
     if (updateGroups.size) {
-      await this.prisma.$transaction(
-        [...updateGroups.values()].map((group) => this.prisma.jobApplication.updateMany({
+      for (const group of updateGroups.values()) {
+        await db.jobApplication.updateMany({
           where: { id: { in: group.ids } },
           data: group.data,
-        })),
-      );
+        });
+      }
     }
     const updated = [...updateGroups.values()].flatMap((group) => group.ids);
 
@@ -510,7 +576,9 @@ export class ApplicationsService {
     if (rows.length === 0) throw new NotFoundException('No matching applications');
 
     const workspaceIds = [...new Set(rows.map((row) => row.workspace_id))];
-    for (const workspaceId of workspaceIds) await this.access.assertCanEdit(user, workspaceId);
+    for (const workspaceId of workspaceIds) {
+      await this.access.assertCanEdit(user, workspaceId, { allowArchived: true });
+    }
 
     if (!isAdmin(user.role)) {
       const blocked = rows.find((row) => (
@@ -532,8 +600,10 @@ export class ApplicationsService {
   // -------------------------------------------------------------------------
 
   /** Creates a complete application entered directly from the workspace UI. */
-  async createManual(user: AuthUser, dto: CreateManualApplicationDto) {
-    await this.access.assertCanEdit(user, dto.workspace_id);
+  async createManual(user: AuthUser, dto: CreateManualApplicationDto, context?: WorkspaceWriteContext) {
+    if (!context) return this.withWorkspaceWrite(dto.workspace_id, (write) => this.createManual(user, dto, write));
+    const db = context.db;
+    await this.access.assertCanEdit(user, dto.workspace_id, { db });
     assertStatusTransition('Pending', dto.application_status, user.role);
 
     const url = dto.url.trim();
@@ -545,21 +615,22 @@ export class ApplicationsService {
     if (!looksLikeUrl(url)) throw new BadRequestException(`"${url}" is not a valid URL`);
 
     const [[urlVerdict], banned] = await Promise.all([
-      this.duplicates.classifyBatch(dto.workspace_id, [url]),
-      this.bannedUrls.matches(url),
+      this.duplicates.classifyBatch(dto.workspace_id, [url], undefined, db),
+      this.bannedUrls.matches(url, db),
     ]);
-    const recentCompanyApplication = urlVerdict.is_duplicate
-      ? null
-      : await this.duplicates.findRecentCompanyMatch(dto.workspace_id, companyName);
+    const recentCompanyApplication = await this.duplicates.findRecentCompanyMatch(dto.workspace_id, companyName, undefined, db);
+    if (recentCompanyApplication) {
+      throw new ConflictException(`An application at ${companyName} already exists within this profile's ${this.duplicates.companyCooldownDays()}-day company cooldown.`);
+    }
     const applicationStatus: ApplicationStatus = banned
       ? 'Banned'
-      : urlVerdict.is_duplicate || recentCompanyApplication
+      : urlVerdict.is_duplicate
         ? 'Duplicated'
         : dto.application_status;
     const date = toDayStart(new Date());
     const create = (status: ApplicationStatus) =>
       this.numbering.withNextNumber(dto.workspace_id, date, (number) =>
-        this.prisma.jobApplication.create({
+        db.jobApplication.create({
           data: {
             workspace_id: dto.workspace_id,
             date,
@@ -577,29 +648,21 @@ export class ApplicationsService {
           },
           select: ROW_SELECT,
         }),
+        1, db,
       );
 
-    let application;
-    try {
-      application = await create(applicationStatus);
-    } catch (error) {
-      if (isActiveUrlCollision(error) && ['Pending', 'Applied'].includes(applicationStatus)) {
-        // Another backend committed this URL after classification. Preserve the attempted row as an
-        // explicit duplicate; the database remains the final authority under cross-process races.
-        application = await create('Duplicated');
-      } else {
-        throw error;
-      }
-    }
-    await this.slackNotifications.notifyApplicationCreated(user.id);
+    const application = await create(applicationStatus);
+    context.notifyUsers.add(user.id);
     return application;
   }
 
   /** Idempotent compatibility save path for older resume clients. */
-  async createGenerated(user: AuthUser, dto: CreateGeneratedApplicationDto) {
-    await this.access.assertCanEdit(user, dto.workspace_id);
+  async createGenerated(user: AuthUser, dto: CreateGeneratedApplicationDto, context?: WorkspaceWriteContext) {
+    if (!context) return this.withWorkspaceWrite(dto.workspace_id, (write) => this.createGenerated(user, dto, write));
+    const db = context.db;
+    await this.access.assertCanEdit(user, dto.workspace_id, { db });
 
-    const artifactData = await this.generatedArtifactData(user, dto);
+    const artifactData = await this.generatedArtifactData(user, dto, db);
 
     const url = dto.url.trim();
     const companyName = emptyToNull(dto.company_name);
@@ -612,6 +675,7 @@ export class ApplicationsService {
     const [verdict] = await this.duplicates.classifyBatch(
       dto.workspace_id,
       [url],
+      undefined, db,
     );
 
     if (verdict.is_duplicate) {
@@ -622,13 +686,13 @@ export class ApplicationsService {
         verdict.existing.workspace_id === dto.workspace_id &&
         verdict.existing.normalized_url === normalizedUrl
       ) {
-        const existingApplication = await this.prisma.jobApplication.findUnique({
+        const existingApplication = await db.jobApplication.findUnique({
           where: { id: verdict.existing.id },
           select: ROW_SELECT,
         });
         if (existingApplication) {
           if (Object.keys(artifactData).length) {
-            const application = await this.prisma.jobApplication.update({
+            const application = await db.jobApplication.update({
               where: { id: existingApplication.id },
               data: artifactData,
               select: ROW_SELECT,
@@ -651,6 +715,7 @@ export class ApplicationsService {
     const recentCompanyApplication = await this.duplicates.findRecentCompanyMatch(
       dto.workspace_id,
       companyName,
+      undefined, db,
     );
     if (recentCompanyApplication) {
       return {
@@ -662,11 +727,10 @@ export class ApplicationsService {
     }
 
     const date = toDayStart(new Date());
-    try {
-      const application = await this.numbering.withNextNumber(
+    const application = await this.numbering.withNextNumber(
         dto.workspace_id,
         date,
-        (number) => this.prisma.jobApplication.create({
+        (number) => db.jobApplication.create({
           data: {
             workspace_id: dto.workspace_id,
             date,
@@ -684,32 +748,15 @@ export class ApplicationsService {
           },
           select: ROW_SELECT,
         }),
+        1, db,
       );
-
-      await this.slackNotifications.notifyApplicationCreated(user.id);
-      return { success: true, already_added: false, application };
-    } catch (error) {
-      if (!isActiveUrlCollision(error)) throw error;
-
-      const winner = await this.prisma.jobApplication.findFirst({
-        where: {
-          workspace_id: dto.workspace_id,
-          normalized_url: normalizedUrl,
-          application_status: { in: ['Pending', 'Applied'] },
-        },
-        select: ROW_SELECT,
-        orderBy: { created_at: 'asc' },
-      });
-      if (winner?.workspace_id === dto.workspace_id) {
-        return { success: true, already_added: true, application: winner };
-      }
-      return { success: false, duplicate: true, duplicate_type: 'url' as const };
-    }
+    context.notifyUsers.add(user.id);
+    return { success: true, already_added: false, application };
   }
 
-  private async generatedArtifactData(user: AuthUser, dto: CreateGeneratedApplicationDto) {
+  private async generatedArtifactData(user: AuthUser, dto: CreateGeneratedApplicationDto, db: Prisma.TransactionClient) {
     if (dto.conversation_id) {
-      const conversation = await this.prisma.resumeConversation.findUnique({
+      const conversation = await db.resumeConversation.findUnique({
         where: { id: dto.conversation_id },
         select: { user_id: true, workspace_id: true },
       });
@@ -746,13 +793,15 @@ export class ApplicationsService {
   }
 
   /** Canonical write path for a banned URL discovered during application generation. */
-  async createBannedApplication(user: AuthUser, workspaceId: string, rawUrl: string) {
-    await this.access.assertCanEdit(user, workspaceId);
+  async createBannedApplication(user: AuthUser, workspaceId: string, rawUrl: string, context?: WorkspaceWriteContext) {
+    if (!context) return this.withWorkspaceWrite(workspaceId, (write) => this.createBannedApplication(user, workspaceId, rawUrl, write));
+    const db = context.db;
+    await this.access.assertCanEdit(user, workspaceId, { db });
     const url = rawUrl.trim();
     const normalizedUrl = normalizeUrl(url);
-    const [verdict] = await this.duplicates.classifyBatch(workspaceId, [url]);
+    const [verdict] = await this.duplicates.classifyBatch(workspaceId, [url], undefined, db);
     if (verdict.is_duplicate && verdict.existing?.same_workspace) {
-      return this.prisma.jobApplication.update({
+      return db.jobApplication.update({
         where: { id: verdict.existing.id },
         data: {
           application_status: 'Banned',
@@ -763,7 +812,7 @@ export class ApplicationsService {
     }
     const date = toDayStart(new Date());
     const application = await this.numbering.withNextNumber(workspaceId, date, (number) =>
-      this.prisma.jobApplication.create({
+      db.jobApplication.create({
         data: {
           workspace_id: workspaceId,
           date,
@@ -777,8 +826,9 @@ export class ApplicationsService {
         },
         select: ROW_SELECT,
       }),
+      1, db,
     );
-    await this.slackNotifications.notifyApplicationCreated(user.id);
+    context.notifyUsers.add(user.id);
     return application;
   }
 
@@ -793,21 +843,29 @@ export class ApplicationsService {
       job_description: string;
       note: string;
     },
+    context?: WorkspaceWriteContext,
   ) {
-    await this.access.assertCanEdit(user, input.workspace_id);
+    if (!context) return this.withWorkspaceWrite(input.workspace_id, (write) => this.createEligibilityRejectedApplication(user, input, write));
+    const db = context.db;
+    await this.access.assertCanEdit(user, input.workspace_id, { db });
     const url = input.url.trim();
     const normalizedUrl = normalizeUrl(url);
-    const [verdict] = await this.duplicates.classifyBatch(input.workspace_id, [url]);
+    const [verdict] = await this.duplicates.classifyBatch(input.workspace_id, [url], undefined, db);
     if (verdict.is_duplicate && verdict.existing?.same_workspace) {
-      return this.prisma.jobApplication.findUnique({
+      return db.jobApplication.findUnique({
         where: { id: verdict.existing.id },
         select: ROW_SELECT,
       });
     }
 
+    const companyMatch = await this.duplicates.findRecentCompanyMatch(input.workspace_id, input.company_name, undefined, db);
+    if (companyMatch) {
+      throw new ConflictException(`An application at ${input.company_name} already exists within this profile's ${this.duplicates.companyCooldownDays()}-day company cooldown.`);
+    }
+
     const date = toDayStart(new Date());
     const application = await this.numbering.withNextNumber(input.workspace_id, date, (number) =>
-      this.prisma.jobApplication.create({
+      db.jobApplication.create({
         data: {
           workspace_id: input.workspace_id,
           date,
@@ -826,154 +884,39 @@ export class ApplicationsService {
         },
         select: ROW_SELECT,
       }),
+      1, db,
     );
-    await this.slackNotifications.notifyApplicationCreated(user.id);
+    context.notifyUsers.add(user.id);
     return application;
   }
 
-  /** Persists a resume-generation attempt blocked by the per-profile company cooldown. */
-  async createDuplicateApplication(
-    user: AuthUser,
-    input: {
-      workspace_id: string;
-      url: string;
-      job_title: string;
-      company_name: string;
-      job_description: string;
-      note?: string;
-    },
-  ) {
-    await this.access.assertCanEdit(user, input.workspace_id);
-    const url = input.url.trim();
-    const date = toDayStart(new Date());
-    const application = await this.numbering.withNextNumber(input.workspace_id, date, (number) =>
-      this.prisma.jobApplication.create({
-        data: {
-          workspace_id: input.workspace_id,
-          date,
-          number,
-          url,
-          normalized_url: normalizeUrl(url),
-          job_source: detectJobSource(url),
-          application_status: 'Duplicated',
-          pipeline_status: 'Not Started',
-          company_name: input.company_name,
-          job_title: input.job_title,
-          job_fingerprint: createJobFingerprint(input.company_name, input.job_title),
-          job_description: input.job_description,
-          note: input.note ?? null,
-          created_by_user_id: user.id,
-        },
-        select: ROW_SELECT,
-      }),
-    );
-    await this.slackNotifications.notifyApplicationCreated(user.id);
-    return application;
-  }
-
-  /**
-   * Chunked `createMany` inside a single transaction, with a retry that renumbers on collision.
-   *
-   * `createMany` is much faster than N inserts. Chunking bounds each query payload and prevents one
-   * enormous SQL statement from monopolising a connection.
-   */
+  /** Inserts an import only after its checks have run under the same workspace lock. */
   async insertChunked(
     rows: Prisma.JobApplicationCreateManyInput[],
     workspaceId: string,
-    attempts = 3,
+    context?: WorkspaceWriteContext,
   ): Promise<number> {
-    for (let attempt = 1; attempt <= attempts; attempt++) {
-      try {
-        let inserted = 0;
-        await this.prisma.$transaction(
-          async (tx) => {
-            for (let i = 0; i < rows.length; i += IMPORT_CHUNK_SIZE) {
-              const chunk = rows.slice(i, i + IMPORT_CHUNK_SIZE);
-              const res = await tx.jobApplication.createMany({ data: chunk });
-              inserted += res.count;
-            }
-          },
-          { timeout: 120_000, maxWait: 15_000 },
-        );
-        const creatorIds = [...new Set(rows.map((row) => row.created_by_user_id))];
-        await Promise.all(creatorIds.map((creatorId) => (
-          this.slackNotifications.notifyApplicationCreated(creatorId)
-        )));
-        return inserted;
-      } catch (err) {
-        if (isActiveUrlCollision(err) && attempt < attempts) {
-          const activeUrls = [...new Set(rows
-            .filter((row) => ['Pending', 'Applied'].includes(String(row.application_status)))
-            .map((row) => String(row.normalized_url)))];
-          const conflicts = activeUrls.length
-            ? await this.prisma.jobApplication.findMany({
-                where: {
-                  workspace_id: workspaceId,
-                  normalized_url: { in: activeUrls },
-                  application_status: { in: ['Pending', 'Applied'] },
-                },
-                select: { normalized_url: true },
-              })
-            : [];
-          const conflictUrls = new Set(conflicts.map((row) => row.normalized_url));
-          let reclassified = 0;
-          for (const row of rows) {
-            if (
-              ['Pending', 'Applied'].includes(String(row.application_status)) &&
-              conflictUrls.has(String(row.normalized_url))
-            ) {
-              row.application_status = 'Duplicated';
-              reclassified++;
-            }
-          }
-          if (reclassified > 0) {
-            this.logger.warn(
-              `${reclassified} import row(s) became duplicates during concurrent ingestion; retrying`,
-            );
-            continue;
-          }
-        }
-        if (isNumberCollision(err) && attempt < attempts) {
-          // A concurrent insert took our numbers. Re-read the high-water mark and shift the block.
-          this.logger.warn(`Number collision during batch insert; renumbering (attempt ${attempt})`);
-          const dates = [...new Set(rows.map((r) => (r.date as Date).getTime()))];
-          for (const t of dates) {
-            const d = new Date(t);
-            const base = await this.numbering.reserveBlock(this.prisma, workspaceId, d, 1);
-            let n = base;
-            for (const row of rows) {
-              if ((row.date as Date).getTime() === t) row.number = n++;
-            }
-          }
-          continue;
-        }
-        throw err;
-      }
+    if (!context) return this.withWorkspaceWrite(workspaceId, (write) => this.insertChunked(rows, workspaceId, write));
+    if (rows.some((row) => row.workspace_id !== workspaceId)) {
+      throw new BadRequestException('Import rows must belong to the selected workspace');
     }
-    throw new BadRequestException('Could not insert rows after several renumbering attempts');
+    const db = context.db;
+    const companies = await this.duplicates.classifyCompanyIdentities(workspaceId, rows, [], db);
+    if (companies.some((company) => company.is_duplicate)) {
+      throw new ConflictException('An imported company already exists within the configured cooldown');
+    }
+    let inserted = 0;
+    for (let i = 0; i < rows.length; i += IMPORT_CHUNK_SIZE) {
+      const result = await db.jobApplication.createMany({ data: rows.slice(i, i + IMPORT_CHUNK_SIZE) });
+      inserted += result.count;
+    }
+    for (const row of rows) context.notifyUsers.add(row.created_by_user_id);
+    return inserted;
   }
 
   // -------------------------------------------------------------------------
   // Helpers
   // -------------------------------------------------------------------------
-
-  private async updateWithNumberRetry(
-    id: string,
-    data: Prisma.JobApplicationUpdateInput,
-    workspaceId: string,
-  ) {
-    try {
-      return await this.prisma.jobApplication.update({ where: { id }, data, select: ROW_SELECT });
-    } catch (err) {
-      if (isNumberCollision(err) && data.date) {
-        data.number = await this.numbering.reserveBlock(
-          this.prisma, workspaceId, data.date as Date, 1,
-        );
-        return this.prisma.jobApplication.update({ where: { id }, data, select: ROW_SELECT });
-      }
-      throw err;
-    }
-  }
 
   private buildWhere(query: QueryApplicationsDto): Prisma.JobApplicationWhereInput {
     const where: Prisma.JobApplicationWhereInput = { workspace_id: query.workspace_id };
@@ -984,6 +927,12 @@ export class ApplicationsService {
     if (query.pipeline_status?.length) where.pipeline_status = { in: query.pipeline_status };
     if (query.job_source?.length) where.job_source = { in: query.job_source };
     if (query.paid !== undefined) where.paid = query.paid;
+    if (query.has_screenshot !== undefined) {
+      const activeScreenshot = { expires_at: { gt: new Date() } };
+      where.screenshot = query.has_screenshot
+        ? { is: activeScreenshot }
+        : { isNot: activeScreenshot };
+    }
 
     if (query.date_from || query.date_to) {
       where.date = {

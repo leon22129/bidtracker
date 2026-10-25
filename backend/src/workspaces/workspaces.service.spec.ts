@@ -15,6 +15,23 @@ describe('WorkspacesService', () => {
 
   beforeEach(() => jest.clearAllMocks());
 
+  it.each([false, true])('reports bidder edit access when archive state is %s', async (archived) => {
+    const localPrisma = {
+      workspace: { findMany: jest.fn().mockResolvedValue([{
+        id: 'w-1', owner_user_id: 'bidder-1', created_by_user_id: 'admin-1',
+        is_archived: archived, resumeProfile: null, _count: { applications: 1 },
+      }]) },
+    };
+    access.visibleWorkspaceIds.mockResolvedValue(['w-1']);
+    const service = new WorkspacesService(
+      localPrisma as never, access as never, conversationCleanup as never,
+    );
+
+    await expect(service.findAllForUser({
+      id: 'bidder-1', username: 'bidder', email: 'bidder@example.test', role: 'bidder',
+    }, true)).resolves.toMatchObject([{ id: 'w-1', can_edit: !archived }]);
+  });
+
   it('returns today applied counts grouped by workspace and submitting user', async () => {
     const localPrisma = {
       workspace: {
@@ -113,7 +130,7 @@ describe('WorkspacesService', () => {
     });
 
     expect(access.assertCanEdit).toHaveBeenCalledWith(
-      expect.objectContaining({ id: 'u-1' }), 'w-1',
+      expect.objectContaining({ id: 'u-1' }), 'w-1', { allowArchived: true },
     );
     expect(prisma.resumeProfile.update).toHaveBeenCalledWith({
       where: { id: 'p-1' },

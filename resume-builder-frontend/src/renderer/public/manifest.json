@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Resume Builder",
-  "version": "0.8.1",
+  "version": "0.9.1",
   "description": "Generate tailored resumes while browsing job postings.",
   "action": {
     "default_title": "Open Resume Builder",
@@ -47,6 +47,7 @@
     }
   ],
   "host_permissions": [
+    "<all_urls>",
     "http://*/*",
     "https://*/*",
     "http://localhost/*",

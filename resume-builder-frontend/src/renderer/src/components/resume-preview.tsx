@@ -176,7 +176,7 @@ export function ResumePreview({ data, editable = false, onDataChange }: ResumePr
 
   return (
     <div
-      className="bg-white text-black p-8 max-w-[8.5in] mx-auto font-serif"
+      className="bg-white text-black p-8 max-w-[8.5in] mx-auto font-serif [color-scheme:light] [--input:#737373] [--muted-foreground:#525252] [--ring:#525252]"
       style={{ minHeight: "11in" }}
     >
       {/* Header */}

@@ -42,7 +42,7 @@ const nextConfig = {
               // wasm-unsafe-eval source permits WASM compilation without enabling JavaScript eval.
               `script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'${isDevelopment ? " 'unsafe-eval'" : ''}`,
               "style-src 'self' 'unsafe-inline'",
-              "img-src 'self' data: https:",
+              "img-src 'self' blob: data: https:",
               "connect-src 'self'",
               "font-src 'self' data:",
               "frame-ancestors 'none'",

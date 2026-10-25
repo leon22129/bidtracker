@@ -16,6 +16,7 @@ interface CellProps {
   onDownloadJobDescription?: (row: JobApplication) => void;
   onDownloadCoverLetter?: (row: JobApplication) => void;
   onViewApplicationAnswers?: (row: JobApplication) => void;
+  onViewScreenshot?: (row: JobApplication) => void;
 }
 
 /**
@@ -31,7 +32,7 @@ interface CellProps {
  */
 export function Cell({
   row, column, user, boundary, onCommit, onDownloadResume, onDownloadJobDescription,
-  onDownloadCoverLetter, onViewApplicationAnswers,
+  onDownloadCoverLetter, onViewApplicationAnswers, onViewScreenshot,
 }: CellProps) {
   const [editing, setEditing] = useState(false);
   const [customSource, setCustomSource] = useState(false);
@@ -46,6 +47,29 @@ export function Cell({
     const normalisedNext = value === null ? '' : value;
     if (String(normalisedCurrent) === String(normalisedNext)) return; // no-op edit: skip the request
     onCommit(column.key, value);
+  }
+
+  if (column.editor === 'screenshot') {
+    const available = Boolean(row.screenshot && new Date(row.screenshot.expires_at).getTime() > Date.now());
+    return (
+      <div className="cell justify-center">
+        {available ? (
+          <button
+            type="button"
+            className="rounded border border-blue-300 bg-blue-50 px-2 py-0.5 text-2xs font-semibold text-blue-800 hover:bg-blue-100"
+            title="View submission screenshot"
+            aria-label={`View screenshot for application ${row.number}`}
+            onClick={() => onViewScreenshot?.(row)}
+          >
+            View screenshot
+          </button>
+        ) : (
+          <span className="text-2xs opacity-70" title="Capture the confirmation page with Take screenshot in the Resume Builder extension.">
+            {row.screenshot ? 'Expired' : 'No screenshot'}
+          </span>
+        )}
+      </div>
+    );
   }
 
   if (column.editor === 'resume') {

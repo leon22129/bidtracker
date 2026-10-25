@@ -25,7 +25,10 @@ describe('ImportService missing company/title warnings', () => {
       assertCanEdit: jest.fn().mockResolvedValue(undefined),
       assertCanView: jest.fn().mockResolvedValue(undefined),
     };
-    const applications = { insertChunked: jest.fn(async (rows: unknown[]) => rows.length) };
+    const applications = {
+      withWorkspaceWrite: jest.fn(async (_workspaceId, action) => action({ db: {}, notifyUsers: new Set() })),
+      insertChunked: jest.fn(async (rows: unknown[]) => rows.length),
+    };
     const duplicates = {
       classifyBatch: jest.fn(async (_workspaceId, urls: string[]) =>
         urls.map((url) => ({ is_duplicate: false, normalized_url: url }))),
@@ -71,6 +74,7 @@ describe('ImportService missing company/title warnings', () => {
         expect.objectContaining({ url: 'https://example.com/jobs/3', company_name: null, job_title: null }),
       ]),
       'workspace-1',
+      expect.anything(),
     );
   });
 
@@ -119,11 +123,11 @@ describe('ImportService missing company/title warnings', () => {
         note: 'this job is in banned list',
       }),
       expect.objectContaining({ application_status: 'Rejected', note: null }),
-    ], 'workspace-1');
+    ], 'workspace-1', expect.anything());
     expect(duplicates.classifyCompanyIdentities).toHaveBeenCalledWith('workspace-1', [
-      { company_name: null, job_title: 'Engineer' },
+      { company_name: 'Blocked', job_title: 'Engineer' },
       { company_name: 'Acme', job_title: 'Engineer' },
-    ]);
+    ], [], expect.anything());
   });
 
   it('rejects an XLSX archive whose expanded contents exceed the configured bound', async () => {

@@ -58,9 +58,10 @@ export class NumberingService {
     date: Date,
     fn: (nextNumber: number) => Promise<T>,
     attempts = 5,
+    db: Prisma.TransactionClient | PrismaService = this.prisma,
   ): Promise<T> {
     for (let attempt = 1; attempt <= attempts; attempt++) {
-      const next = (await this.currentMax(this.prisma, workspaceId, date)) + 1;
+      const next = (await this.currentMax(db, workspaceId, date)) + 1;
       try {
         return await fn(next);
       } catch (err) {

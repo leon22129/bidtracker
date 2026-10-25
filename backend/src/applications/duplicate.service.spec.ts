@@ -1,5 +1,28 @@
 import { DuplicateService } from './duplicate.service';
-describe('DuplicateService URL-only detection', () => {
+import { BANNED_URL_NOTE } from '../common/utils/url.util';
+
+// Preserve SQL's NULL behavior so NOT note filters cannot silently ignore ordinary applications.
+function matchesNoteFilter(note: string | null, where: any): boolean | null {
+  const results: Array<boolean | null> = [];
+  if ('note' in where) {
+    const filter = where.note;
+    results.push(filter === null ? note === null : note === null ? null
+      : typeof filter === 'string' ? note === filter : note.startsWith(filter.startsWith));
+  }
+  if (where.NOT) {
+    for (const condition of Array.isArray(where.NOT) ? where.NOT : [where.NOT]) {
+      const result = matchesNoteFilter(note, condition);
+      results.push(result === null ? null : !result);
+    }
+  }
+  if (where.OR) {
+    const branches = where.OR.map((condition: any) => matchesNoteFilter(note, condition));
+    results.push(branches.includes(true) ? true : branches.includes(null) ? null : false);
+  }
+  return results.includes(false) ? false : results.includes(null) ? null : true;
+}
+
+describe('DuplicateService URL and company detection', () => {
   function serviceWith(rows: any[] = []) {
     const prisma = {
       jobApplication: {
@@ -9,7 +32,9 @@ describe('DuplicateService URL-only detection', () => {
             if (where?.normalized_url?.in && !where.normalized_url.in.includes(row.normalized_url)) return false;
             if (where?.date?.gte && row.date < where.date.gte) return false;
             if (where?.application_status?.not && row.application_status === where.application_status.not) return false;
-            return true;
+            if (where?.application_status?.notIn?.includes(row.application_status)) return false;
+            if (where?.id?.notIn?.includes(row.id)) return false;
+            return matchesNoteFilter(row.note ?? null, where) === true;
           }),
         )),
       },
@@ -127,7 +152,7 @@ describe('DuplicateService URL-only detection', () => {
     await expect(service.findRecentCompanyMatch('workspace-1', 'Visa')).resolves.toBeNull();
   });
 
-  it('does not extend the cooldown from a row already marked as duplicated', async () => {
+  it('prevents another visible company row when historical duplicates exist', async () => {
     const { service } = serviceWith([{
       id: 'duplicate-attempt',
       url: 'https://example.com/jobs/duplicate',
@@ -140,7 +165,7 @@ describe('DuplicateService URL-only detection', () => {
       number: 1,
     }]);
 
-    await expect(service.findRecentCompanyMatch('workspace-1', 'Visa')).resolves.toBeNull();
+    await expect(service.findRecentCompanyMatch('workspace-1', 'Visa')).resolves.toMatchObject({ id: 'duplicate-attempt' });
   });
 
   it('classifies repeated normalized companies within one batch even when titles differ', async () => {
@@ -153,5 +178,51 @@ describe('DuplicateService URL-only detection', () => {
 
     expect(verdicts[0].is_duplicate).toBe(false);
     expect(verdicts[1]).toMatchObject({ is_duplicate: true, reason: 'within_batch' });
+  });
+
+  it.each([null, '', 'Follow up next week'])(
+    'counts prior applications with note %j for individual and batch company checks', async (note) => {
+      const { service } = serviceWith([{
+        id: 'prior-application', workspace_id: 'workspace-1', company_name: 'Acme, Inc.',
+        job_title: 'Designer', date: new Date(), number: 1, application_status: 'Applied', note,
+      }]);
+
+      await expect(service.findRecentCompanyMatch('workspace-1', 'ACME'))
+        .resolves.toMatchObject({ id: 'prior-application', job_title: 'Designer' });
+      await expect(service.classifyCompanyIdentities('workspace-1', [{ company_name: 'Acme' }]))
+        .resolves.toMatchObject([{ is_duplicate: true, reason: 'existing', existing: { id: 'prior-application' } }]);
+    },
+  );
+
+  it.each([
+    ['Applied', BANNED_URL_NOTE],
+    ['Rejected', 'job eligibility check failed - it requires clearance'],
+    ['Banned', null],
+    ['Banned', 'Updated note'],
+    ['Duplicated', null],
+  ])('prevents additional company rows regardless of status %s or note %j', async (application_status, note) => {
+    const { service } = serviceWith([{
+      id: 'skipped', workspace_id: 'workspace-1', company_name: 'Acme',
+      date: new Date(), application_status, note,
+    }]);
+
+    await expect(service.findRecentCompanyMatch('workspace-1', 'Acme')).resolves.toMatchObject({ id: 'skipped' });
+    await expect(service.classifyCompanyIdentities('workspace-1', [{ company_name: 'Acme' }]))
+      .resolves.toMatchObject([{ is_duplicate: true }]);
+  });
+
+  it('excludes the edited rows without losing other company matches', async () => {
+    const rows = ['edited', 'other'].map((id) => ({
+      id, workspace_id: 'workspace-1', company_name: 'Acme', job_title: id,
+      date: new Date(), note: null, application_status: 'Applied',
+    }));
+    const { service } = serviceWith(rows);
+
+    await expect(service.findRecentCompanyMatch('workspace-1', 'Acme', 'edited'))
+      .resolves.toMatchObject({ id: 'other' });
+    await expect(service.classifyCompanyIdentities('workspace-1', [{ company_name: 'Acme' }], ['edited']))
+      .resolves.toMatchObject([{ is_duplicate: true, existing: { id: 'other' } }]);
+    await expect(service.classifyCompanyIdentities('workspace-1', [{ company_name: 'Acme' }], ['edited', 'other']))
+      .resolves.toMatchObject([{ is_duplicate: false }]);
   });
 });

@@ -12,6 +12,14 @@ import {
 } from './application.dto';
 
 describe('QueryApplicationsDto cursor pagination', () => {
+  it.each([['true', true], ['false', false]])('transforms has_screenshot=%s', async (input, expected) => {
+    const value = plainToInstance(QueryApplicationsDto, {
+      workspace_id: 'workspace-1', has_screenshot: input,
+    });
+    await expect(validate(value)).resolves.toHaveLength(0);
+    expect(value.has_screenshot).toBe(expected);
+  });
+
   it('accepts the Banned status filter', async () => {
     await expect(validate(plainToInstance(QueryApplicationsDto, {
       workspace_id: 'workspace-1',

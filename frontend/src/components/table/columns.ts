@@ -10,6 +10,7 @@ export type EditorKind =
   | 'datetime'
   | 'select'
   | 'checkbox'
+  | 'screenshot'
   | 'resume';
 
 export interface ColumnDef {
@@ -30,14 +31,18 @@ export interface ColumnDef {
 /**
  * Application columns in display order, including the admin-managed recruiting fields.
  *
- * `date` and `number` are sticky so that when a user scrolls right to edit a note, they can still see
- * which row they are on — the single most important affordance for a wide spreadsheet.
+ * Date, number and screenshot stay visible while scrolling horizontally so users can identify
+ * an application and open its submission proof from anywhere in the row.
  */
 export const COLUMNS: ColumnDef[] = [
   { key: 'date', label: 'Date', width: 108, minWidth: 92, editor: 'date', sortable: true, sticky: true },
   {
     key: 'number', label: '#', width: 56, minWidth: 48, editor: 'readonly', sortable: true,
     align: 'right', sticky: true,
+  },
+  {
+    key: 'screenshot', label: 'Screenshot', width: 120, minWidth: 110, editor: 'screenshot',
+    sortable: false, align: 'center', sticky: true,
   },
   { key: 'job_title', label: 'Job Title', width: 230, minWidth: 120, editor: 'text', sortable: true },
   {
@@ -46,7 +51,7 @@ export const COLUMNS: ColumnDef[] = [
   },
   { key: 'url', label: 'URL', width: 300, minWidth: 140, editor: 'url', sortable: false },
   {
-    key: 'resume_generated_at', label: 'Generated files', width: 330, minWidth: 300, editor: 'resume',
+    key: 'resume_generated_at', label: 'Generated files', width: 410, minWidth: 380, editor: 'resume',
     sortable: false, align: 'center',
   },
   {

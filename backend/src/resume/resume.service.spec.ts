@@ -1,3 +1,4 @@
+import { Logger } from '@nestjs/common';
 import { ApplicationGenerationService } from './resume.service';
 
 describe('ApplicationGenerationService application metadata eligibility', () => {
@@ -49,7 +50,10 @@ describe('ApplicationGenerationService application metadata eligibility', () => 
         updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
     };
-    const access = { assertCanEdit: jest.fn().mockResolvedValue(undefined) };
+    const access = {
+      assertCanEdit: jest.fn().mockResolvedValue(undefined),
+      assertCanView: jest.fn().mockResolvedValue(undefined),
+    };
     const duplicates = {
       classifyBatch: jest.fn().mockResolvedValue([{ is_duplicate: false }]),
       findRecentCompanyMatch: jest.fn().mockResolvedValue(null),
@@ -64,11 +68,6 @@ describe('ApplicationGenerationService application metadata eligibility', () => 
       createEligibilityRejectedApplication: jest.fn().mockImplementation(async (_user, application) => ({
         id: 'rejected-application-1',
         application_status: 'Rejected',
-        ...application,
-      })),
-      createDuplicateApplication: jest.fn().mockImplementation(async (_user, application) => ({
-        id: 'duplicate-application-1',
-        application_status: 'Duplicated',
         ...application,
       })),
       createGenerated: jest.fn().mockImplementation(async (_user, application) => ({
@@ -113,6 +112,44 @@ describe('ApplicationGenerationService application metadata eligibility', () => 
     requires_onsite_onboarding: false,
     reason: '',
     ...overrides,
+  });
+
+  it('saves the generated application when conversation creation recovers from a 503', async () => {
+    const originalApiKey = process.env.OPENAI_API_KEY;
+    process.env.OPENAI_API_KEY = 'test-key';
+    jest.useFakeTimers();
+    try {
+      const { service, prisma, applications } = setup();
+      (service as any).createAnswerConversation.mockRestore();
+      jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+      jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+      const openAi = jest.spyOn(service as any, 'openAi')
+        .mockResolvedValueOnce(eligible())
+        .mockResolvedValueOnce(JSON.stringify({ summary: 'Generated resume', experience: [] }));
+      prisma.resumeConversation.create.mockResolvedValue({ id: 'conversation-recovered' });
+      const provider = jest.spyOn(globalThis, 'fetch')
+        .mockResolvedValueOnce(new Response('Service Unavailable', { status: 503 }))
+        .mockResolvedValueOnce(new Response(JSON.stringify({ id: 'conv_recovered' })));
+
+      const result = expect(service.generate(user, dto)).resolves.toMatchObject({
+        success: true,
+        conversation_id: 'conversation-recovered',
+        resume: { summary: 'Generated resume' },
+      });
+      await jest.advanceTimersByTimeAsync(10_000);
+      await result;
+      expect(provider).toHaveBeenCalledTimes(2);
+      expect(openAi).toHaveBeenCalledTimes(2);
+      expect(applications.createGenerated).toHaveBeenCalledTimes(1);
+      expect(applications.createGenerated).toHaveBeenCalledWith(user, expect.objectContaining({
+        conversation_id: 'conversation-recovered',
+      }));
+    } finally {
+      jest.restoreAllMocks();
+      jest.useRealTimers();
+      if (originalApiKey === undefined) delete process.env.OPENAI_API_KEY;
+      else process.env.OPENAI_API_KEY = originalApiKey;
+    }
   });
 
   it('records a banned URL before duplicate or eligibility checks', async () => {
@@ -263,21 +300,13 @@ describe('ApplicationGenerationService application metadata eligibility', () => 
       duplicate_type: 'company',
       cooldown_days: 90,
       existing_application: existing,
-      application: { application_status: 'Duplicated' },
     });
     expect(duplicates.findRecentCompanyMatch).toHaveBeenCalledWith(
       dto.workspace_id,
       'Acme',
     );
     expect(openAi).toHaveBeenCalledTimes(1);
-    expect(applications.createDuplicateApplication).toHaveBeenCalledWith(
-      user,
-      expect.objectContaining({
-        workspace_id: dto.workspace_id,
-        company_name: 'Acme',
-        job_title: 'Software Engineer',
-      }),
-    );
+    expect(applications.createGenerated).not.toHaveBeenCalled();
     expect(applications.createEligibilityRejectedApplication).not.toHaveBeenCalled();
   });
 
