@@ -9,7 +9,7 @@ describe('OpenAI request recovery', () => {
     process.env.OPENAI_API_KEY = 'test-key';
     jest.useFakeTimers();
     service = new ApplicationGenerationService(
-      {} as any, {} as any, {} as any, {} as any, {} as any, {} as any,
+      {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any,
     );
     (service as any).logger = { log: jest.fn(), warn: jest.fn(), error: jest.fn() };
     fetchMock = jest.spyOn(globalThis, 'fetch');

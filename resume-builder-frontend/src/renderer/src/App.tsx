@@ -372,7 +372,7 @@ export default function Home() {
     let dismissNotification: (() => void) | undefined;
     const { dismiss } = toast({
       title: `${tab?.label || profile?.name || "Profile"} — Resume Ready`,
-      description: "Generation complete and the application was saved. Click View to preview and download.",
+      description: "Your resume is prepared. Apply first, then capture the confirmation screenshot to add the application.",
       duration: Infinity,
       action: (
         <ToastAction

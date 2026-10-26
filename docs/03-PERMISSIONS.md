@@ -114,6 +114,8 @@ Implemented as an explicit allow-list, not a deny-list:
 const BIDDER_ALLOWED_TRANSITIONS = new Set([
   'Pending>Applied',
   'Applied>Rejected',
+  'Pending>Cancelled',
+  'Applied>Cancelled',
 ]);
 ```
 
@@ -127,6 +129,15 @@ own payment" (silent, expensive).
 > be able to discard un-applied rows themselves; the constant is isolated in `application.policy.ts`.
 
 ### Why `Duplicated` is admin-only
+
+Unpaid `Pending` and `Applied` applications can also be changed to `Cancelled` by bidders and
+managers when they did not submit the application. Cancelled records stay in the table and company
+duplicate history, are excluded from payment, and require an admin to reopen.
+
+The system marks a new company match `Duplicated` when another row at that normalized company
+exists in the same profile within `COMPANY_APPLICATION_COOLDOWN_DAYS` (default 90), regardless of
+the existing row's status or note. Single edits, bulk edits, manual creation, generation, and imports
+use the same company rule under a workspace transaction lock.
 
 `Duplicated` rows are excluded from the weekly `Applied` count. If a bidder could clear the flag, they could
 convert a duplicate paste into billable work — self-service payment inflation. If they could *set* it, they

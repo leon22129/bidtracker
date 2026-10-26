@@ -148,13 +148,13 @@ const webAiProfiles: AiProfilesApi = {
             resume: input.resume,
           }),
     })
-    const data = await response.json().catch(() => null) as { tailored_resume?: string; full_name?: string; conversation_id?: string; job_description?: string; error?: string; message?: string; eligible?: boolean; reason?: string; banned?: boolean; resume?: unknown; answers?: unknown; application?: GenerateResumeResult["application"]; duplicate?: boolean; duplicate_type?: string | null; cooldown_days?: number; company_name?: string; existing_application?: GenerateResumeResult["existingApplication"] } | null
+    const data = await response.json().catch(() => null) as { tailored_resume?: string; full_name?: string; conversation_id?: string; job_description?: string; error?: string; message?: string; eligible?: boolean; reason?: string; banned?: boolean; resume?: unknown; answers?: unknown; application?: GenerateResumeResult["application"]; draft?: GenerateResumeResult["draft"]; duplicate?: boolean; duplicate_type?: string | null; cooldown_days?: number; company_name?: string; existing_application?: GenerateResumeResult["existingApplication"] } | null
     if (!response.ok) throw new Error(data?.message || data?.error || `Generation failed (${response.status}).`)
     if (conversationAnswers) {
       if (!Array.isArray(data?.answers)) throw new Error("The AI provider returned an empty response.")
       return { tailored_resume: JSON.stringify({ answers: data.answers }) }
     }
-    if (applicationGeneration) {
+    if (applicationGeneration || data?.draft || data?.duplicate || data?.banned || data?.eligible === false) {
       const answerPayload = data?.answers && typeof data.answers === "object"
         ? (data.answers as { answers?: unknown }).answers
         : data?.answers
@@ -179,13 +179,14 @@ const webAiProfiles: AiProfilesApi = {
       if (data?.banned) return { banned: true, tailored_resume: "" }
       if (data?.eligible === false) return { eligible: false, reason: data.reason, jobDescription: data.job_description, tailored_resume: "" }
       if (!data?.resume) throw new Error("The AI provider returned an empty response.")
-      return { eligible: true, tailored_resume: JSON.stringify(data.resume), full_name: data.full_name, conversationId: data.conversation_id, jobDescription: data.job_description, application: data.application, answers }
+      return { eligible: true, tailored_resume: JSON.stringify(data.resume), full_name: data.full_name, conversationId: data.conversation_id, jobDescription: data.job_description, draft: data.draft, answers }
     }
     if (!data?.tailored_resume) throw new Error("The AI provider returned an empty response.")
     return { tailored_resume: data.tailored_resume, full_name: data.full_name, conversationId: data.conversation_id }
   },
   async loadLastApplication(workspaceId: string): Promise<SavedGeneratedApplication> {
-    const response = await apiFetch(`/applications/latest-generated?workspace_id=${encodeURIComponent(workspaceId)}`)
+    let response = await apiFetch(`/applications/drafts/latest?workspace_id=${encodeURIComponent(workspaceId)}`)
+    if (response.status === 404) response = await apiFetch(`/applications/latest-generated?workspace_id=${encodeURIComponent(workspaceId)}`)
     const data = await response.json().catch(() => null) as (SavedGeneratedApplication & { message?: string }) | null
     if (!response.ok || !data) throw new Error(data?.message || "Unable to load the last application.")
     return data

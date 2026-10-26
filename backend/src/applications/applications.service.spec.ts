@@ -38,6 +38,7 @@ describe('ApplicationsService generated-application duplicate-click protection',
         findUnique: jest.fn(),
         findFirst: jest.fn(),
         create: jest.fn(),
+        createMany: jest.fn().mockResolvedValue({ count: 1 }),
         update: jest.fn(),
         updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
@@ -203,8 +204,8 @@ describe('ApplicationsService generated-application duplicate-click protection',
     expect(prisma.jobApplication.create).toHaveBeenCalledTimes(1);
   });
 
-  it('blocks a recent application at the same company even when the job title differs', async () => {
-    const { service, duplicates, numbering } = setup();
+  it('records a company duplicate even when the job title differs', async () => {
+    const { service, duplicates, prisma } = setup();
     duplicates.classifyBatch.mockResolvedValue([{
       normalized_url: existing.normalized_url,
       is_duplicate: false,
@@ -223,11 +224,13 @@ describe('ApplicationsService generated-application duplicate-click protection',
       duplicate: true,
       duplicate_type: 'company',
     });
-    expect(numbering.withNextNumber).not.toHaveBeenCalled();
+    expect(prisma.jobApplication.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ application_status: 'Duplicated' }),
+    }));
   });
 
   it('does not allow the company cooldown to be overridden', async () => {
-    const { service, duplicates, numbering } = setup();
+    const { service, duplicates, prisma } = setup();
     duplicates.classifyBatch.mockResolvedValue([{
       normalized_url: existing.normalized_url,
       is_duplicate: false,
@@ -247,7 +250,9 @@ describe('ApplicationsService generated-application duplicate-click protection',
       dto.company_name,
       undefined, expect.anything(),
     );
-    expect(numbering.withNextNumber).not.toHaveBeenCalled();
+    expect(prisma.jobApplication.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ application_status: 'Duplicated' }),
+    }));
   });
 
   it.each(['bidder', 'admin'] as const)(
@@ -261,15 +266,17 @@ describe('ApplicationsService generated-application duplicate-click protection',
       });
       const update = service.update({ ...user, role }, existing.id, { application_status: 'Applied' });
 
-      await expect(update).rejects.toThrow('company cooldown');
-      expect(prisma.jobApplication.update).not.toHaveBeenCalled();
+      await update;
+      expect(prisma.jobApplication.update).toHaveBeenCalledWith(expect.objectContaining({
+        data: expect.objectContaining({ application_status: 'Duplicated' }),
+      }));
       expect(duplicates.findRecentCompanyMatch).toHaveBeenCalledWith(
         dto.workspace_id, dto.company_name, existing.id, prisma,
       );
     },
   );
 
-  it('blocks same-company applications with different titles in a bulk status update', async () => {
+  it('marks later same-company applications as duplicates in a bulk status update', async () => {
     const { service, prisma, duplicates } = setup();
     const rows = ['Engineer', 'Designer'].map((job_title, index) => ({
       ...existing, id: `pending-${index}`, job_title, application_status: 'Pending', paid: false,
@@ -285,11 +292,13 @@ describe('ApplicationsService generated-application duplicate-click protection',
     await expect(service.bulkUpdate(user, {
       ids: rows.map((row) => row.id), patch: { application_status: 'Applied' },
     })).resolves.toMatchObject({
-      updated: 1, updated_ids: ['pending-0'],
-      failed: [{ id: 'pending-1', reason: expect.stringContaining('company cooldown') }],
+      updated: 2, updated_ids: ['pending-0', 'pending-1'], failed: [],
     });
     expect(prisma.jobApplication.updateMany).toHaveBeenCalledWith({
       where: { id: { in: ['pending-0'] } }, data: { application_status: 'Applied' },
+    });
+    expect(prisma.jobApplication.updateMany).toHaveBeenCalledWith({
+      where: { id: { in: ['pending-1'] } }, data: { application_status: 'Duplicated' },
     });
   });
 
@@ -304,7 +313,7 @@ describe('ApplicationsService generated-application duplicate-click protection',
     await expect(service.bulkUpdate(user, {
       ids: [existing.id, 'pending'], patch: { application_status: 'Applied' },
     })).resolves.toMatchObject({
-      updated_ids: [existing.id], failed: [{ id: 'pending', reason: expect.stringContaining('company cooldown') }],
+      updated_ids: [existing.id, 'pending'], failed: [],
     });
     expect(duplicates.classifyCompanyIdentities).toHaveBeenCalledWith(
       dto.workspace_id, [{ company_name: dto.company_name, job_title: 'Designer' }], ['pending'], prisma,
@@ -402,23 +411,33 @@ describe('ApplicationsService generated-application duplicate-click protection',
     }));
   });
 
-  it('marks a manually entered banned URL as Banned even if it is also a duplicate', async () => {
+  it.each([false, true])('blocks a reused URL during manual entry even when banned=%s', async (banned) => {
     const { service, prisma, duplicates, bannedUrls } = setup();
     duplicates.classifyBatch.mockResolvedValue([{
       normalized_url: existing.normalized_url,
       is_duplicate: true,
       existing,
     }]);
-    bannedUrls.matches.mockResolvedValue(true);
+    bannedUrls.matches.mockResolvedValue(banned);
 
-    await service.createManual(user, { ...dto, application_status: 'Applied' });
+    await expect(service.createManual(user, {
+      ...dto, company_name: 'A different company', application_status: 'Applied',
+    })).rejects.toThrow('URL already exists');
 
-    expect(prisma.jobApplication.create).toHaveBeenCalledWith(expect.objectContaining({
-      data: expect.objectContaining({
-        application_status: 'Banned',
-        note: 'this job is in banned list',
-      }),
-    }));
+    expect(prisma.jobApplication.create).not.toHaveBeenCalled();
+  });
+
+  it('refuses a reused URL in the import insert helper', async () => {
+    const { service, prisma, duplicates } = setup();
+    duplicates.classifyBatch.mockResolvedValue([{
+      is_duplicate: true, duplicate_type: 'url', existing,
+    }]);
+
+    await expect(service.insertChunked([{
+      ...dto, company_name: 'A different company', normalized_url: existing.normalized_url,
+      date: new Date(), number: 1, created_by_user_id: user.id,
+    }], dto.workspace_id)).rejects.toThrow('URL already exists');
+    expect(prisma.jobApplication.createMany).not.toHaveBeenCalled();
   });
 
   it.each([

@@ -106,6 +106,35 @@ function cleanLabel(value) {
     .trim();
 }
 
+// TextContent joins adjacent HTML blocks together, especially in detached JSON-LD descriptions.
+// Read block boundaries and list items explicitly so the saved JD keeps its original structure.
+function descriptionText(element) {
+  const read = (node, listDepth = 0) => {
+    if (node.nodeType === 3) return node.textContent || '';
+    if (node.nodeType !== 1) return '';
+    const tag = node.tagName.toLowerCase();
+    if (['script', 'style', 'noscript', 'button', 'input', 'select'].includes(tag)
+      || node.hidden || node.getAttribute('aria-hidden') === 'true') return '';
+    if (tag === 'br') return '\n';
+    if (tag === 'ul' || tag === 'ol') {
+      return '\n' + Array.from(node.childNodes).map((child) => read(child, listDepth + 1)).join('') + '\n';
+    }
+    const text = Array.from(node.childNodes).map((child) => read(child, listDepth)).join('');
+    if (tag === 'li') {
+      const siblings = Array.from(node.parentElement?.children || []).filter((child) => child.tagName === 'LI');
+      const marker = node.parentElement?.tagName === 'OL' ? `${siblings.indexOf(node) + 1}.` : '-';
+      return `${'  '.repeat(Math.max(0, listDepth - 1))}${marker} ${text.trim()}\n`;
+    }
+    if (/^h[1-6]$/.test(tag) || ['p', 'section', 'article'].includes(tag)) return `\n\n${text.trim()}\n\n`;
+    if (['div', 'main', 'header', 'blockquote', 'tr', 'dl', 'dt', 'dd'].includes(tag)) return `\n${text.trim()}\n`;
+    return text;
+  };
+  return read(element).replace(/\u00a0/g, ' ').split('\n').map((line) => {
+    const indent = line.match(/^ +(?=(?:-|\d+[.)]) )/)?.[0] || '';
+    return indent + line.trim().replace(/[ \t]+/g, ' ');
+  }).join('\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+
 function normalize(value) {
   return cleanLabel(value).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 }
@@ -137,7 +166,7 @@ function structuredDescription(posting) {
   if (!posting?.description) return '';
   const parser = new DOMParser();
   const parsed = parser.parseFromString(String(posting.description), 'text/html');
-  const description = cleanText(parsed.body.innerText || parsed.body.textContent);
+  const description = descriptionText(parsed.body);
   return description.length >= 120 ? description.slice(0, 50000) : '';
 }
 
@@ -354,7 +383,7 @@ function extractICimsJobDescription() {
     }
     if (!(content instanceof HTMLElement) || !isVisible(content)) continue;
     const headingText = cleanText(heading.innerText || heading.textContent);
-    const contentText = cleanText(content.innerText || content.textContent);
+    const contentText = descriptionText(content);
     if (headingText && contentText) sections.push(`${headingText}\n${contentText}`);
   }
   const description = sections.join('\n\n');
@@ -424,7 +453,7 @@ function extractJobDescription(posting) {
   if (/(^|\.)ats\.rippling\.com$/i.test(location.hostname)) {
     for (const element of document.querySelectorAll('.ATS_htmlPreview')) {
       if (!isVisible(element)) continue;
-      const text = cleanText(element.innerText || element.textContent);
+      const text = descriptionText(element);
       if (text.length >= 120) return { text: text.slice(0, 50000), source: 'Rippling job description' };
     }
   }
@@ -438,7 +467,7 @@ function extractJobDescription(posting) {
     for (const element of document.querySelectorAll(selector)) {
       if (seen.has(element) || !isVisible(element)) continue;
       seen.add(element);
-      const text = cleanText(element.innerText || element.textContent);
+      const text = descriptionText(element);
       if (text.length < 120) continue;
       candidates.push({
         text,
@@ -1887,14 +1916,14 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   };
 
   document.addEventListener("submit", (event) => {
-    if (isFinalSubmitLabel(event.submitter)) signalSubmission();
+    if (isFinalSubmitLabel(event.submitter)) scanForConfirmation();
   }, true);
   document.addEventListener("click", (event) => {
     const target = event.target instanceof Element
       ? event.target.closest('button, input[type="submit"], [role="button"]')
       : null;
     if (!target) return;
-    if (isFinalSubmitLabel(target)) signalSubmission();
+    if (isFinalSubmitLabel(target)) scanForConfirmation();
   }, true);
 
   scanForConfirmation();

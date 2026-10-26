@@ -38,7 +38,7 @@ export function canEditField(
   if (!user) return false;
   if (isAdmin(user)) return true;
   if (row.paid) return false;                 // paid rows are locked
-  if (row.application_status === 'Rejected' || row.application_status === 'Banned') return false;
+  if (['Rejected', 'Banned', 'Cancelled'].includes(row.application_status)) return false;
   if (row.application_status === 'Duplicated' && !DUPLICATED_EDITABLE_FIELDS.has(field)) return false;
   if (ADMIN_ONLY_FIELDS.has(field)) return false;
   return true;
@@ -55,8 +55,9 @@ export function allowedStatusTransitions(
   // Non-admins: forward-only; Banned and Duplicated statuses are set by the system or an admin.
   if (current === 'Banned') return ['Banned'];
   if (current === 'Duplicated') return ['Duplicated'];
-  if (current === 'Pending') return ['Pending', 'Applied'];
-  if (current === 'Applied') return ['Applied', 'Rejected'];
+  if (current === 'Cancelled') return ['Cancelled'];
+  if (current === 'Pending') return ['Pending', 'Applied', 'Cancelled'];
+  if (current === 'Applied') return ['Applied', 'Rejected', 'Cancelled'];
   return ['Rejected'];
 }
 
@@ -97,6 +98,7 @@ export function whyLocked(
   if (row.paid) return 'This row is paid and locked — only an admin can edit it';
   if (row.application_status === 'Rejected') return 'Rejected applications are locked — only an admin can edit them';
   if (row.application_status === 'Banned') return 'Banned applications are locked — only an admin can edit them';
+  if (row.application_status === 'Cancelled') return 'Cancelled applications are locked — only an admin can reopen them';
   if (row.application_status === 'Duplicated') {
     return 'Duplicated applications only allow company, title, source, and note edits';
   }

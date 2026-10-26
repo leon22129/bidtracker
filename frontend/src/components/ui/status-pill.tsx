@@ -4,6 +4,7 @@ import type { ApplicationStatus, PipelineStatus } from '@/lib/types';
 const STATUS_CLASS: Record<ApplicationStatus, string> = {
   Pending: 'status-pending',
   Applied: 'status-applied',
+  Cancelled: 'status-cancelled',
   Rejected: 'status-rejected',
   Banned: 'status-banned',
   Duplicated: 'status-duplicated',

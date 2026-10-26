@@ -34,3 +34,7 @@ backend/tsconfig.build.tsbuildinfo
 backend/prisma/generated/
 frontend/.next-dev/
 frontend/tsconfig.tsbuildinfo
+
+# Browser workflow verification artifacts.
+.tmp/workflow-browser/
+.tmp/application-workflow-verified.png

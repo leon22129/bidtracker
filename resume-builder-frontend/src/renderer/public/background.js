@@ -62,10 +62,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         entries[message.applicationId] = {
           ...entries[message.applicationId],
           applicationId: message.applicationId,
+          draftId: message.draftId,
           tabId: Number(message.tabId),
           sessionId,
           companyName: message.companyName,
           jobTitle: message.jobTitle,
+          url: message.url,
           createdAt: entries[message.applicationId]?.createdAt || Date.now(),
           submitted: entries[message.applicationId]?.submitted || false,
         };
@@ -90,7 +92,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message?.type === "CAPTURE_APPLICATION_SCREENSHOT") {
-    captureAndUpload(Number(message.tabId), message.applicationId)
+    captureAndUpload(Number(message.tabId), message.applicationId, message.confirmed === true)
       .then(() => sendResponse({ ok: true }))
       .catch((error) => sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error) }));
     return true;
@@ -114,12 +116,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 });
 
-async function captureAndUpload(tabId, applicationId) {
+async function captureAndUpload(tabId, applicationId, confirmed) {
   const entries = await pendingEntries();
   const pending = entries[applicationId];
   if (!pending || pending.tabId !== tabId) throw new Error("This application is no longer available for capture.");
+  if (!pending.submitted && !confirmed) throw new Error("Confirm that the application was submitted successfully first.");
   if (pending.sessionId !== await currentBrowserSession()) {
-    throw new Error('Reopen the confirmation page and use Load Last Application to select it again after restarting or reloading the extension.');
+    throw new Error('Reopen the confirmation page and use Load Last Job to select it again after restarting or reloading the extension.');
   }
   const tab = await chrome.tabs.get(tabId).catch(() => null);
   if (!tab) throw new Error("The original application tab is closed. Reopen the confirmation page and load the application again.");
@@ -127,6 +130,8 @@ async function captureAndUpload(tabId, applicationId) {
   await chrome.tabs.update(tabId, { active: true });
   await new Promise((resolve) => setTimeout(resolve, 200));
   const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: "png" });
+  const [activeTab] = await chrome.tabs.query({ active: true, windowId: tab.windowId });
+  if (activeTab?.id !== tabId) throw new Error("The active tab changed during capture. Return to the confirmation page and try again.");
   const image = await fetch(dataUrl).then((response) => response.blob());
   const settings = await chrome.storage.local.get([TOKEN_KEY, API_URL_KEY]);
   const token = settings[TOKEN_KEY];
@@ -134,7 +139,11 @@ async function captureAndUpload(tabId, applicationId) {
   const apiUrl = String(settings[API_URL_KEY] || DEFAULT_API_URL).replace(/\/+$/, "");
   const body = new FormData();
   body.append("screenshot", image, "application-submitted.png");
-  const response = await fetch(`${apiUrl}/applications/${encodeURIComponent(applicationId)}/screenshot`, {
+  body.append("submitted", "true");
+  const endpoint = pending.draftId
+    ? `/applications/drafts/${encodeURIComponent(pending.draftId)}/submit`
+    : `/applications/${encodeURIComponent(applicationId)}/screenshot`;
+  const response = await fetch(`${apiUrl}${endpoint}`, {
     method: "POST",
     headers: { Authorization: `Bearer ${token}` },
     body,

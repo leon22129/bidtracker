@@ -445,15 +445,16 @@ const firstOfDay = await req(
 check('imported rows numbered from 1', firstOfDay.body.items[0]?.number === 1, `rows on that date=${firstOfDay.body.total}`);
 const importedAll = await req(`/applications?workspace_id=${JW}&search=importtest&page_size=200`, { token: admin });
 const importedRows = importedAll.body.items.filter((r) => r.url.includes(stamp));
-check('the four imported rows are retrievable', importedRows.length === 4, `found ${importedRows.length}`);
+check('the three unique imported rows are retrievable', importedRows.length === 3, `found ${importedRows.length}`);
 check(
   'quoted comma survives CSV parsing',
   importedRows.some((r) => r.company_name === 'Acme, Inc.'),
   importedRows.map((r) => r.company_name).join(' | '),
 );
 check(
-  'import duplicate flagged from normalized url',
-  importedRows.filter((r) => r.application_status === 'Duplicated').length === 1,
+  'import duplicate URL skipped without creating a row',
+  importedRows.every((r) => r.job_title !== 'Duplicate Row') && impRun.body.duplicates === 1
+    && impRun.body.skipped.some((r) => r.row === 4 && r.reason.includes('URL already exists')),
   importedRows.map((r) => r.application_status).join(' | '),
 );
 const smuggled = importedRows.find((r) => r.job_title === 'Smuggled Status');

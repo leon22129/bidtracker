@@ -195,17 +195,20 @@ export class ImportService {
 
     // --- Pass 3: enforce the per-profile company cooldown -------------------
     const bannedVerdicts = await this.bannedUrls.matchMany(parsed.map((row) => row.url), db);
-    const identityVerdicts = await this.duplicates.classifyCompanyIdentities(
+    // A row skipped for its URL must not reserve a company and block a later valid row.
+    const companyRows = parsed.filter((_row, index) => !urlVerdicts[index].is_duplicate);
+    const companyVerdicts = await this.duplicates.classifyCompanyIdentities(
       workspaceId,
-      parsed.map((row) => ({
+      companyRows.map((row) => ({
         company_name: row.company_name,
         job_title: row.job_title,
       })),
       [], db,
     );
+    const identityByRow = new Map(companyRows.map((row, index) => [row, companyVerdicts[index]]));
     const verdicts = urlVerdicts.map((verdict, index) => {
-      const identity = identityVerdicts[index];
-      return verdict.is_duplicate || !identity.is_duplicate
+      const identity = identityByRow.get(parsed[index]);
+      return verdict.is_duplicate || !identity?.is_duplicate
         ? verdict
         : {
             ...verdict,
@@ -221,8 +224,8 @@ export class ImportService {
     // --- Pass 4: allocate numbers per date, then batch insert ---------------
     const byDate = new Map<number, ParsedRow[]>();
     for (const [index, row] of parsed.entries()) {
-      if (identityVerdicts[index].is_duplicate) {
-        skipped.push({ row: row.rowNumber, reason: `Company already exists within this profile's ${this.duplicates.companyCooldownDays()}-day cooldown` });
+      if (urlVerdicts[index].is_duplicate) {
+        skipped.push({ row: row.rowNumber, reason: 'Job URL already exists in this profile or is repeated in this file' });
         continue;
       }
       const key = row.date.getTime();
@@ -244,8 +247,7 @@ export class ImportService {
           url: row.url,
           normalized_url: verdict?.normalized_url ?? normalizeUrl(row.url),
           job_source: detectJobSource(row.url),
-          // Banned URLs keep their own status, regardless of spreadsheet status or duplicate checks.
-          application_status: banned ? 'Banned' : verdict?.is_duplicate ? 'Duplicated' : row.status,
+          application_status: verdict?.is_duplicate ? 'Duplicated' : banned ? 'Banned' : row.status,
           pipeline_status: 'Not Started',
           job_title: row.job_title,
           company_name: row.company_name,

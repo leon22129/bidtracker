@@ -47,6 +47,8 @@ const DUPLICATED_WRITABLE_FIELDS = [
 const BIDDER_ALLOWED_TRANSITIONS = new Set<string>([
   'Pending>Applied',
   'Applied>Rejected',
+  'Pending>Cancelled',
+  'Applied>Cancelled',
   // Set ALLOW_BIDDER_PENDING_TO_REJECTED=true to also permit discarding un-applied rows.
   ...(process.env.ALLOW_BIDDER_PENDING_TO_REJECTED === 'true' ? ['Pending>Rejected'] : []),
 ]);
@@ -63,7 +65,7 @@ export function assertRowNotLocked(
   row: { paid: boolean; application_status?: ApplicationStatus | string },
   role: Role | string,
 ): void {
-  if (['Rejected', 'Banned'].includes(row.application_status ?? '') && !isAdmin(role)) {
+  if (['Rejected', 'Banned', 'Cancelled'].includes(row.application_status ?? '') && !isAdmin(role)) {
     throw new ForbiddenException(
       `${row.application_status} applications are locked. Only an admin can modify this row.`,
     );
@@ -79,6 +81,7 @@ export function assertRowNotLocked(
  * Enforces the application-status state machine.
  *
  *   Pending ──▶ Applied ──▶ Rejected          (any role)
+ *   Pending / Applied ──▶ Cancelled           (any role, unpaid rows only)
  *   everything else, including anything touching `Duplicated`   (admin only)
  *
  * `Duplicated` is admin-only because duplicates are excluded from the weekly payment count: letting
@@ -105,7 +108,7 @@ export function assertStatusTransition(
   if (!BIDDER_ALLOWED_TRANSITIONS.has(`${from}>${to}`)) {
     throw new ForbiddenException(
       `Transition ${from} → ${to} is not allowed for your role. ` +
-        'Allowed: Pending → Applied, Applied → Rejected.',
+        'Allowed: Pending → Applied, Applied → Rejected, Pending / Applied → Cancelled.',
     );
   }
 }

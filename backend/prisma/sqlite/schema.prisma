@@ -53,6 +53,7 @@ model User {
   @@index([created_by_user_id])
   @@index([manager_user_id])
   @@map("users")
+  applicationDrafts ApplicationDraft[]
 }
 
 // ---------------------------------------------------------------------------
@@ -84,6 +85,7 @@ model Workspace {
   @@index([is_archived])
   @@index([resume_profile_id])
   @@map("workspaces")
+  applicationDrafts ApplicationDraft[]
 }
 
 // A resume-builder profile assigned to one bid-tracker user.
@@ -160,6 +162,7 @@ model ResumeConversation {
   @@index([profile_id])
   @@index([updated_at])
   @@map("resume_conversations")
+  draft ApplicationDraft?
 }
 
 // ---------------------------------------------------------------------------
@@ -180,7 +183,7 @@ model JobApplication {
   job_fingerprint String? // recent workspace duplicate signal: normalized company + title
   job_source      String  @default("Other")
 
-  application_status String @default("Pending") // Pending | Applied | Rejected | Banned | Duplicated
+  application_status String @default("Pending") // Pending | Applied | Cancelled | Rejected | Banned | Duplicated
   pipeline_status    String @default("Not Started") // admin-managed recruiting stage
 
   note String?
@@ -228,6 +231,7 @@ model JobApplication {
   // Prisma cannot represent partial indexes in schema syntax.
   @@index([workspace_id, date(sort: Desc), number(sort: Asc)], map: "job_applications_workspace_date_desc_number_asc_idx")
   @@map("job_applications")
+  submissionDraft ApplicationDraft?
 }
 
 model ApplicationScreenshot {
@@ -277,4 +281,36 @@ model BannedUrlPattern {
 
   @@index([created_by_user_id])
   @@map("banned_url_patterns")
+}
+
+// Prepared jobs are separate from submitted applications and payment counts.
+model ApplicationDraft {
+  id String @id @default(cuid())
+  workspace_id String
+  created_by_user_id String
+  url String
+  normalized_url String
+  company_name String
+  job_title String
+  source_job_description String
+  job_description String
+  generated_resume_json String
+  resume_template String @default("classic")
+  cover_letter_text String?
+  cover_letter_template String @default("classic")
+  conversation_id String? @unique
+  application_questions_json String?
+  application_answers_json String?
+  submitted_application_id String? @unique
+  submitted_at DateTime?
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  workspace Workspace @relation(fields: [workspace_id], references: [id], onDelete: Cascade)
+  creator User @relation(fields: [created_by_user_id], references: [id], onDelete: Cascade)
+  conversation ResumeConversation? @relation(fields: [conversation_id], references: [id], onDelete: SetNull)
+  application JobApplication? @relation(fields: [submitted_application_id], references: [id], onDelete: SetNull)
+
+  @@index([workspace_id, created_by_user_id, created_at])
+  @@map("application_drafts")
 }

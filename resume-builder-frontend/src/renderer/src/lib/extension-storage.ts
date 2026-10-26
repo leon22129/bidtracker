@@ -84,30 +84,35 @@ export async function getCurrentBrowserTabKey(): Promise<string> {
 }
 
 export async function getCurrentBrowserTabUrl(): Promise<string> {
-  const chromeApi = (globalThis as { chrome?: { tabs?: { query: (queryInfo: { active: boolean; currentWindow: boolean }) => Promise<Array<{ url?: string }>> } } }).chrome;
+  return (await getCurrentBrowserTabContext()).url;
+}
+
+export async function getCurrentBrowserTabContext(): Promise<{ url: string; tabId?: number }> {
+  const chromeApi = (globalThis as { chrome?: { tabs?: { query: (queryInfo: { active: boolean; currentWindow: boolean }) => Promise<Array<{ id?: number; url?: string }>> } } }).chrome;
   const tabs = await chromeApi?.tabs?.query({ active: true, currentWindow: true });
   const url = tabs?.[0]?.url?.trim();
   if (!url || !/^https?:\/\//i.test(url)) {
     throw new Error("Open a job posting in the active browser tab before generating.");
   }
-  return url;
+  return { url, tabId: tabs?.[0]?.id };
 }
 
 export async function armApplicationScreenshot(
   applicationId: string,
-  details: { companyName?: string; jobTitle?: string } = {},
+  details: { companyName?: string; jobTitle?: string; draft?: boolean; tabId?: number; url?: string } = {},
 ): Promise<void> {
   const chromeApi = (globalThis as { chrome?: {
     tabs?: { query: (queryInfo: { active: boolean; currentWindow: boolean }) => Promise<Array<{ id?: number }>> };
     runtime?: { sendMessage: (message: unknown) => Promise<{ ok?: boolean; error?: string }> };
   } }).chrome;
   if (!chromeApi?.tabs || !chromeApi.runtime) return;
-  const [tab] = await chromeApi.tabs.query({ active: true, currentWindow: true });
-  if (tab?.id === undefined) return;
+  const tabId = details.tabId ?? (await chromeApi.tabs.query({ active: true, currentWindow: true }))[0]?.id;
+  if (tabId === undefined) return;
   const result = await chromeApi.runtime.sendMessage({
     type: "ARM_APPLICATION_SCREENSHOT",
-    tabId: tab.id,
+    tabId,
     applicationId,
+    draftId: details.draft === false ? undefined : applicationId,
     ...details,
   });
   if (!result?.ok) throw new Error(result?.error || "Unable to watch for application submission.");

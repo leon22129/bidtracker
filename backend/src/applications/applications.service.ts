@@ -5,7 +5,7 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { WorkspaceAccessService } from '../workspaces/workspace-access.service';
 import { isNumberCollision, NumberingService } from './numbering.service';
-import { DuplicateService } from './duplicate.service';
+import { DuplicateService, ExistingRef } from './duplicate.service';
 import { AuthUser } from '../common/decorators/current-user.decorator';
 import {
   APPLICATION_STATUSES, ApplicationStatus, DEFAULT_PAGE_SIZE, IMPORT_CHUNK_SIZE,
@@ -31,6 +31,7 @@ import {
 } from './dto/application.dto';
 import { SlackNotificationService } from './slack-notification.service';
 import { parseApplicationHistory } from '../common/utils/application-history.util';
+import { formatJobDescription } from '../common/utils/job-description.util';
 
 const ROW_SELECT = {
   id: true, workspace_id: true, date: true, number: true, job_title: true, company_name: true,
@@ -45,6 +46,9 @@ export interface WorkspaceWriteContext {
   db: Prisma.TransactionClient;
   notifyUsers: Set<string>;
 }
+
+type CompanyDuplicateInput = Pick<CreateGeneratedApplicationDto,
+  'workspace_id' | 'url' | 'company_name' | 'job_title' | 'job_description'>;
 
 @Injectable()
 export class ApplicationsService {
@@ -218,7 +222,7 @@ export class ApplicationsService {
         resume: JSON.parse(row.generated_resume_json),
         template: row.resume_template || 'classic',
         generated_at: row.resume_generated_at,
-        job_description: row.job_description,
+        job_description: row.job_description ? formatJobDescription(row.job_description) : row.job_description,
         cover_letter_text: row.cover_letter_text,
         cover_letter_template: row.cover_letter_template || 'classic',
         conversation_available: Boolean(row.conversation_id),
@@ -276,7 +280,7 @@ export class ApplicationsService {
         resume: JSON.parse(row.generated_resume_json!),
         template: row.resume_template || 'classic',
         generated_at: row.resume_generated_at,
-        job_description: row.job_description,
+        job_description: row.job_description ? formatJobDescription(row.job_description) : row.job_description,
         conversation_id: row.conversation_id,
         cover_letter_text: row.cover_letter_text,
         cover_letter_template: row.cover_letter_template || 'classic',
@@ -402,9 +406,7 @@ export class ApplicationsService {
         db,
       );
       if (similar) {
-        throw new BadRequestException(
-          `An application at ${companyName} already exists within this profile's ${this.duplicates.companyCooldownDays()}-day company cooldown.`,
-        );
+        data.application_status = 'Duplicated';
       }
     }
     if (patch.pipeline_status !== undefined) data.pipeline_status = patch.pipeline_status;
@@ -535,12 +537,12 @@ export class ApplicationsService {
           data.job_fingerprint = createJobFingerprint(companyName, jobTitle);
         }
         const identity = identityById.get(row.id);
-        if (identity?.is_duplicate) throw new BadRequestException(`An application at that company already exists within this profile's ${this.duplicates.companyCooldownDays()}-day company cooldown.`);
         if (patch.paid !== undefined && isAdmin(user.role)) data.paid = patch.paid;
         if (bannedById.get(row.id)) {
           data.application_status = 'Banned';
           data.note = BANNED_URL_NOTE;
         }
+        if (identity?.is_duplicate) data.application_status = 'Duplicated';
         // `date` is intentionally not bulk-editable: it would require renumbering every affected row.
         if (Object.keys(data).length === 0) continue;
 
@@ -618,15 +620,12 @@ export class ApplicationsService {
       this.duplicates.classifyBatch(dto.workspace_id, [url], undefined, db),
       this.bannedUrls.matches(url, db),
     ]);
-    const recentCompanyApplication = await this.duplicates.findRecentCompanyMatch(dto.workspace_id, companyName, undefined, db);
-    if (recentCompanyApplication) {
-      throw new ConflictException(`An application at ${companyName} already exists within this profile's ${this.duplicates.companyCooldownDays()}-day company cooldown.`);
+    if (urlVerdict.is_duplicate) {
+      throw new ConflictException('That URL already exists in this profile.');
     }
-    const applicationStatus: ApplicationStatus = banned
-      ? 'Banned'
-      : urlVerdict.is_duplicate
-        ? 'Duplicated'
-        : dto.application_status;
+    const recentCompanyApplication = await this.duplicates.findRecentCompanyMatch(dto.workspace_id, companyName, undefined, db);
+    const applicationStatus: ApplicationStatus = recentCompanyApplication
+      ? 'Duplicated' : banned ? 'Banned' : dto.application_status;
     const date = toDayStart(new Date());
     const create = (status: ApplicationStatus) =>
       this.numbering.withNextNumber(dto.workspace_id, date, (number) =>
@@ -643,7 +642,8 @@ export class ApplicationsService {
             company_name: companyName,
             job_title: jobTitle,
             job_fingerprint: createJobFingerprint(companyName, jobTitle),
-            note: banned ? BANNED_URL_NOTE : null,
+            note: recentCompanyApplication ? this.companyDuplicateNote(recentCompanyApplication)
+              : banned ? BANNED_URL_NOTE : null,
             created_by_user_id: user.id,
           },
           select: ROW_SELECT,
@@ -712,19 +712,8 @@ export class ApplicationsService {
       };
     }
 
-    const recentCompanyApplication = await this.duplicates.findRecentCompanyMatch(
-      dto.workspace_id,
-      companyName,
-      undefined, db,
-    );
-    if (recentCompanyApplication) {
-      return {
-        success: false,
-        duplicate: true,
-        duplicate_type: 'company' as const,
-        existing_application: recentCompanyApplication,
-      };
-    }
+    const companyMatch = await this.duplicates.findRecentCompanyMatch(dto.workspace_id, companyName, undefined, db);
+    if (companyMatch) return this.saveCompanyDuplicate(user, dto, companyMatch, normalizedUrl, context);
 
     const date = toDayStart(new Date());
     const application = await this.numbering.withNextNumber(
@@ -754,6 +743,58 @@ export class ApplicationsService {
     return { success: true, already_added: false, application };
   }
 
+  /** Record a company duplicate before resume generation, with the check and write under one lock. */
+  async recordCompanyDuplicate(
+    user: AuthUser,
+    input: CompanyDuplicateInput,
+    context?: WorkspaceWriteContext,
+  ) {
+    if (!context) return this.withWorkspaceWrite(input.workspace_id, (write) => this.recordCompanyDuplicate(user, input, write));
+    const db = context.db;
+    await this.access.assertCanEdit(user, input.workspace_id, { db });
+    const url = input.url.trim();
+    const [urlVerdict] = await this.duplicates.classifyBatch(input.workspace_id, [url], undefined, db);
+    if (urlVerdict.is_duplicate && urlVerdict.existing) {
+      return {
+        success: false, duplicate: true, duplicate_type: 'url' as const,
+        existing_application: urlVerdict.existing,
+      };
+    }
+    const match = await this.duplicates.findRecentCompanyMatch(input.workspace_id, input.company_name, undefined, db);
+    if (!match) return null;
+    return this.saveCompanyDuplicate(user, input, match, urlVerdict.normalized_url ?? normalizeUrl(url), context);
+  }
+
+  private async saveCompanyDuplicate(
+    user: AuthUser, input: CompanyDuplicateInput, match: ExistingRef,
+    normalizedUrl: string, context: WorkspaceWriteContext,
+  ) {
+    const db = context.db;
+    const date = toDayStart(new Date());
+    const url = input.url.trim();
+    const application = await this.numbering.withNextNumber(input.workspace_id, date, (number) =>
+      db.jobApplication.create({
+        data: {
+          workspace_id: input.workspace_id, date, number,
+          url, normalized_url: normalizedUrl, job_source: detectJobSource(url),
+          company_name: emptyToNull(input.company_name), job_title: emptyToNull(input.job_title),
+          job_fingerprint: createJobFingerprint(input.company_name, input.job_title),
+          application_status: 'Duplicated', note: this.companyDuplicateNote(match),
+          job_description: input.job_description ? formatJobDescription(input.job_description) : undefined, created_by_user_id: user.id,
+        },
+        select: ROW_SELECT,
+      }), 1, db);
+    context.notifyUsers.add(user.id);
+    return {
+      success: false, duplicate: true, duplicate_type: 'company' as const,
+      cooldown_days: this.duplicates.companyCooldownDays(), existing_application: match, application,
+    };
+  }
+
+  private companyDuplicateNote(match: ExistingRef) {
+    return `Company duplicate within ${this.duplicates.companyCooldownDays()}-day cooldown; original application #${match.number} on ${match.date.toISOString().slice(0, 10)}.`;
+  }
+
   private async generatedArtifactData(user: AuthUser, dto: CreateGeneratedApplicationDto, db: Prisma.TransactionClient) {
     if (dto.conversation_id) {
       const conversation = await db.resumeConversation.findUnique({
@@ -779,7 +820,7 @@ export class ApplicationsService {
 
     return {
       ...(dto.conversation_id ? { conversation_id: dto.conversation_id } : {}),
-      ...(dto.job_description ? { job_description: dto.job_description } : {}),
+      ...(dto.job_description ? { job_description: formatJobDescription(dto.job_description) } : {}),
       ...(generatedResumeJson ? {
         generated_resume_json: generatedResumeJson,
         resume_template: dto.resume_template || 'classic',
@@ -859,9 +900,6 @@ export class ApplicationsService {
     }
 
     const companyMatch = await this.duplicates.findRecentCompanyMatch(input.workspace_id, input.company_name, undefined, db);
-    if (companyMatch) {
-      throw new ConflictException(`An application at ${input.company_name} already exists within this profile's ${this.duplicates.companyCooldownDays()}-day company cooldown.`);
-    }
 
     const date = toDayStart(new Date());
     const application = await this.numbering.withNextNumber(input.workspace_id, date, (number) =>
@@ -873,13 +911,13 @@ export class ApplicationsService {
           url,
           normalized_url: normalizedUrl,
           job_source: detectJobSource(url),
-          application_status: 'Rejected',
+          application_status: companyMatch ? 'Duplicated' : 'Rejected',
           pipeline_status: 'Not Started',
           company_name: input.company_name,
           job_title: input.job_title,
           job_fingerprint: createJobFingerprint(input.company_name, input.job_title),
-          job_description: input.job_description,
-          note: input.note,
+          job_description: formatJobDescription(input.job_description),
+          note: companyMatch ? `${input.note}\n${this.companyDuplicateNote(companyMatch)}` : input.note,
           created_by_user_id: user.id,
         },
         select: ROW_SELECT,
@@ -901,13 +939,16 @@ export class ApplicationsService {
       throw new BadRequestException('Import rows must belong to the selected workspace');
     }
     const db = context.db;
-    const companies = await this.duplicates.classifyCompanyIdentities(workspaceId, rows, [], db);
-    if (companies.some((company) => company.is_duplicate)) {
-      throw new ConflictException('An imported company already exists within the configured cooldown');
+    const urls = await this.duplicates.classifyBatch(workspaceId, rows.map((row) => row.url), undefined, db);
+    if (urls.some((url) => url.is_duplicate)) {
+      throw new ConflictException('An imported URL already exists in this profile or is repeated in the import.');
     }
+    const companies = await this.duplicates.classifyCompanyIdentities(workspaceId, rows, [], db);
+    const classifiedRows = rows.map((row, index) => companies[index].is_duplicate
+      ? { ...row, application_status: 'Duplicated' } : row);
     let inserted = 0;
-    for (let i = 0; i < rows.length; i += IMPORT_CHUNK_SIZE) {
-      const result = await db.jobApplication.createMany({ data: rows.slice(i, i + IMPORT_CHUNK_SIZE) });
+    for (let i = 0; i < classifiedRows.length; i += IMPORT_CHUNK_SIZE) {
+      const result = await db.jobApplication.createMany({ data: classifiedRows.slice(i, i + IMPORT_CHUNK_SIZE) });
       inserted += result.count;
     }
     for (const row of rows) context.notifyUsers.add(row.created_by_user_id);

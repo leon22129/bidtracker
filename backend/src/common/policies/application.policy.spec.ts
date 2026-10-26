@@ -8,6 +8,13 @@ import { APPLICATION_STATUSES } from '../constants';
 
 describe('ApplicationPolicy', () => {
   describe('assertStatusTransition', () => {
+    it.each(['bidder', 'bidder_manager'])('lets %s cancel Pending or Applied rows but not reopen them', (role) => {
+      for (const from of ['Pending', 'Applied']) {
+        expect(() => assertStatusTransition(from, 'Cancelled', role)).not.toThrow();
+        expect(() => assertStatusTransition('Cancelled', from, role)).toThrow(ForbiddenException);
+      }
+      expect(() => assertStatusTransition('Duplicated', 'Cancelled', role)).toThrow(ForbiddenException);
+    });
     it('allows Pending -> Applied for a bidder', () => {
       expect(() => assertStatusTransition('Pending', 'Applied', 'bidder')).not.toThrow();
     });
@@ -66,6 +73,12 @@ describe('ApplicationPolicy', () => {
   });
 
   describe('assertRowNotLocked', () => {
+    it('locks cancelled rows for bidders and lets admins reopen them', () => {
+      expect(() => assertRowNotLocked({ paid: false, application_status: 'Cancelled' }, 'bidder'))
+        .toThrow(ForbiddenException);
+      expect(() => assertRowNotLocked({ paid: false, application_status: 'Cancelled' }, 'admin'))
+        .not.toThrow();
+    });
     it('blocks non-admins on paid rows', () => {
       expect(() => assertRowNotLocked({ paid: true }, 'bidder_manager')).toThrow(ForbiddenException);
     });

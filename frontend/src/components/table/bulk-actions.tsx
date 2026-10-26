@@ -46,11 +46,11 @@ export function BulkActionsBar(props: Props) {
   }
 
   // Non-admins can only move rows forward through the allowed transitions, and a mixed selection has
-  // no single legal target, so we offer the two transitions the backend permits and let it reject rows
+  // no single legal target, so we offer the transitions the backend permits and let it reject rows
   // that aren't eligible (reported per-id in the response).
   const statusOptions: ApplicationStatus[] = admin
     ? [...APPLICATION_STATUSES]
-    : ['Applied', 'Rejected'];
+    : ['Applied', 'Rejected', 'Cancelled'];
 
   return (
     <div

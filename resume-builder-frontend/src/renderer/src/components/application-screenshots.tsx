@@ -28,6 +28,7 @@ export function ApplicationScreenshots() {
   const [selectedId, setSelectedId] = useState("");
   const [isCapturing, setIsCapturing] = useState(false);
   const [error, setError] = useState("");
+  const [confirmedId, setConfirmedId] = useState("");
   const captureRunning = useRef(false);
   const available = Boolean(chromeApi()?.runtime);
 
@@ -70,6 +71,7 @@ export function ApplicationScreenshots() {
         type: "CAPTURE_APPLICATION_SCREENSHOT",
         tabId: selected.tabId,
         applicationId: selected.applicationId,
+        confirmed: selected.submitted || confirmedId === selected.applicationId,
       });
       if (!result?.ok) throw new Error(result?.error || "Unable to save the screenshot.");
       setApplications((previous) => previous.map((item) => item.applicationId === selected.applicationId
@@ -89,9 +91,9 @@ export function ApplicationScreenshots() {
           <h2 id="submission-screenshots-title" className="flex items-center gap-2 text-xs font-semibold">
             <Camera className="size-4" aria-hidden="true" /> Submission screenshots
           </h2>
-          <Button type="button" size="sm" disabled={!available || !selected || isCapturing} onClick={() => void takeScreenshot()}>
+          <Button type="button" size="sm" disabled={!available || !selected || isCapturing || Boolean(selected.capturedAt) || (!selected.submitted && confirmedId !== selected.applicationId)} onClick={() => void takeScreenshot()}>
             {isCapturing ? <RefreshCw className="size-4 animate-spin" /> : <Camera className="size-4" />}
-            {isCapturing ? "Saving…" : "Take screenshot"}
+            {isCapturing ? "Saving…" : "Take screenshot & add application"}
           </Button>
         </div>
         {applications.length > 0 && (
@@ -106,11 +108,18 @@ export function ApplicationScreenshots() {
             ))}
           </select>
         )}
+        {selected && !selected.capturedAt && !selected.submitted && (
+          <label className="flex items-center gap-2 text-xs">
+            <input type="checkbox" checked={confirmedId === selected.applicationId}
+              onChange={(event) => setConfirmedId(event.target.checked ? selected.applicationId : "")} />
+            I submitted this application successfully and the confirmation page is open.
+          </label>
+        )}
         <p role={error ? "alert" : "status"} className={`flex items-start gap-1.5 text-xs leading-5 ${error ? "text-destructive" : "text-muted-foreground"}`}>
           {error || (selected?.capturedAt
-            ? <><Check className="mt-0.5 size-4 shrink-0" aria-hidden="true" />Saved for 8 days. In BidTracker, refresh the table and click View screenshot in the Screenshot column. You can take it again.</>
+            ? <><Check className="mt-0.5 size-4 shrink-0" aria-hidden="true" />Added to the application table. Screenshot saved for 8 days.</>
             : !available ? "Screenshot capture is available in the Chrome extension."
-              : !selected ? "Generate an application to enable screenshots."
+              : !selected ? "Generate a resume to prepare a job. It will be added after submission and screenshot capture."
                 : "After submitting, keep the confirmation page open and take its screenshot here.")}
         </p>
       </div>

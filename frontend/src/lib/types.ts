@@ -4,7 +4,7 @@
 export const ROLES = ['super_admin', 'admin', 'bidder_manager', 'bidder'] as const;
 export type Role = (typeof ROLES)[number];
 
-export const APPLICATION_STATUSES = ['Pending', 'Applied', 'Rejected', 'Banned', 'Duplicated'] as const;
+export const APPLICATION_STATUSES = ['Pending', 'Applied', 'Cancelled', 'Rejected', 'Banned', 'Duplicated'] as const;
 export type ApplicationStatus = (typeof APPLICATION_STATUSES)[number];
 
 export const PIPELINE_STATUSES = [
@@ -200,6 +200,7 @@ export interface AnalyticsOverview {
     pending_count: number;
     applied_count: number;
     rejected_count: number;
+    cancelled_count: number;
     banned_count: number;
     duplicated_count: number;
     interview_count: number;

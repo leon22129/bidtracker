@@ -77,12 +77,13 @@ export type GenerateResumeResult = {
   cooldownDays?: number
   companyName?: string
   application?: GeneratedApplication
+  draft?: GeneratedApplication
   existingApplication?: {
     id: string
     url: string
     job_title: string | null
     company_name: string | null
-    workspace_name: string
+    workspace_name?: string
     date: string
     number: number
   }
@@ -98,6 +99,9 @@ export type GeneratedApplication = {
 
 export type SavedGeneratedApplication = {
   id: string
+  draft_id?: string
+  application_id?: string | null
+  submitted_at?: string | null
   url: string
   job_title: string | null
   company_name: string | null

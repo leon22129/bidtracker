@@ -1,5 +1,5 @@
 import {
-  Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Query, Res, UploadedFile,
+  BadRequestException, Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Query, Res, UploadedFile,
   UseGuards, UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
@@ -21,6 +21,7 @@ import { CreateBannedUrlPatternDto } from './dto/banned-url.dto';
 import { ApplicationGenerationService } from '../resume/resume.service';
 import { GenerateApplicationDto } from '../resume/dto/generate.dto';
 import { ApplicationScreenshotService } from './application-screenshot.service';
+import { ApplicationDraftService } from './application-draft.service';
 
 @Controller('applications')
 @UseGuards(RolesGuard)
@@ -30,6 +31,7 @@ export class ApplicationsController {
     private readonly bannedUrls: BannedUrlService,
     private readonly generation: ApplicationGenerationService,
     private readonly screenshots: ApplicationScreenshotService,
+    private readonly drafts: ApplicationDraftService,
   ) {}
 
   /** Enum catalogue so the frontend never hardcodes a list that could drift from the backend. */
@@ -72,7 +74,19 @@ export class ApplicationsController {
     @CurrentUser() user: AuthUser,
     @Body() dto: CreateGeneratedApplicationDto,
   ) {
-    return this.applications.createGenerated(user, dto);
+    throw new BadRequestException('Generate a prepared job and capture its submission screenshot to add the application.');
+  }
+
+  @Get('drafts/latest')
+  latestDraft(@CurrentUser() user: AuthUser, @Query('workspace_id') workspaceId: string) {
+    return this.drafts.latest(user, workspaceId);
+  }
+
+  @Post('drafts/:draftId/submit')
+  @UseInterceptors(FileInterceptor('screenshot', { limits: { fileSize: 5 * 1024 * 1024, files: 1 } }))
+  submitDraft(@CurrentUser() user: AuthUser, @Param('draftId') draftId: string,
+    @Body('submitted') submitted: string, @UploadedFile() file?: Express.Multer.File) {
+    return this.drafts.submit(user, draftId, file, submitted === 'true');
   }
 
   /** Canonical application workflow endpoint. `/resume/generate` remains a compatibility alias. */

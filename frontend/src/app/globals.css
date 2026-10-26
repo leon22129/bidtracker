@@ -90,6 +90,9 @@ body {
 .status-duplicated {
   @apply bg-red-100 text-red-700 ring-red-300;
 }
+.status-cancelled {
+  @apply bg-slate-100 text-slate-600 ring-slate-300;
+}
 .status-banned {
   @apply bg-orange-100 text-orange-800 ring-orange-300;
 }

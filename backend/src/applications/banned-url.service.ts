@@ -1,6 +1,7 @@
 import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { Prisma } from '@prisma/client';
+import { normalizeCompanyIdentity } from '../common/utils/job-fingerprint.util';
 
 @Injectable()
 export class BannedUrlService {
@@ -38,6 +39,13 @@ export class BannedUrlService {
     if (!value) return false;
     const patterns = await this.patterns(db);
     return patterns.some((pattern) => value.includes(pattern));
+  }
+
+  async matchesJob(url: string, companyName: string, db: Prisma.TransactionClient = this.prisma): Promise<boolean> {
+    const patterns = await this.patterns(db);
+    const company = normalizeCompanyIdentity(companyName).replace(/\s/g, '');
+    return patterns.some((pattern) => url.trim().toLowerCase().includes(pattern)
+      || Boolean(company) && normalizeCompanyIdentity(pattern).replace(/\s/g, '') === company);
   }
 
   async matchMany(urls: string[], db: Prisma.TransactionClient = this.prisma): Promise<boolean[]> {

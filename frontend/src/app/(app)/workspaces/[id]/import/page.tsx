@@ -268,7 +268,7 @@ export default function ImportPage() {
           <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-5">
             <Stat label="Rows in file" value={result.total_rows} />
             <Stat label="Created" value={result.created} />
-            <Stat label="Marked Duplicated" value={result.duplicates} tone="red" />
+            <Stat label="Duplicates detected" value={result.duplicates} tone="red" />
             <Stat label="Skipped" value={result.skipped.length} tone="amber" />
             <Stat label="Missing fields" value={result.missing_fields.length} tone="amber" />
           </div>

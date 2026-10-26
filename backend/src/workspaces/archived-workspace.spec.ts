@@ -4,6 +4,7 @@ import { ImportService } from '../import/import.service';
 import { ApplicationGenerationService } from '../resume/resume.service';
 import { WorkspaceAccessService } from './workspace-access.service';
 import { WorkspacesService } from './workspaces.service';
+import { ApplicationDraftService } from '../applications/application-draft.service';
 
 describe('Archived profile write protection across services', () => {
   const user = {
@@ -46,6 +47,7 @@ describe('Archived profile write protection across services', () => {
         update: jest.fn(async ({ data }) => Object.assign(workspace, data)),
       },
       resumeProfile: { findUnique: jest.fn().mockResolvedValue(profile) },
+      applicationDraft: { findFirst: jest.fn().mockResolvedValue(null), create: jest.fn() },
       resumeConversation: {
         findUnique: jest.fn().mockResolvedValue({
           id: 'conversation-1', user_id: user.id, workspace_id: workspace.id,
@@ -68,7 +70,7 @@ describe('Archived profile write protection across services', () => {
       classifyBatch: jest.fn().mockResolvedValue([{ is_duplicate: false }]),
       findRecentCompanyMatch: jest.fn().mockResolvedValue(null),
     };
-    const bannedUrls = { matches: jest.fn().mockResolvedValue(false), matchMany: jest.fn() };
+    const bannedUrls = { matches: jest.fn().mockResolvedValue(false), matchesJob: jest.fn().mockResolvedValue(false), matchMany: jest.fn() };
     const notifications = { notifyApplicationCreated: jest.fn() };
     const applications = new ApplicationsService(
       prisma as never, access, numbering as never, duplicates as never,
@@ -77,7 +79,9 @@ describe('Archived profile write protection across services', () => {
     const workspaces = new WorkspacesService(prisma as never, access, {} as never);
     const generation = new ApplicationGenerationService(
       prisma as never, access, duplicates as never, bannedUrls as never, applications, workspaces,
+      new ApplicationDraftService(prisma as never, access, applications, duplicates as never, bannedUrls as never, numbering as never),
     );
+    jest.spyOn(generation as any, 'extractJobIdentity').mockResolvedValue({ company_name: 'Acme', job_title: 'Engineer' });
     const imports = new ImportService(
       prisma as never, access, applications, duplicates as never, numbering as never, bannedUrls as never,
     );
@@ -134,7 +138,7 @@ describe('Archived profile write protection across services', () => {
     context.workspace.is_archived = false;
     context.openAi.mockResolvedValueOnce(JSON.stringify(eligibility)).mockImplementationOnce(async () => {
       context.workspace.is_archived = true;
-      return JSON.stringify({ summary: 'Tailored summary' });
+      return JSON.stringify({ summary: 'Tailored summary', annual_salary: '$150,000', hourly_rate: '$72.12' });
     });
     context.conversation.mockResolvedValue({ id: 'conversation-1' });
 

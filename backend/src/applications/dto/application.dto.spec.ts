@@ -39,6 +39,11 @@ describe('QueryApplicationsDto cursor pagination', () => {
 });
 
 describe.each([UpdateApplicationDto, BulkUpdatePatchDto])('%s banned application status', (Dto) => {
+  it('accepts Cancelled for application status updates', async () => {
+    await expect(validate(plainToInstance(Dto, {
+      application_status: 'Cancelled',
+    }))).resolves.toHaveLength(0);
+  });
   it('accepts Banned for application status updates', async () => {
     await expect(validate(plainToInstance(Dto, {
       application_status: 'Banned',

@@ -7,6 +7,22 @@ Three roles (**admin**, **bidder manager**, **junior bidder**) work in per-bidde
 the company and job title, detects duplicates, and numbers rows per date. Admins manage the
 recruiting pipeline, settle weekly bid payments, and read conversion analytics.
 
+Resume Builder follows a draft workflow: scan the JD, check company/URL bans and duplicates, check
+eligibility, then generate the resume and expected rate. The URL, original JD, updated JD, resume,
+and generated answers are saved in `application_drafts`. The JD input is cleared after generation
+and stays empty when a prepared job is restored; the saved JD appears in a separate read-only panel.
+Blocked and ineligible jobs do not add table rows.
+
+Saved JDs and `jd.txt` downloads use separated headings, paragraphs, bullet lists, and wrapped text.
+Scanning preserves HTML paragraphs and lists; the untouched scanned JD is retained in the draft.
+Existing saved JDs receive the same readable formatting when downloaded.
+
+After successfully applying, the bidder confirms submission and chooses **Take screenshot & add
+application**. The backend rechecks bans and duplicates and commits the application, its saved
+documents/answers, and screenshot in one transaction. Screenshot failures add no row, and retries
+reuse the submission receipt. Concurrent submissions to the same company are marked `Duplicated`
+and excluded from payment. Preparing a draft never counts as an applied or payable application.
+
 To copy job links, check the desired rows and choose **Copy links**, or press **Ctrl+C**
 (**Cmd+C** on Mac) while the table is focused. Full URLs are copied one per line in table order.
 Shift-click a row checkbox to select a range; the header checkbox selects the rows currently shown.
@@ -237,11 +253,15 @@ maintain historical records or unarchive the profile to resume applying.
 | PATCH  | `/applications/:id/pipeline` | 🛡      | `pipeline_status`, `interview_date`, `interview_note`     |
 | PATCH  | `/applications/bulk`         | 🔑 edit | `{ ids, patch }` — per-row policy, per-id failure reasons    |
 | POST   | `/applications/bulk-delete`  | 🛡      | `{ ids }`                                                     |
-| POST   | `/applications/generate`     | 🔑 edit | Generate a resume and automatically save the Applied application |
-| POST   | `/applications/generated`    | 🔑 edit | Backward-compatible idempotent save endpoint for older resume clients |
+| POST   | `/applications/generate`     | 🔑 edit | Check bans/duplicates and eligibility, generate the resume, and save a prepared draft |
+| POST   | `/applications/generated`    | 🔑 edit | Retired: returns 400; submit a prepared draft with a screenshot instead |
 | GET/POST/DELETE | `/applications/banned-patterns` | 🛡 | Manage database-backed banned URL substrings |
 
 Additional generated-resume routes:
+
+- `GET /applications/drafts/latest?workspace_id=...` restores the bidder's latest prepared job and answers.
+- `POST /applications/drafts/:draftId/submit` requires multipart `screenshot` (PNG) and `submitted=true`;
+  atomically adds the application and screenshot after successful submission.
 
 - `GET /applications/:id/resume` returns the durable resume snapshot for frontend PDF download.
 
@@ -253,7 +273,7 @@ Additional generated-resume routes:
 | `page`                   | int                 | 1-based, default 1                                                                                                                                               |
 | `page_size`              | int                 | default 100,**capped at 500** so one request can't pull the table                                                                                          |
 | `search`                 | string              | matches job title, company, URL, note                                                                                                                            |
-| `application_status`     | csv                 | `Pending,Applied,Rejected,Banned,Duplicated`                                                                                                                   |
+| `application_status`     | csv                 | `Pending,Applied,Cancelled,Rejected,Banned,Duplicated`                                                                                                                   |
 | `pipeline_status`        | csv                 | the 7 pipeline values                                                                                                                                            |
 | `job_source`             | csv                 | the 13 sources                                                                                                                                                   |
 | `paid`                   | bool                |                                                                                                                                                                  |
@@ -273,6 +293,8 @@ Response: `{ items, total, page, page_size, total_pages }`.
 Accepts `.xlsx` and `.csv`. Recognised headers (fuzzy-matched): Date, Job Title, Company Name, URL,
 Status and Note. A `Status` column in the file is run through the **same** status-transition
 policy as a UI edit — otherwise a bidder could set `Duplicated` from a spreadsheet.
+Rows with a URL already recorded in the profile or repeated within the file are skipped.
+The `duplicates` count includes skipped URL matches and company matches saved as `Duplicated`.
 
 ### Payments — `/api/payments`
 
@@ -737,14 +759,17 @@ and files older than `LOG_RETENTION_DAYS` (default 30) are removed during startu
 ### Resume generation
 
 `GET /api/workspaces/profiles/assigned` returns the one-to-one profiles belonging to workspaces the authenticated user can access.
-`POST /api/applications/generate` accepts `{ workspace_id, url, job_description, profile_id?, questions? }`,
-checks the supplied job description, generates the resume and optional application answers through OpenAI, and
-automatically saves the application as Applied before returning success. The same write retains the resume snapshot,
-JD, template, optional cover letter, and local conversation id. BidTracker can therefore download `resume.pdf`, `jd.txt`, and (when generated)
-`cover letter.pdf` indefinitely
-after the provider conversation is removed by the 90-day retention job. Both `job_title` and `company_name` are required before
-the application is saved. `/api/applications/generated` and `/api/resume/generate` remain available as compatibility
-endpoints for older extension builds. Admins manage database-backed URL deny patterns from **Banned URLs** in the dashboard.
+`POST /api/applications/generate` accepts `{ workspace_id, url, job_description, profile_id? }`.
+It extracts company/title metadata, checks company and URL bans and duplicates before eligibility,
+then generates the resume and expected rate and saves a separate prepared draft. It returns
+`{ success, eligible, draft, resume, job_description, conversation_id, full_name }`. No application
+row is added yet. Original and enriched JDs, URL, resume snapshot, template, optional cover letter,
+and local conversation ID remain in the draft while `/api/resume/answers` saves generated answers.
+After a successful application, `POST /api/applications/drafts/:draftId/submit` commits a required
+PNG screenshot and all draft documents/answers to the application table together. Documents remain
+available after provider conversation retention. `/api/resume/generate` uses the same draft workflow;
+the old `/api/applications/generated` save route returns 400 to prevent premature table entries.
+Admins manage company names and URL deny patterns from **Banned URLs** in the dashboard.
 Workspace profile details are edited through `PATCH /api/workspaces/:id`.
 
 ### Common tasks
@@ -814,15 +839,19 @@ The canonical list lives in `COLUMN_ALIASES` at
   instructions.
 - **Every non-empty row is a record.** Don't put notes or a totals row below your data; they come back
   as `row 14: Missing URL`.
-- **Never write `Duplicated` in the Status column.** The system decides that by comparing normalised
-  URLs, and it overrides whatever the file says. A bidder or manager who tries gets the row imported as
+- **Never write `Duplicated` in the Status column.** Repeated normalized URLs are skipped.
+  A bidder or manager who supplies this status gets the row imported as
   `Pending` plus an explanatory line in the skip list; only an admin can set it, because it determines
   who gets paid.
 - **A company has a 90-day cooldown per profile.** A second row for the same normalized company is
-  rejected even when the title or job-board URL differs; imports report it in the skip list.
+  saved as `Duplicated` even when the title or job-board URL differs.
   The configured `COMPANY_APPLICATION_COOLDOWN_DAYS` applies to all recorded company rows,
-  regardless of status or note. Duplicate attempts create no additional table row.
+  regardless of status or note, including `Cancelled`. The window uses the table's UTC application
+  date and includes the whole boundary date. Exact URL retries do not create additional rows.
   Checks and writes share a database transaction and workspace lock, including concurrent requests.
+- **Use `Cancelled` when you did not submit the application.** Bidders and managers can change unpaid
+  `Pending` or `Applied` rows to `Cancelled`, individually or in bulk. Cancelled rows remain in the
+  table and company history but are excluded from payment. Only an admin can reopen them.
 - **`Rejected` is a one-way door.** The transition allow-list is `Pending → Applied` and
   `Applied → Rejected`, and it applies to imports too. Importing `Rejected` directly is fine; getting
   back out of it needs an admin.

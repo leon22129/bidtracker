@@ -23,6 +23,28 @@ function matchesNoteFilter(note: string | null, where: any): boolean | null {
 }
 
 describe('DuplicateService URL and company detection', () => {
+  it.each([14, 90, 400])('uses the configured %i-day window including the full boundary date', async (days) => {
+    const prior = process.env.COMPANY_APPLICATION_COOLDOWN_DAYS;
+    process.env.COMPANY_APPLICATION_COOLDOWN_DAYS = String(days);
+    jest.useFakeTimers().setSystemTime(new Date('2026-10-25T19:30:00Z'));
+    try {
+      const boundary = new Date('2026-10-25T00:00:00Z');
+      boundary.setUTCDate(boundary.getUTCDate() - days);
+      const row = { id: 'boundary', workspace_id: 'workspace-1', company_name: 'Omada Health', date: boundary, note: null };
+      const { service } = serviceWith([row]);
+      expect(service.companyCooldownDays()).toBe(days);
+      await expect(service.findRecentCompanyMatch('workspace-1', 'Omada Health')).resolves.toMatchObject({ id: 'boundary' });
+      row.date = new Date(boundary.getTime() - 86400000);
+      await expect(service.findRecentCompanyMatch('workspace-1', 'Omada Health')).resolves.toBeNull();
+      row.date = boundary;
+      await expect(service.findRecentCompanyMatch('other-workspace', 'Omada Health')).resolves.toBeNull();
+    } finally {
+      if (prior === undefined) delete process.env.COMPANY_APPLICATION_COOLDOWN_DAYS;
+      else process.env.COMPANY_APPLICATION_COOLDOWN_DAYS = prior;
+      jest.useRealTimers();
+    }
+  });
+
   function serviceWith(rows: any[] = []) {
     const prisma = {
       jobApplication: {

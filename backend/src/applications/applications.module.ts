@@ -8,6 +8,7 @@ import { ApplicationGenerationService } from '../resume/resume.service';
 import { SlackNotificationService } from './slack-notification.service';
 import { ApplicationScreenshotService } from './application-screenshot.service';
 import { ApplicationScreenshotCleanupService } from './application-screenshot-cleanup.service';
+import { ApplicationDraftService } from './application-draft.service';
 
 @Module({
   controllers: [ApplicationsController],
@@ -15,6 +16,7 @@ import { ApplicationScreenshotCleanupService } from './application-screenshot-cl
     ApplicationsService, NumberingService, DuplicateService, BannedUrlService,
     ApplicationGenerationService, SlackNotificationService, ApplicationScreenshotService,
     ApplicationScreenshotCleanupService,
+    ApplicationDraftService,
   ],
   exports: [ApplicationsService, NumberingService, DuplicateService, BannedUrlService, ApplicationGenerationService],
 })

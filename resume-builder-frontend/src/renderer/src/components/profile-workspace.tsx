@@ -72,6 +72,7 @@ import {
   chooseProfileDirectory,
   fillCurrentPageAnswers,
   getCurrentBrowserTabUrl,
+  getCurrentBrowserTabContext,
   getCurrentPageContext,
   getProfileDownloadPaths,
   type PageQuestion,
@@ -185,6 +186,8 @@ export function ProfileWorkspace({
   // Per-generation data
   const [jobDescription, setJobDescription] = useState("");
   const resumeJobDescription = useRef("");
+  const [scannedJobUrl, setScannedJobUrl] = useState<string | null>(null);
+  const [preparedJob, setPreparedJob] = useState<{ url: string; companyName: string; jobTitle: string; description: string } | null>(null);
   const [resumeData, setResumeData] = useState<ResumeData | null>(null);
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [coverLetterText, setCoverLetterText] = useState<string | null>(null);
@@ -259,10 +262,7 @@ export function ProfileWorkspace({
       return;
     }
     setError("");
-    setConversationId(null);
-    setCompanyName("");
-    setApplicationAnswers([]);
-    setAnswersReadOnly(false);
+    const sourceDescription = jobDescription.trim();
     setIsGenerating(true);
 
     const shouldGenerateCoverLetter = profile.generateCoverLetter ?? generateCoverLetter;
@@ -272,31 +272,34 @@ export function ProfileWorkspace({
     const shouldAutoDownload = profile.autoDownload ?? autoDownload;
     const shouldSaveInFolder = profile.saveInFolder ?? saveInFolder;
     try {
-      const tabUrl = await getCurrentBrowserTabUrl();
+      const sourceTab = await getCurrentBrowserTabContext();
+      const tabUrl = sourceTab.url;
+      if (scannedJobUrl && comparableJobUrl(scannedJobUrl) !== comparableJobUrl(tabUrl)) {
+        throw new Error("The active job page changed. Scan its JD again before generating a resume.");
+      }
       const data = await window.aiProfiles.generate({
         profileId: profile.id,
         workspaceId: profile.workspaceId,
         url: tabUrl,
-        jobDescription,
+        jobDescription: sourceDescription,
         kind: "resume",
       });
-      if (data.jobDescription?.trim()) setJobDescription(data.jobDescription.trim());
       if (data.duplicate) {
         const existing = data.existingApplication;
         const location = existing
-          ? ` It already exists in ${existing.workspace_name} as application #${existing.number}.`
+          ? ` It is already recorded as application #${existing.number}${existing.workspace_name ? ` in ${existing.workspace_name}` : " in this profile"}.`
           : "";
         const reason = data.duplicateType === "career_history"
           ? `Resume generation is blocked because ${data.companyName || "the target company"} is already listed as a previous employer in this profile's career path.`
           : data.duplicateType === "company"
-            ? `This profile already applied to that company within the last ${data.cooldownDays ?? 90} days.${location}`
+            ? `This company is already recorded in this profile within the last ${data.cooldownDays ?? 90} days.${location}`
             : `This job URL has already been added.${location}`;
         setError(reason);
         if (isActive) toast({ title: "Duplicate job", description: reason });
         return;
       }
       if (data.banned) {
-        const reason = "This job URL is on the banned list and was not sent to OpenAI.";
+        const reason = "This company or job URL is banned. Resume generation was stopped.";
         setError(reason);
         if (isActive) toast({ title: "Banned job", description: reason });
         return;
@@ -314,8 +317,8 @@ export function ProfileWorkspace({
       if (!generatedContent)
         throw new Error("No response received from the selected profile");
 
-      const generatedJobTitle = data.application?.job_title?.trim() ?? "";
-      const generatedCompanyName = data.application?.company_name?.trim() ?? "";
+      const generatedJobTitle = data.draft?.job_title?.trim() ?? "";
+      const generatedCompanyName = data.draft?.company_name?.trim() ?? "";
       if (!generatedJobTitle || !generatedCompanyName) {
         const missing = [
           !generatedCompanyName ? "company name" : null,
@@ -380,13 +383,23 @@ export function ProfileWorkspace({
       setApplicationAnswers(data.answers ?? []);
       setAnswersReadOnly(false);
       // Keep the generated resume's description for downloads after the editor is cleared.
-      resumeJobDescription.current = data.jobDescription?.trim() || jobDescription;
+      resumeJobDescription.current = data.jobDescription?.trim() || sourceDescription;
+      setPreparedJob({ url: tabUrl, companyName: generatedCompanyName, jobTitle: generatedJobTitle, description: resumeJobDescription.current });
+      setApplicationQuestions("");
+      setScannedQuestions([]);
+      setApplicationAnswers(data.answers ?? []);
+      setJobDescription((current) => current.trim() === sourceDescription ? "" : current);
+      setScannedJobUrl(null);
 
-      if (data.application?.id) {
-        await armApplicationScreenshot(data.application.id, {
-          companyName: generatedCompanyName,
-          jobTitle: generatedJobTitle,
-        });
+      if (data.draft?.id) {
+        try {
+          await armApplicationScreenshot(data.draft.id, {
+            companyName: generatedCompanyName, jobTitle: generatedJobTitle,
+            tabId: sourceTab.tabId, url: tabUrl,
+          });
+        } catch {
+          toast({ title: "Resume prepared", description: "Reopen the job tab and load this prepared job to enable screenshot capture." });
+        }
       }
 
       if (shouldAutoDownload) {
@@ -401,7 +414,6 @@ export function ProfileWorkspace({
         );
       }
 
-      setJobDescription("");
       onGenerationComplete(profile.id, effectiveCompanyName || undefined);
     } catch (err) {
       console.error("Generation error:", err);
@@ -427,12 +439,16 @@ export function ProfileWorkspace({
         throw new Error("The saved resume is not valid.");
       }
 
-      await armApplicationScreenshot(saved.id, {
-        companyName: saved.company_name || undefined,
-        jobTitle: saved.job_title || undefined,
-      });
+      if (!saved.submitted_at) {
+        await armApplicationScreenshot(saved.draft_id || saved.id, {
+          companyName: saved.company_name || undefined, jobTitle: saved.job_title || undefined,
+          draft: Boolean(saved.draft_id), url: saved.url,
+        });
+      }
 
-      setJobDescription(saved.job_description ?? "");
+      setJobDescription("");
+      setScannedJobUrl(null);
+      setPreparedJob({ url: saved.url, companyName: saved.company_name || "", jobTitle: saved.job_title || "", description: saved.job_description || "" });
       resumeJobDescription.current = saved.job_description ?? "";
       setResumeData(loadedResume);
       setPersonalInfo(loadedResume.personalInfo);
@@ -465,7 +481,7 @@ export function ProfileWorkspace({
       setApplicationQuestions(restoredQuestions.map(formatQuestionEditorLine).join("\n"));
       setScannedQuestions(restoredQuestions);
       setApplicationAnswers(restoredHistory.answers);
-      setAnswersReadOnly(true);
+      setAnswersReadOnly(Boolean(saved.submitted_at));
       if (restoredHistory.answers.length) setWorkflowTab("questions");
       setApplicationError("");
       if (saved.template) setSelectedTemplate(saved.template as TemplateId);
@@ -527,6 +543,7 @@ export function ProfileWorkspace({
 
       if (!questionsOnly && context.jobDescription.trim()) {
         setJobDescription(context.jobDescription.trim());
+        setScannedJobUrl(context.url);
         setError("");
       }
       if (questionsOnly) {
@@ -674,7 +691,7 @@ export function ProfileWorkspace({
       const safeFolder = `${yyyy}-${mm}-${dd}_${hh}-${mm1}-${ss}${safeCompany ? ` - ${safeCompany}` : ""}`;
       const safeFullName = "Resume";
       const savedJobDescription = downloadJDWithPDF
-        ? targetResumeData.rateInJd === false && targetResumeData.annualSalary && targetResumeData.hourlyRate
+        ? !resumeJobDescription.current.includes("\n\nExpected Rate") && targetResumeData.rateInJd === false && targetResumeData.annualSalary && targetResumeData.hourlyRate
           ? `${resumeJobDescription.current.trim()}\n\nEstimated Salary Expectation (salary not mentioned in this JD)\nAnnual: ${targetResumeData.annualSalary}\nHourly: ${targetResumeData.hourlyRate}`
           : resumeJobDescription.current
         : undefined;
@@ -813,7 +830,7 @@ export function ProfileWorkspace({
         </span>
         <span className="min-w-0">
           <span className="block font-semibold">
-            {isLoadingLastApplication ? "Loading Last Application..." : "Load Last Application"}
+            {isLoadingLastApplication ? "Loading Last Job..." : "Load Last Job"}
           </span>
           <span className="block text-xs font-normal text-muted-foreground group-disabled:text-current">
             Restore its resume and saved answers
@@ -867,7 +884,7 @@ export function ProfileWorkspace({
                 Job Description & Resume
               </CardTitle>
               <CardDescription className="mt-2">
-                Scanned from the active job page when possible. You can always edit or paste it manually.
+                Scan or paste a new JD. Generated jobs are saved separately and added to the table after submission and screenshot capture.
               </CardDescription>
             </div>
             <Tooltip>
@@ -902,6 +919,7 @@ export function ProfileWorkspace({
         </CardHeader>
         <CardContent className="space-y-5 px-0">
         <Textarea
+          disabled={isGenerating}
           placeholder={`Paste the job description here...
 
   Example:
@@ -918,6 +936,14 @@ export function ProfileWorkspace({
           setError("");
           }}
         />
+
+        {preparedJob && (
+          <details className="rounded-lg border border-border bg-card p-3 text-sm">
+            <summary className="cursor-pointer font-medium">Prepared job: {preparedJob.companyName} · {preparedJob.jobTitle}</summary>
+            <a className="mt-2 block break-all text-primary underline" href={preparedJob.url} target="_blank" rel="noreferrer">Open job posting</a>
+            <pre className="mt-3 max-h-64 overflow-auto whitespace-pre-wrap font-sans text-xs text-muted-foreground">{preparedJob.description}</pre>
+          </details>
+        )}
 
         <div className="space-y-2">
           <p className="text-sm font-semibold text-foreground">Job page actions</p>
@@ -980,7 +1006,9 @@ export function ProfileWorkspace({
       <TabsContent value="questions" className="mt-0">
       <DashboardSection
         title="Application questions"
-        description="Scan each application page, write tailored answers, and fill its text fields."
+        description={preparedJob
+          ? `For ${preparedJob.companyName} · ${preparedJob.jobTitle}. Scan questions, generate answers, and review them before submitting.`
+          : "Scan each application page, write tailored answers, and fill its text fields."}
         icon={<MessagesSquare className="h-5 w-5" />}
       >
           {!resumeData && (

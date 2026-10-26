@@ -7,7 +7,8 @@
     "dev": "vite --config vite.web.config.ts",
     "build": "tsc --noEmit && vite build --config vite.web.config.ts",
     "preview": "vite preview --config vite.web.config.ts",
-    "start": "vite preview --config vite.web.config.ts"
+    "start": "vite preview --config vite.web.config.ts",
+    "test:workflow-browser": "node scripts/check-workflow-browser.cjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.9.1",

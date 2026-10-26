@@ -6,6 +6,19 @@ import { AuthUser } from '../common/decorators/current-user.decorator';
 const SCREENSHOT_RETENTION_MS = 8 * 24 * 60 * 60 * 1000;
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
+export function assertScreenshotFile(file?: Express.Multer.File) {
+  if (!file?.buffer || file.buffer.length < 24 || !file.buffer.subarray(0, 8).equals(PNG_SIGNATURE)
+    || file.buffer.toString('ascii', 12, 16) !== 'IHDR'
+    || file.buffer.readUInt32BE(16) === 0 || file.buffer.readUInt32BE(20) === 0) {
+    throw new BadRequestException('A valid PNG screenshot is required');
+  }
+}
+
+export function screenshotDates() {
+  const captured_at = new Date();
+  return { captured_at, expires_at: new Date(captured_at.getTime() + SCREENSHOT_RETENTION_MS) };
+}
+
 @Injectable()
 export class ApplicationScreenshotService {
   constructor(
@@ -14,9 +27,7 @@ export class ApplicationScreenshotService {
   ) {}
 
   async save(user: AuthUser, applicationId: string, file?: Express.Multer.File) {
-    if (!file?.buffer?.length || !file.buffer.subarray(0, 8).equals(PNG_SIGNATURE)) {
-      throw new BadRequestException('A valid PNG screenshot is required');
-    }
+    assertScreenshotFile(file);
     const application = await this.prisma.jobApplication.findUnique({
       where: { id: applicationId },
       select: { workspace_id: true, created_by_user_id: true },
@@ -32,13 +43,13 @@ export class ApplicationScreenshotService {
       where: { application_id: applicationId },
       create: {
         application_id: applicationId,
-        image_data: file.buffer,
+        image_data: file!.buffer,
         content_type: 'image/png',
         captured_at: capturedAt,
         expires_at: expiresAt,
       },
       update: {
-        image_data: file.buffer,
+        image_data: file!.buffer,
         content_type: 'image/png',
         captured_at: capturedAt,
         expires_at: expiresAt,

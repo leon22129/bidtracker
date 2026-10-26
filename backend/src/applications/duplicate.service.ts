@@ -79,8 +79,8 @@ export class DuplicateService {
         ?? process.env.JOB_FINGERPRINT_WINDOW_DAYS
         ?? 90,
     );
-    return Number.isFinite(configuredDays)
-      ? Math.min(365, Math.max(1, Math.trunc(configuredDays)))
+    return Number.isInteger(configuredDays) && configuredDays > 0
+      ? configuredDays
       : 90;
   }
 
@@ -95,7 +95,10 @@ export class DuplicateService {
   }
 
   private companyCooldownCutoff() {
-    return new Date(Date.now() - this.companyCooldownDays() * 24 * 60 * 60 * 1000);
+    const cutoff = new Date(Date.now() - this.companyCooldownDays() * 24 * 60 * 60 * 1000);
+    // Application dates are UTC day buckets; include the entire boundary date.
+    cutoff.setUTCHours(0, 0, 0, 0);
+    return cutoff;
   }
 
   async findExisting(

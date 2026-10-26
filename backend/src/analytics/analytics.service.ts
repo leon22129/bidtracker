@@ -176,7 +176,8 @@ export class AnalyticsService {
     const rejected = appCounts.get('Rejected') ?? 0;
     const banned = appCounts.get('Banned') ?? 0;
     const duplicated = appCounts.get('Duplicated') ?? 0;
-    const total = pending + applied + rejected + banned + duplicated;
+    const cancelled = appCounts.get('Cancelled') ?? 0;
+    const total = pending + applied + rejected + banned + duplicated + cancelled;
     const interviews = sum(pipeCounts, INTERVIEW_PIPELINE_STAGES);
     const offers = sum(pipeCounts, OFFER_PIPELINE_STAGES);
     const accepted = pipeCounts.get('Accepted') ?? 0;
@@ -188,6 +189,7 @@ export class AnalyticsService {
       rejected_count: rejected,
       banned_count: banned,
       duplicated_count: duplicated,
+      cancelled_count: cancelled,
       interview_count: interviews,
       offer_count: offers,
       accepted_count: accepted,

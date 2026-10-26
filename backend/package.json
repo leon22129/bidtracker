@@ -21,6 +21,7 @@
     "seed": "ts-node prisma/seed.ts",
     "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js",
     "test:company-cooldown": "node scripts/check-company-cooldown.cjs",
+    "test:application-workflow": "node scripts/check-application-workflow.cjs",
     "smoke": "node smoke.mjs",
     "perf": "node perf.mjs",
     "template": "node make-import-template.cjs",

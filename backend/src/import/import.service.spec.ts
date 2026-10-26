@@ -34,6 +34,7 @@ describe('ImportService missing company/title warnings', () => {
         urls.map((url) => ({ is_duplicate: false, normalized_url: url }))),
       classifyCompanyIdentities: jest.fn(async (_workspaceId, rows: unknown[]) =>
         rows.map(() => ({ is_duplicate: false }))),
+      companyCooldownDays: jest.fn().mockReturnValue(90),
     };
     const numbering = { reserveBlock: jest.fn().mockResolvedValue(1) };
     const bannedUrls = { matchMany: jest.fn(async (urls: string[]) => urls.map(() => false)) };
@@ -99,7 +100,7 @@ describe('ImportService missing company/title warnings', () => {
     });
   });
 
-  it('separates banned URLs from genuine rejections and gives bans precedence over duplicates', async () => {
+  it('separates new banned URLs from genuine rejections', async () => {
     const { service, applications, bannedUrls, duplicates } = setup();
     const statusesFile = {
       ...file,
@@ -111,7 +112,7 @@ describe('ImportService missing company/title warnings', () => {
     };
     bannedUrls.matchMany.mockResolvedValue([true, false]);
     duplicates.classifyBatch.mockResolvedValue([
-      { is_duplicate: true, normalized_url: 'banned.example/jobs/1' },
+      { is_duplicate: false, normalized_url: 'banned.example/jobs/1' },
       { is_duplicate: false, normalized_url: 'example.com/jobs/2' },
     ]);
 
@@ -128,6 +129,50 @@ describe('ImportService missing company/title warnings', () => {
       { company_name: 'Blocked', job_title: 'Engineer' },
       { company_name: 'Acme', job_title: 'Engineer' },
     ], [], expect.anything());
+  });
+
+  it('skips reused URLs without letting their company names block valid rows', async () => {
+    const { service, applications, duplicates, bannedUrls } = setup();
+    const importFile = {
+      ...file,
+      buffer: Buffer.from([
+        'URL,Company Name,Job Title',
+        'https://example.com/jobs/existing,Acme,Engineer',
+        'https://example.com/jobs/new,Acme,Designer',
+      ].join('\n')),
+    };
+    duplicates.classifyBatch.mockResolvedValue([
+      { is_duplicate: true, normalized_url: 'example.com/jobs/existing' },
+      { is_duplicate: false, normalized_url: 'example.com/jobs/new' },
+    ]);
+    bannedUrls.matchMany.mockResolvedValue([true, false]);
+
+    await expect(service.import(user, 'workspace-1', importFile)).resolves.toMatchObject({
+      created: 1, duplicates: 1,
+      skipped: [{ row: 2, reason: expect.stringContaining('URL already exists') }],
+    });
+    expect(duplicates.classifyCompanyIdentities).toHaveBeenCalledWith('workspace-1', [
+      { company_name: 'Acme', job_title: 'Designer' },
+    ], [], expect.anything());
+    expect(applications.insertChunked).toHaveBeenCalledWith([
+      expect.objectContaining({ url: 'https://example.com/jobs/new', application_status: 'Pending' }),
+    ], 'workspace-1', expect.anything());
+  });
+
+  it('imports company matches as Duplicated while preserving their notes', async () => {
+    const { service, applications, duplicates } = setup();
+    const importFile = {
+      ...file,
+      buffer: Buffer.from('URL,Company Name,Job Title,Notes\nhttps://example.com/new,Omada Health,Engineer,Follow up'),
+    };
+    duplicates.classifyCompanyIdentities.mockResolvedValue([{ is_duplicate: true }]);
+
+    await expect(service.import(user, 'workspace-1', importFile)).resolves.toMatchObject({
+      created: 1, duplicates: 1, skipped: [],
+    });
+    expect(applications.insertChunked).toHaveBeenCalledWith([
+      expect.objectContaining({ application_status: 'Duplicated', note: 'Follow up' }),
+    ], 'workspace-1', expect.anything());
   });
 
   it('rejects an XLSX archive whose expanded contents exceed the configured bound', async () => {

@@ -9,15 +9,17 @@ describe('AnalyticsService conversion', () => {
         { application_status: 'Rejected', _count: { _all: 3 } },
         { application_status: 'Banned', _count: { _all: 7 } },
         { application_status: 'Duplicated', _count: { _all: 1 } },
+        { application_status: 'Cancelled', _count: { _all: 4 } },
       ])
       .mockResolvedValueOnce([]) } };
     const service = new AnalyticsService(prisma as never);
 
     await expect(service.conversion()).resolves.toMatchObject({
-      total_applications: 18,
+      total_applications: 22,
+      cancelled_count: 4,
       rejected_count: 3,
       banned_count: 7,
-      duplicate_rate: 1 / 18,
+      duplicate_rate: 1 / 22,
     });
   });
 
@@ -29,6 +31,7 @@ describe('AnalyticsService conversion', () => {
       total_applications: 0,
       rejected_count: 0,
       banned_count: 0,
+      cancelled_count: 0,
     });
   });
 });
