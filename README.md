@@ -22,6 +22,11 @@ application**. The backend rechecks bans and duplicates and commits the applicat
 documents/answers, and screenshot in one transaction. Screenshot failures add no row, and retries
 reuse the submission receipt. Concurrent submissions to the same company are marked `Duplicated`
 and excluded from payment. Preparing a draft never counts as an applied or payable application.
+Each profile tab keeps its own prepared draft, JD, resume, answers, and submission state, including
+when multiple tabs use the same profile. This state is restored when the panel is reopened. The
+screenshot button submits that tab's draft using its original browser page; there is no separate
+application dropdown. After a successful save, a toast confirms completion and capture is disabled
+for that job. Failed saves remain available for retry; saved screenshots stay with their applications.
 
 To copy job links, check the desired rows and choose **Copy links**, or press **Ctrl+C**
 (**Cmd+C** on Mac) while the table is focused. Full URLs are copied one per line in table order.
@@ -84,6 +89,7 @@ no build step:
 
 Development mode is always local-only and does not start a Cloudflare tunnel.
 Stopping the script with Ctrl+C or closing its terminal also stops both development servers.
+The backend regenerates its Prisma client before compiling so schema updates are available to TypeScript.
 
 Use [http://127.0.0.1:3000](http://127.0.0.1:3000) for BidTracker and
 [http://127.0.0.1:3002](http://127.0.0.1:3002) for Resume Builder. `--local` is an alias for

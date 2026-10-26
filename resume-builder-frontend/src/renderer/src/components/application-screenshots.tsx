@@ -1,9 +1,11 @@
-import { useEffect, useRef, useState } from "react";
-import { Camera, Check, RefreshCw } from "lucide-react";
+import { useEffect, useId, useRef, useState } from "react";
+import { Camera, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { toast } from "@/components/ui/use-toast";
 
 type ScreenshotApplication = {
   tabId: number;
+  profileTabId: string;
   applicationId: string;
   companyName?: string;
   jobTitle?: string;
@@ -12,7 +14,7 @@ type ScreenshotApplication = {
   capturedAt?: number;
 };
 
-type ScreenshotResult = { ok?: boolean; error?: string; items?: ScreenshotApplication[] };
+type ScreenshotResult = { ok?: boolean; error?: string; item?: ScreenshotApplication | null };
 type ChromeApi = {
   runtime?: { sendMessage: (message: unknown) => Promise<ScreenshotResult> };
   storage?: { onChanged?: {
@@ -23,30 +25,43 @@ type ChromeApi = {
 
 const chromeApi = () => (globalThis as { chrome?: ChromeApi }).chrome;
 
-export function ApplicationScreenshots() {
-  const [applications, setApplications] = useState<ScreenshotApplication[]>([]);
-  const [selectedId, setSelectedId] = useState("");
+type ApplicationScreenshotsProps = {
+  profileTabId: string;
+  applicationId: string | null;
+  companyName?: string;
+  jobTitle?: string;
+  busy: boolean;
+  onCapturingChange: (capturing: boolean) => void;
+  onSaved: (applicationId: string) => void;
+};
+
+export function ApplicationScreenshots({
+  profileTabId, applicationId, companyName, jobTitle, busy, onCapturingChange, onSaved,
+}: ApplicationScreenshotsProps) {
+  const [application, setApplication] = useState<ScreenshotApplication | null>(null);
   const [isCapturing, setIsCapturing] = useState(false);
   const [error, setError] = useState("");
   const [confirmedId, setConfirmedId] = useState("");
   const captureRunning = useRef(false);
   const available = Boolean(chromeApi()?.runtime);
+  const titleId = useId();
 
   useEffect(() => {
     const api = chromeApi();
-    if (!api?.runtime) return;
+    setError("");
+    setApplication(null);
+    setConfirmedId("");
+    if (!api?.runtime || !applicationId) return;
     let mounted = true;
     const refresh = async () => {
       try {
-        const result = await api.runtime!.sendMessage({ type: "GET_SCREENSHOT_APPLICATIONS" });
-        if (!result?.ok) throw new Error(result?.error || "Unable to load screenshot applications.");
+        const result = await api.runtime!.sendMessage({ type: "GET_TAB_SCREENSHOT_APPLICATION", profileTabId, applicationId });
+        if (!result?.ok) throw new Error(result?.error || "Unable to load this tab's prepared application.");
         if (!mounted) return;
-        const items = Array.isArray(result.items) ? result.items : [];
-        setApplications(items);
-        setSelectedId((previous) => items.some((item) => item.applicationId === previous)
-          ? previous : items[0]?.applicationId || "");
+        const item = result.item;
+        setApplication(item && !item.capturedAt && item.applicationId === applicationId && item.profileTabId === profileTabId ? item : null);
       } catch (err) {
-        if (mounted) setError(err instanceof Error ? err.message : "Unable to load screenshot applications.");
+        if (mounted) setError(err instanceof Error ? err.message : "Unable to load this tab's prepared application.");
       }
     };
     const onStorageChanged = (changes: Record<string, unknown>, area: string) => {
@@ -58,57 +73,56 @@ export function ApplicationScreenshots() {
       mounted = false;
       api.storage?.onChanged?.removeListener(onStorageChanged);
     };
-  }, []);
+  }, [applicationId, profileTabId]);
 
-  const selected = applications.find((item) => item.applicationId === selectedId);
+  const selected = application?.applicationId === applicationId && application.profileTabId === profileTabId ? application : null;
   const takeScreenshot = async () => {
-    if (!selected || captureRunning.current) return;
+    if (!selected || captureRunning.current || busy) return;
     captureRunning.current = true;
     setIsCapturing(true);
+    onCapturingChange(true);
     setError("");
     try {
       const result = await chromeApi()?.runtime?.sendMessage({
         type: "CAPTURE_APPLICATION_SCREENSHOT",
         tabId: selected.tabId,
         applicationId: selected.applicationId,
+        profileTabId,
         confirmed: selected.submitted || confirmedId === selected.applicationId,
       });
       if (!result?.ok) throw new Error(result?.error || "Unable to save the screenshot.");
-      setApplications((previous) => previous.map((item) => item.applicationId === selected.applicationId
-        ? { ...item, capturedAt: Date.now() } : item));
+      setApplication(null);
+      setConfirmedId("");
+      onSaved(selected.applicationId);
+      toast({
+        title: "Application added",
+        description: "Added to the application table. Screenshot saved for 8 days.",
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to save the screenshot.");
     } finally {
       captureRunning.current = false;
       setIsCapturing(false);
+      onCapturingChange(false);
     }
   };
 
   return (
-    <section aria-labelledby="submission-screenshots-title" className="shrink-0 border-b border-border bg-card px-4 py-3 sm:px-8">
+    <section data-submission-screenshot aria-labelledby={titleId} className="shrink-0 border-b border-border bg-card px-4 py-3 sm:px-8">
       <div className="mx-auto max-w-7xl space-y-2">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <h2 id="submission-screenshots-title" className="flex items-center gap-2 text-xs font-semibold">
-            <Camera className="size-4" aria-hidden="true" /> Submission screenshots
+          <h2 id={titleId} className="flex items-center gap-2 text-xs font-semibold">
+            <Camera className="size-4" aria-hidden="true" /> Submission screenshot
           </h2>
-          <Button type="button" size="sm" disabled={!available || !selected || isCapturing || Boolean(selected.capturedAt) || (!selected.submitted && confirmedId !== selected.applicationId)} onClick={() => void takeScreenshot()}>
+          <Button type="button" size="sm" disabled={!available || !selected || isCapturing || busy || (!selected.submitted && confirmedId !== selected.applicationId)} onClick={() => void takeScreenshot()}>
             {isCapturing ? <RefreshCw className="size-4 animate-spin" /> : <Camera className="size-4" />}
             {isCapturing ? "Saving…" : "Take screenshot & add application"}
           </Button>
         </div>
-        {applications.length > 0 && (
-          <select aria-label="Application to screenshot" value={selectedId} disabled={isCapturing}
-            onChange={(event) => { setSelectedId(event.target.value); setError(""); }}
-            className="h-8 w-full min-w-0 rounded-md border border-input bg-background px-2 text-xs text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-            {applications.map((item) => (
-              <option key={item.applicationId} value={item.applicationId}>
-                {[item.companyName, item.jobTitle].filter(Boolean).join(" · ") || `Application ${item.applicationId.slice(-8)}`}
-                {item.capturedAt ? " — Saved" : " — Screenshot needed"}
-              </option>
-            ))}
-          </select>
+        {selected && (
+          <p className="text-xs font-medium">{[companyName, jobTitle].filter(Boolean).join(" · ")}</p>
         )}
-        {selected && !selected.capturedAt && !selected.submitted && (
+        {selected && !selected.submitted && (
           <label className="flex items-center gap-2 text-xs">
             <input type="checkbox" checked={confirmedId === selected.applicationId}
               onChange={(event) => setConfirmedId(event.target.checked ? selected.applicationId : "")} />
@@ -116,11 +130,9 @@ export function ApplicationScreenshots() {
           </label>
         )}
         <p role={error ? "alert" : "status"} className={`flex items-start gap-1.5 text-xs leading-5 ${error ? "text-destructive" : "text-muted-foreground"}`}>
-          {error || (selected?.capturedAt
-            ? <><Check className="mt-0.5 size-4 shrink-0" aria-hidden="true" />Added to the application table. Screenshot saved for 8 days.</>
-            : !available ? "Screenshot capture is available in the Chrome extension."
-              : !selected ? "Generate a resume to prepare a job. It will be added after submission and screenshot capture."
-                : "After submitting, keep the confirmation page open and take its screenshot here.")}
+          {error || (!available ? "Screenshot capture is available in the Chrome extension."
+            : !selected ? "No application is waiting for a screenshot in this profile tab. Generate a resume or load a prepared job here."
+              : "After submitting, keep the confirmation page open and take its screenshot here.")}
         </p>
       </div>
     </section>

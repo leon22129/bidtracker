@@ -52,14 +52,13 @@ import type { WebAuthStatus } from "../../shared/auth";
 import { ProfileWorkspace } from "@/components/profile-workspace";
 import { ProfileSettingsOnlyDialog } from "@/components/profile-settings-only-dialog";
 import { ExtensionSettingsDialog } from "@/components/extension-settings-dialog";
-import { ApplicationScreenshots } from "@/components/application-screenshots";
 import { toast } from "@/components/ui/use-toast";
 import { ToastAction } from "@/components/ui/toast";
 import {
   getFriendlyErrorMessage,
   STORAGE_KEY_ACTIVE_TAB,
 } from "@/lib/profile-utils";
-import { getApiBaseUrl, getCurrentBrowserTabKey, setApiBaseUrl } from "@/lib/extension-storage";
+import { clearProfileTabScreenshot, getApiBaseUrl, getCurrentBrowserTabKey, setApiBaseUrl } from "@/lib/extension-storage";
 
 const STORAGE_KEY_OPEN_TABS = "resume_open_profile_tabs_v2";
 
@@ -282,6 +281,8 @@ export default function Home() {
   };
 
   const handleCloseTab = (tabId: string) => {
+    localStorage.removeItem(`${storagePrefix}:profile-tab:${tabId}`);
+    void clearProfileTabScreenshot(tabId).catch(() => undefined);
     const closingTab = tabs.find((t) => t.tabId === tabId);
     if (closingTab) {
       const key = closingTab.profileId + ":" + tabId;
@@ -655,8 +656,6 @@ export default function Home() {
         </div>
       </div>
 
-      <ApplicationScreenshots />
-
       {/* Content area — flex-1 so it fills the remaining viewport height */}
       <div className="flex-1 min-h-0 overflow-hidden relative">
         {/* Empty state */}
@@ -678,11 +677,14 @@ export default function Home() {
           return (
             <div
               key={tab.tabId}
+              data-profile-tab-id={tab.tabId}
               className="h-full"
               style={{ display: tab.tabId === activeTabId ? undefined : "none" }}
             >
               <ProfileWorkspace
                 profile={profile}
+                profileTabId={tab.tabId}
+                tabStorageKey={`${storagePrefix}:profile-tab:${tab.tabId}`}
                 tabLabel={tab.label}
                 legacyProfileId={legacyProfileIdRef.current}
                 onProfileUpdated={handleProfileUpdated}

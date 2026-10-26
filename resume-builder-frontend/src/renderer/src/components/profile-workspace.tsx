@@ -22,6 +22,8 @@ import { FunnyLoadingBar } from "@/components/funny-loading-bar";
 import { DashboardSection } from "@/components/dashboard-section";
 import { PersonalInformationPanel } from "@/components/personal-information-panel";
 import { WorkspaceSidebar, type WorkspaceView } from "@/components/workspace-sidebar";
+import { ApplicationScreenshots } from "@/components/application-screenshots";
+import { readProfileTabState, type PreparedTabJob, type ProfileTabState } from "@/lib/profile-tab-state";
 import {
   Dialog,
   DialogContent,
@@ -80,6 +82,8 @@ import {
 
 interface ProfileWorkspaceProps {
   profile: AiProfile;
+  profileTabId: string;
+  tabStorageKey: string;
   tabLabel: string;
   legacyProfileId: string | null;
   onProfileUpdated: (updated: AiProfile) => void;
@@ -133,6 +137,8 @@ function comparableJobUrl(raw: string): string {
 
 export function ProfileWorkspace({
   profile,
+  profileTabId,
+  tabStorageKey,
   tabLabel,
   legacyProfileId,
   onProfileUpdated,
@@ -143,6 +149,7 @@ export function ProfileWorkspace({
   settingsOpen,
   isActive,
 }: ProfileWorkspaceProps) {
+  const [savedTab] = useState(() => readProfileTabState(tabStorageKey, profile.id));
   // Operational settings synced from profile
   const [selectedTemplate, setSelectedTemplate] =
     useState<TemplateId>(DEFAULT_TEMPLATE);
@@ -184,17 +191,18 @@ export function ProfileWorkspace({
   const [certifications, setCertifications] = useState<Certification[]>([]);
 
   // Per-generation data
-  const [jobDescription, setJobDescription] = useState("");
-  const resumeJobDescription = useRef("");
-  const [scannedJobUrl, setScannedJobUrl] = useState<string | null>(null);
-  const [preparedJob, setPreparedJob] = useState<{ url: string; companyName: string; jobTitle: string; description: string } | null>(null);
-  const [resumeData, setResumeData] = useState<ResumeData | null>(null);
-  const [conversationId, setConversationId] = useState<string | null>(null);
-  const [coverLetterText, setCoverLetterText] = useState<string | null>(null);
-  const [applicationQuestions, setApplicationQuestions] = useState("");
-  const [scannedQuestions, setScannedQuestions] = useState<PageQuestion[]>([]);
-  const [applicationAnswers, setApplicationAnswers] = useState<Array<{ question: string; answer: string }>>([]);
-  const [answersReadOnly, setAnswersReadOnly] = useState(false);
+  const [jobDescription, setJobDescription] = useState(savedTab?.jobDescription ?? "");
+  const resumeJobDescription = useRef(savedTab?.preparedJob?.description ?? "");
+  const [scannedJobUrl, setScannedJobUrl] = useState<string | null>(savedTab?.scannedJobUrl ?? null);
+  const [preparedJob, setPreparedJob] = useState<PreparedTabJob | null>(savedTab?.preparedJob ?? null);
+  const [resumeData, setResumeData] = useState<ResumeData | null>(savedTab?.resumeData ?? null);
+  const [conversationId, setConversationId] = useState<string | null>(savedTab?.conversationId ?? null);
+  const [coverLetterText, setCoverLetterText] = useState<string | null>(savedTab?.coverLetterText ?? null);
+  const [applicationQuestions, setApplicationQuestions] = useState(savedTab?.applicationQuestions ?? "");
+  const [scannedQuestions, setScannedQuestions] = useState<PageQuestion[]>(savedTab?.scannedQuestions ?? []);
+  const [applicationAnswers, setApplicationAnswers] = useState<Array<{ question: string; answer: string }>>(savedTab?.applicationAnswers ?? []);
+  const [answersReadOnly, setAnswersReadOnly] = useState(savedTab?.answersReadOnly ?? false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isGeneratingAnswers, setIsGeneratingAnswers] = useState(false);
   const [isScanningPage, setIsScanningPage] = useState(false);
@@ -211,7 +219,7 @@ export function ProfileWorkspace({
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewEditable, setPreviewEditable] = useState(false);
   const [downloadLocationPromptOpen, setDownloadLocationPromptOpen] = useState(false);
-  const [workflowTab, setWorkflowTab] = useState<"resume" | "questions">("resume");
+  const [workflowTab, setWorkflowTab] = useState<"resume" | "questions">(savedTab?.workflowTab ?? "resume");
   const [workspaceView, setWorkspaceView] = useState<WorkspaceView>("builder");
 
   const syncFromProfile = (p: AiProfile) => {
@@ -241,6 +249,27 @@ export function ProfileWorkspace({
   }, [profile, legacyProfileId]);
 
   useEffect(() => {
+    if (!savedTab?.resumeData) return;
+    setPersonalInfo(savedTab.resumeData.personalInfo);
+    setEducation(savedTab.resumeData.education ?? []);
+    setCertifications(savedTab.resumeData.certifications ?? []);
+    setCompanyName(savedTab.preparedJob?.companyName ?? "");
+    if (savedTab.selectedTemplate) setSelectedTemplate(savedTab.selectedTemplate as TemplateId);
+    if (savedTab.coverLetterTemplate) setCoverLetterTemplate(savedTab.coverLetterTemplate as CoverLetterTemplateId);
+  }, [savedTab]);
+
+  useEffect(() => {
+    const snapshot: ProfileTabState = {
+      profileId: profile.id, jobDescription, scannedJobUrl, preparedJob, resumeData, conversationId,
+      coverLetterText, applicationQuestions, scannedQuestions, applicationAnswers, answersReadOnly, workflowTab,
+      selectedTemplate, coverLetterTemplate,
+    };
+    try { localStorage.setItem(tabStorageKey, JSON.stringify(snapshot)); }
+    catch { /* Keep the working tab usable when browser storage is full or unavailable. */ }
+  }, [tabStorageKey, profile.id, jobDescription, scannedJobUrl, preparedJob, resumeData, conversationId,
+    coverLetterText, applicationQuestions, scannedQuestions, applicationAnswers, answersReadOnly, workflowTab, selectedTemplate, coverLetterTemplate]);
+
+  useEffect(() => {
     onGeneratingChange(profile.id, isGenerating);
   }, [isGenerating]);
 
@@ -257,6 +286,7 @@ export function ProfileWorkspace({
   };
 
   const handleGenerate = async () => {
+    if (isSubmitting) return;
     if (!jobDescription.trim()) {
       setError("Please enter a job description");
       return;
@@ -384,7 +414,8 @@ export function ProfileWorkspace({
       setAnswersReadOnly(false);
       // Keep the generated resume's description for downloads after the editor is cleared.
       resumeJobDescription.current = data.jobDescription?.trim() || sourceDescription;
-      setPreparedJob({ url: tabUrl, companyName: generatedCompanyName, jobTitle: generatedJobTitle, description: resumeJobDescription.current });
+      if (!data.draft?.id) throw new Error("The server did not save the prepared job.");
+      setPreparedJob({ applicationId: data.draft.id, url: tabUrl, companyName: generatedCompanyName, jobTitle: generatedJobTitle, description: resumeJobDescription.current });
       setApplicationQuestions("");
       setScannedQuestions([]);
       setApplicationAnswers(data.answers ?? []);
@@ -395,7 +426,7 @@ export function ProfileWorkspace({
         try {
           await armApplicationScreenshot(data.draft.id, {
             companyName: generatedCompanyName, jobTitle: generatedJobTitle,
-            tabId: sourceTab.tabId, url: tabUrl,
+            tabId: sourceTab.tabId, url: tabUrl, profileTabId,
           });
         } catch {
           toast({ title: "Resume prepared", description: "Reopen the job tab and load this prepared job to enable screenshot capture." });
@@ -429,7 +460,7 @@ export function ProfileWorkspace({
   };
 
   const handleLoadLastApplication = async () => {
-    if (!profile.workspaceId || isLoadingLastApplication) return;
+    if (!profile.workspaceId || isLoadingLastApplication || isSubmitting) return;
     setIsLoadingLastApplication(true);
     setError("");
     try {
@@ -442,13 +473,14 @@ export function ProfileWorkspace({
       if (!saved.submitted_at) {
         await armApplicationScreenshot(saved.draft_id || saved.id, {
           companyName: saved.company_name || undefined, jobTitle: saved.job_title || undefined,
-          draft: Boolean(saved.draft_id), url: saved.url,
+          draft: Boolean(saved.draft_id), url: saved.url, profileTabId,
         });
       }
 
       setJobDescription("");
       setScannedJobUrl(null);
-      setPreparedJob({ url: saved.url, companyName: saved.company_name || "", jobTitle: saved.job_title || "", description: saved.job_description || "" });
+      setPreparedJob({ applicationId: saved.draft_id || saved.id, submittedAt: saved.submitted_at,
+        url: saved.url, companyName: saved.company_name || "", jobTitle: saved.job_title || "", description: saved.job_description || "" });
       resumeJobDescription.current = saved.job_description ?? "";
       setResumeData(loadedResume);
       setPersonalInfo(loadedResume.personalInfo);
@@ -804,7 +836,22 @@ export function ProfileWorkspace({
   };
 
   return (
-    <div className="relative flex h-full min-h-0 overflow-hidden">
+    <div className="flex h-full min-h-0 flex-col">
+      <ApplicationScreenshots
+        key={preparedJob?.applicationId || "empty"}
+        profileTabId={profileTabId}
+        applicationId={preparedJob?.submittedAt ? null : preparedJob?.applicationId ?? null}
+        companyName={preparedJob?.companyName}
+        jobTitle={preparedJob?.jobTitle}
+        busy={isGenerating || isLoadingLastApplication}
+        onCapturingChange={setIsSubmitting}
+        onSaved={(applicationId) => {
+          setPreparedJob((current) => current?.applicationId === applicationId
+            ? { ...current, submittedAt: new Date().toISOString() } : current);
+          setAnswersReadOnly(true);
+        }}
+      />
+    <div className="relative flex min-h-0 flex-1 overflow-hidden">
       <WorkspaceSidebar
         activeView={workspaceView}
         onViewChange={setWorkspaceView}
@@ -821,7 +868,7 @@ export function ProfileWorkspace({
       <Button
         type="button"
         onClick={() => void handleLoadLastApplication()}
-        disabled={!profile.workspaceId || isLoadingLastApplication || isGenerating}
+        disabled={!profile.workspaceId || isLoadingLastApplication || isGenerating || isSubmitting}
         variant="secondary"
         className="group mb-5 h-auto min-h-14 w-full max-w-xl justify-start whitespace-normal border border-input px-4 py-3 text-left"
       >
@@ -979,7 +1026,7 @@ export function ProfileWorkspace({
 
         <div className="space-y-3">
           <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap">
-            <Button disabled={isGenerating} onClick={() => void handleGenerate()}>
+            <Button disabled={isGenerating || isSubmitting} onClick={() => void handleGenerate()}>
               {isGenerating ? "Generating..." : "Generate Resume"}
             </Button>
             <Button
@@ -1239,6 +1286,7 @@ export function ProfileWorkspace({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+    </div>
     </div>
   );
 }

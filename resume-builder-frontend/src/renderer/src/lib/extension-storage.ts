@@ -99,7 +99,7 @@ export async function getCurrentBrowserTabContext(): Promise<{ url: string; tabI
 
 export async function armApplicationScreenshot(
   applicationId: string,
-  details: { companyName?: string; jobTitle?: string; draft?: boolean; tabId?: number; url?: string } = {},
+  details: { companyName?: string; jobTitle?: string; draft?: boolean; tabId?: number; url?: string; profileTabId: string },
 ): Promise<void> {
   const chromeApi = (globalThis as { chrome?: {
     tabs?: { query: (queryInfo: { active: boolean; currentWindow: boolean }) => Promise<Array<{ id?: number }>> };
@@ -116,6 +116,11 @@ export async function armApplicationScreenshot(
     ...details,
   });
   if (!result?.ok) throw new Error(result?.error || "Unable to watch for application submission.");
+}
+
+export async function clearProfileTabScreenshot(profileTabId: string): Promise<void> {
+  const api = (globalThis as { chrome?: { runtime?: { sendMessage: (message: unknown) => Promise<unknown> } } }).chrome;
+  await api?.runtime?.sendMessage({ type: "CLEAR_PROFILE_TAB_SCREENSHOT", profileTabId });
 }
 
 export type PageQuestion = {

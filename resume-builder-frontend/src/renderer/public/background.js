@@ -5,6 +5,8 @@ const DEFAULT_API_URL = "http://api.yourdomain.com/api";
 const MAX_PENDING_AGE_MS = 8 * 24 * 60 * 60 * 1000;
 const BROWSER_SESSION_KEY = "resume_ai_screenshot_browser_session";
 
+const pendingKey = (applicationId, profileTabId) => profileTabId ? `${profileTabId}:${applicationId}` : applicationId;
+
 chrome.runtime.onInstalled.addListener(() => {
   chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
 });
@@ -17,11 +19,11 @@ async function pendingEntries() {
   const stored = await chrome.storage.local.get(PENDING_KEY);
   const entries = stored[PENDING_KEY] || {};
   const cutoff = Date.now() - MAX_PENDING_AGE_MS;
-  // Older versions keyed records by tab ID. Keep them when upgrading, but retain each application
-  // independently so generating a second resume in the same tab does not replace the first button.
+  // Legacy entries remain readable; new entries belong to a specific profile tab and draft.
   return Object.fromEntries(Object.entries(entries)
-    .filter(([, value]) => (value.capturedAt || value.createdAt) > cutoff)
-    .map(([key, value]) => [value.applicationId, {
+    // Drop completed entries left by older versions as well as expired pending jobs.
+    .filter(([, value]) => !value.capturedAt && value.createdAt > cutoff)
+    .map(([key, value]) => [pendingKey(value.applicationId, value.profileTabId), {
       ...value,
       tabId: Number(value.tabId ?? key),
     }]));
@@ -59,21 +61,47 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     (async () => {
       const sessionId = await currentBrowserSession();
       await updatePending((entries) => {
-        entries[message.applicationId] = {
-          ...entries[message.applicationId],
+        const key = pendingKey(message.applicationId, message.profileTabId);
+        const previous = entries[key];
+        // A new job replaces only this profile tab's capture context.
+        for (const [entryKey, entry] of Object.entries(entries)) {
+          if (message.profileTabId && entry.profileTabId === message.profileTabId) delete entries[entryKey];
+        }
+        entries[key] = {
+          ...previous,
           applicationId: message.applicationId,
+          profileTabId: message.profileTabId,
           draftId: message.draftId,
           tabId: Number(message.tabId),
           sessionId,
           companyName: message.companyName,
           jobTitle: message.jobTitle,
           url: message.url,
-          createdAt: entries[message.applicationId]?.createdAt || Date.now(),
-          submitted: entries[message.applicationId]?.submitted || false,
+          createdAt: previous?.createdAt || Date.now(),
+          submitted: previous?.tabId === Number(message.tabId) && previous?.sessionId === sessionId ? previous.submitted : false,
         };
       });
       sendResponse({ ok: true });
     })().catch((error) => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
+
+  if (message?.type === "GET_TAB_SCREENSHOT_APPLICATION") {
+    (async () => {
+      const entries = await pendingEntries();
+      const item = message.profileTabId && message.applicationId
+        ? entries[pendingKey(message.applicationId, message.profileTabId)] : null;
+      sendResponse({ ok: true, item: item || null });
+    })().catch((error) => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
+
+  if (message?.type === "CLEAR_PROFILE_TAB_SCREENSHOT") {
+    updatePending((entries) => {
+      for (const [key, entry] of Object.entries(entries)) {
+        if (entry.profileTabId === message.profileTabId) delete entries[key];
+      }
+    }).then(() => sendResponse({ ok: true })).catch((error) => sendResponse({ ok: false, error: error.message }));
     return true;
   }
 
@@ -92,7 +120,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message?.type === "CAPTURE_APPLICATION_SCREENSHOT") {
-    captureAndUpload(Number(message.tabId), message.applicationId, message.confirmed === true)
+    captureAndUpload(Number(message.tabId), message.applicationId, message.confirmed === true, message.profileTabId)
       .then(() => sendResponse({ ok: true }))
       .catch((error) => sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error) }));
     return true;
@@ -102,9 +130,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     (async () => {
       let updated = false;
       await updatePending((entries) => {
-        const pending = Object.values(entries)
-          .filter((entry) => entry.tabId === sender.tab.id && !entry.capturedAt)
-          .sort((left, right) => right.createdAt - left.createdAt)[0];
+        const matches = Object.values(entries).filter((entry) => entry.tabId === sender.tab.id && !entry.capturedAt);
+        // A browser event cannot identify the profile tab when several jobs share the same page.
+        const pending = matches.length === 1 ? matches[0] : null;
         if (pending && !pending.submitted) {
           pending.submitted = true;
           updated = true;
@@ -116,9 +144,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 });
 
-async function captureAndUpload(tabId, applicationId, confirmed) {
+async function captureAndUpload(tabId, applicationId, confirmed, profileTabId) {
   const entries = await pendingEntries();
-  const pending = entries[applicationId];
+  const pending = entries[pendingKey(applicationId, profileTabId)];
   if (!pending || pending.tabId !== tabId) throw new Error("This application is no longer available for capture.");
   if (!pending.submitted && !confirmed) throw new Error("Confirm that the application was submitted successfully first.");
   if (pending.sessionId !== await currentBrowserSession()) {
@@ -153,6 +181,9 @@ async function captureAndUpload(tabId, applicationId, confirmed) {
     throw new Error(payload?.message || `Upload failed (${response.status}).`);
   }
   await updatePending((current) => {
-    if (current[applicationId]) current[applicationId].capturedAt = Date.now();
+    // Only remove the pending job after the backend has saved the application and screenshot.
+    for (const [key, entry] of Object.entries(current)) {
+      if (entry.applicationId === applicationId) delete current[key];
+    }
   });
 }

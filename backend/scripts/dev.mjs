@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
+const prismaPath = require.resolve('prisma/build/index.js');
 const tscPath = require.resolve('typescript/bin/tsc');
 const children = new Set();
 let stopping = false;
@@ -48,6 +49,13 @@ function shutdown(exitCode) {
 
 process.once('SIGINT', () => shutdown(130));
 process.once('SIGTERM', () => shutdown(143));
+
+// Schema changes need a regenerated client even when the database is already migrated.
+console.log('Generating Prisma client before compiling the backend...');
+const generation = startNode([prismaPath, 'generate', '--schema', 'prisma/schema.prisma']);
+const generationResult = await waitForExit(generation);
+if (generationResult.code !== 0) process.exit(generationResult.code ?? 1);
+if (stopping) process.exit(0);
 
 // Compile once before starting the server so watch mode also works on a clean checkout.
 const initialBuild = startNode([tscPath, '-p', 'tsconfig.build.json']);
