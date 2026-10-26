@@ -130,6 +130,10 @@ cd frontend && npm run typecheck && npm run build
 After building the backend, `cd backend && npm run test:company-cooldown` verifies simultaneous
 company submissions against PostgreSQL. It creates and removes an isolated schema for its fixtures.
 
+For resume-generation connection errors, run `cd backend && npm run check:ai` on the API server.
+It checks the configured OpenAI key and model access without generating text or displaying the key.
+Rebuild and restart the API after backend changes so Resume Builder uses the updated code.
+
 The unit tests cover the policy functions in isolation. Two scripts cover what they cannot — that the
 guards are actually mounted, the DTOs actually validate, and every deny rule holds over real HTTP.
 Both need a **running server** and both **write data**, which is why neither is part of the Jest suite:

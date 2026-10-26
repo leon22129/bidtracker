@@ -26,6 +26,64 @@ describe('OpenAI request recovery', () => {
     new Response(JSON.stringify(data), { status, headers });
   const request = (target: ApplicationGenerationService) =>
     (target as any).openAiRequest('/conversations', { items: [] }, 'POST', 'conversation_create');
+  const stream = (data: unknown, type: string) => new Response(
+    `event: ${type}\ndata: ${JSON.stringify({ type, response: data })}\n\n`,
+    { headers: { 'content-type': 'text/event-stream' } },
+  );
+
+  it('recovers from an incomplete response by increasing the output budget', async () => {
+    fetchMock.mockResolvedValueOnce(stream({ status: 'incomplete', incomplete_details: { reason: 'max_output_tokens' } }, 'response.incomplete'))
+      .mockResolvedValueOnce(stream({ status: 'completed', output_text: '{"company_name":"Acme","job_title":"Engineer"}' }, 'response.completed'));
+    await expect((service as any).openAi('Extract metadata', { maxOutputTokens: 2048, reasoningEffort: 'low' }))
+      .resolves.toContain('Acme');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body).max_output_tokens).toBe(4096);
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body).reasoning.effort).toBe('low');
+    expect((service as any).logger.error).not.toHaveBeenCalled();
+  });
+
+  it('reports an exhausted output limit without mislabeling it as a connection failure', async () => {
+    fetchMock.mockImplementation(async () => stream({ status: 'incomplete', incomplete_details: { reason: 'max_output_tokens' } }, 'response.incomplete'));
+    await expect((service as any).openAi('Resume prompt')).rejects.toThrow('output limit');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not replay a response that ended incomplete for another reason', async () => {
+    fetchMock.mockResolvedValueOnce(stream({ status: 'incomplete', incomplete_details: { reason: 'content_filter' } }, 'response.incomplete'));
+    await expect((service as any).openAi('Resume prompt')).rejects.toThrow('could not complete');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('accepts a JSON response when an upstream service does not stream', async () => {
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ status: 'completed', output_text: 'Generated resume' }), {
+      headers: { 'content-type': 'application/json' },
+    }));
+    await expect((service as any).openAi('Resume prompt')).resolves.toBe('Generated resume');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses a completed stream event without waiting for the connection to close', async () => {
+    const body = new ReadableStream({ start(controller) {
+      controller.enqueue(new TextEncoder().encode('data: {"type":"response.completed","response":{"status":"completed","output_text":"Generated resume"}}\n\n'));
+    } });
+    fetchMock.mockResolvedValueOnce(new Response(body, { headers: { 'content-type': 'text/event-stream' } }));
+    await expect((service as any).openAi('Resume prompt')).resolves.toBe('Generated resume');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('preserves top-level error details from a streaming error event', async () => {
+    fetchMock.mockResolvedValueOnce(new Response('data: {"type":"error","code":"invalid_api_key","message":"Invalid provider credential"}\n\n', {
+      headers: { 'content-type': 'text/event-stream' },
+    }));
+    await expect((service as any).openAi('Resume prompt')).rejects.toThrow('Invalid provider credential');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('gives company extraction enough output space for reasoning and JSON', async () => {
+    const openAi = jest.spyOn(service as any, 'openAi').mockResolvedValue('{"company_name":"Acme","job_title":"Engineer"}');
+    await expect((service as any).extractJobIdentity('Acme is hiring an engineer.')).resolves.toMatchObject({ company_name: 'Acme' });
+    expect(openAi).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ maxOutputTokens: 2048, reasoningEffort: 'low' }));
+  });
 
   it('recovers from the logged connection-reset then non-JSON 503 sequence', async () => {
     fetchMock.mockRejectedValueOnce(new TypeError('fetch failed'))
@@ -52,8 +110,10 @@ describe('OpenAI request recovery', () => {
   it.each([
     ['retry-after', '2'],
     ['retry-after-ms', '2000'],
-    ['retry-after', new Date(Date.now() + 2000).toUTCString()],
+    ['retry-after', 'http-date'],
   ])('honors the provider %s header', async (header, value) => {
+    jest.setSystemTime(new Date('2026-10-25T00:00:00.000Z'));
+    if (value === 'http-date') value = new Date(Date.now() + 2000).toUTCString();
     fetchMock.mockResolvedValueOnce(json({}, 503, { [header]: value }))
       .mockResolvedValueOnce(json({ id: 'conv_recovered' }));
     const result = expect(request(service)).resolves.toEqual({ id: 'conv_recovered' });
@@ -109,5 +169,26 @@ describe('OpenAI request recovery', () => {
     await jest.advanceTimersByTimeAsync(10_000);
     await result;
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('reports a malformed stream as a response error instead of a connectivity failure', async () => {
+    fetchMock.mockImplementation(async () => new Response('data: invalid-json\n\n', {
+      headers: { 'content-type': 'text/event-stream' },
+    }));
+    const result = expect((service as any).openAi('Resume prompt')).rejects.toThrow('unreadable response');
+    await jest.advanceTimersByTimeAsync(10000);
+    await result;
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(JSON.parse((service as any).logger.error.mock.calls[0][0]).failure_type).toBe('protocol');
+  });
+
+  it('keeps truncated transport failures distinct from an unreachable provider', async () => {
+    fetchMock.mockImplementation(async () => new Response('data: {"type":"response.created","response":{"id":"resp_partial"}}\n\n', {
+      headers: { 'content-type': 'text/event-stream' },
+    }));
+    const result = expect((service as any).openAi('Resume prompt')).rejects.toThrow('interrupted its response');
+    await jest.advanceTimersByTimeAsync(10000);
+    await result;
+    expect(JSON.parse((service as any).logger.error.mock.calls[0][0]).failure_type).toBe('stream');
   });
 });
