@@ -97,6 +97,32 @@ export async function getCurrentBrowserTabContext(): Promise<{ url: string; tabI
   return { url, tabId: tabs?.[0]?.id };
 }
 
+export async function getBrowserTabContext(tabId: number): Promise<{ url: string; tabId: number }> {
+  const api = (globalThis as { chrome?: { tabs?: { get: (id: number) => Promise<{ url?: string }> } } }).chrome;
+  const tab = await api?.tabs?.get(tabId).catch(() => null);
+  if (!tab?.url || !/^https?:\/\//i.test(tab.url)) {
+    throw new Error("The linked job page is closed or unavailable. Open the linked job before generating.");
+  }
+  return { url: tab.url, tabId };
+}
+
+export async function openBrowserJobPage(url: string, tabId?: number): Promise<{ url: string; tabId: number }> {
+  const api = (globalThis as { chrome?: { tabs?: {
+    get: (id: number) => Promise<{ url?: string }>;
+    update: (id: number, options: { active: boolean }) => Promise<unknown>;
+    create: (options: { url: string; active: boolean }) => Promise<{ id?: number }>;
+  } } }).chrome;
+  if (!api?.tabs || !/^https?:\/\//i.test(url)) throw new Error("Open the job posting in Chrome and link its page first.");
+  const existing = tabId === undefined ? null : await api.tabs.get(tabId).catch(() => null);
+  if (existing?.url === url && tabId !== undefined) {
+    await api.tabs.update(tabId, { active: true });
+    return { url, tabId };
+  }
+  const tab = await api.tabs.create({ url, active: true });
+  if (tab.id === undefined) throw new Error("The linked job page could not be opened.");
+  return { url, tabId: tab.id };
+}
+
 export async function armApplicationScreenshot(
   applicationId: string,
   details: { companyName?: string; jobTitle?: string; draft?: boolean; tabId?: number; url?: string; profileTabId: string },
@@ -132,6 +158,7 @@ export type PageQuestion = {
 
 export type CurrentPageContext = {
   url: string;
+  tabId?: number;
   title: string;
   jobTitle: string;
   jobDescription: string;
@@ -206,6 +233,7 @@ type FrameMessageResponse<T> = {
 
 async function sendToCurrentPageFrames<T>(message: unknown): Promise<{
   tabUrl: string;
+  tabId: number;
   responses: Array<FrameMessageResponse<T>>;
 }> {
   const tabsApi = extensionTabs();
@@ -264,7 +292,7 @@ async function sendToCurrentPageFrames<T>(message: unknown): Promise<{
   if (!responses.length) {
     throw new Error("This page does not allow the extension to read its job or application content.");
   }
-  return { tabUrl: tab.url, responses };
+  return { tabUrl: tab.url, tabId: tab.id, responses };
 }
 
 export function canScanCurrentPage(): boolean {
@@ -583,7 +611,7 @@ async function fillAdpPageWorld(profile: PageAutofillProfile) {
 }
 
 export async function getCurrentPageContext({ includeQuestions = true }: { includeQuestions?: boolean } = {}): Promise<CurrentPageContext> {
-  const { tabUrl, responses } = await sendToCurrentPageFrames<CurrentPageContext>({
+  const { tabUrl, tabId, responses } = await sendToCurrentPageFrames<CurrentPageContext>({
     type: "RESUME_AI_EXTRACT_PAGE",
     includeQuestions,
   });
@@ -606,6 +634,7 @@ export async function getCurrentPageContext({ includeQuestions = true }: { inclu
   return {
     ...primary,
     url: tabUrl,
+    tabId,
     jobDescription: descriptionContext.jobDescription,
     jobDescriptionSource: descriptionContext.jobDescriptionSource,
     questions: [...questions.values()],

@@ -32,6 +32,9 @@ function fixture() {
     { id: 'd1', browserTabId: 73, company: 'Acme', salary: '$150,000', url: 'https://jobs.example.test/123' },
     { id: 'd2', browserTabId: 74, company: 'Beta', salary: '$180,000', url: 'https://jobs.example.test/456' },
   ];
+  state.browserTabs ||= Object.fromEntries(jobs.map((job) => [job.browserTabId, job.url]));
+  state.nextBrowserTabId ||= 75;
+  if (!previous) state.switchBrowserAfterScan = true;
   const jd = (job) => `Job Information\nTitle: Engineer\nCompany: ${job.company}\n\nJob Description\nRemote US role for an engineer.`;
   const personal = { fullName: 'Test Candidate', title: 'Engineer', email: 'candidate@example.test', location: 'Chicago, IL' };
   const rawResume = (job) => ({ summary: `${job.company} summary`, skills: ['TypeScript'], workexperience: [], annual_salary: job.salary, hourly_rate: '$72.12', rate_in_jd: false });
@@ -57,9 +60,14 @@ function fixture() {
     runtime: { onInstalled: { addListener() {} }, onMessage: { addListener: (fn) => messageListeners.push(fn) },
       sendMessage: (message) => new Promise((resolve, reject) => { try { messageListeners[0](message, {}, resolve); } catch (error) { reject(error); } }),
     },
-    tabs: { query: async () => [{ id: state.browserTabId, windowId: 1, url: jobs.find((job) => job.browserTabId === state.browserTabId).url }], get: async (id) => ({ id, windowId: 1 }), update: async (id) => { state.browserTabId = id; },
+    tabs: { query: async () => [{ id: state.browserTabId, windowId: 1, url: state.browserTabs[state.browserTabId] }],
+      get: async (id) => { if (!state.browserTabs[id]) throw Error('Tab closed'); return { id, windowId: 1, url: state.browserTabs[id] }; },
+      update: async (id) => { state.browserTabId = id; },
+      create: async ({ url }) => { const id = state.nextBrowserTabId++; state.browserTabs[id] = url; state.browserTabId = id; return { id, url }; },
       captureVisibleTab: async () => { state.captures.push(state.browserTabId); return 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII='; },
-      sendMessage: async (id, message) => { const job = jobs.find((job) => job.browserTabId === id); return { url: job.url, title: 'Engineer', jobTitle: 'Engineer', jobDescription: jd(job), jobDescriptionSource: 'fixture', questions: message.includeQuestions ? [{ question: 'Why this role?', fieldType: 'text', options: [], sensitive: false }] : [] }; },
+      sendMessage: async (id, message) => { const job = jobs.find((job) => job.url === state.browserTabs[id]);
+        if (state.switchBrowserAfterScan && message.type === 'RESUME_AI_EXTRACT_PAGE' && !message.includeQuestions) { state.browserTabId = 74; state.switchBrowserAfterScan = false; }
+        return { url: job.url, title: 'Engineer', jobTitle: 'Engineer', jobDescription: jd(job), jobDescriptionSource: 'fixture', questions: message.includeQuestions ? [{ question: 'Why this role?', fieldType: 'text', options: [], sensitive: false }] : [] }; },
     }, webNavigation: { getAllFrames: async () => [{ frameId: 0 }] },
   };
   const originalFetch = window.fetch.bind(window);
@@ -74,6 +82,7 @@ function fixture() {
       const input = JSON.parse(init.body);
       const job = jobs.find((job) => job.url === input.url);
       if (!job || input.job_description !== jd(job)) throw Error('Wrong JD was sent');
+      (state.generationUrls ||= []).push(input.url);
       state.latestDraft = job.id;
       return json({ success: true, eligible: true, draft: { id: job.id, url: job.url, company_name: job.company, job_title: 'Engineer' }, resume: rawResume(job), conversation_id: job.id + '-conversation', job_description: updated(job) });
     }
@@ -132,6 +141,11 @@ function fixture() {
       }
       throw Error('Timed out: ' + expression + '\n' + await evaluate('document.body.innerText') + '\n' + JSON.stringify(await evaluate('workflowTest')));
     };
+    const reloadPage = async () => {
+      await evaluate('window.workflowReloadMarker = true');
+      await page.send('Page.reload');
+      await waitFor('window.workflowReloadMarker !== true && Boolean(window.activeProfileWorkspace)');
+    };
     const clickSelector = async (selector) => {
       const box = await evaluate(`(()=>{const el=[...document.querySelectorAll(${JSON.stringify(selector)})].find(el=>el.getClientRects().length);if(!el)throw Error('Missing control '+${JSON.stringify(selector)});el.scrollIntoView({block:'center'});const r=el.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2};})()`);
       await page.send('Input.dispatchMouseEvent', { type: 'mousePressed', button: 'left', clickCount: 1, ...box });
@@ -149,9 +163,30 @@ function fixture() {
     const firstTabId = await evaluate("activeProfileWorkspace.dataset.profileTabId");
     await click('Scan Current Page');
     await waitFor("activeProfileWorkspace.querySelector('textarea').value.includes('Company: Acme')");
+    assert.equal(await evaluate('workflowTest.browserTabId'), 74);
+    assert.equal(await evaluate("activeProfileWorkspace.querySelector('[data-job-source]').innerText.includes('https://jobs.example.test/123')"), true);
+    // The source page can change independently of the active tab; block before any backend request.
+    await evaluate("workflowTest.browserTabs[73] = 'https://jobs.example.test/456'");
+    await click('Generate Resume');
+    await waitFor("activeProfileWorkspace.innerText.includes('The linked browser tab has changed')");
+    assert.equal(await evaluate("workflowTest.requests.includes('/applications/generate')"), false);
+    await evaluate('delete workflowTest.browserTabs[73]');
+    await click('Generate Resume');
+    await waitFor("activeProfileWorkspace.innerText.includes('The linked job page is closed or unavailable')");
+    assert.equal(await evaluate("workflowTest.requests.includes('/applications/generate')"), false);
+    await click('Open linked job');
+    await waitFor('workflowTest.browserTabId === 75');
+    // Restore the panel on its original browser tab; the JD's linked page is kept separately.
+    await evaluate("workflowTest.browserTabs[73] = 'https://jobs.example.test/123'; workflowTest.browserTabId = 73");
+    await reloadPage();
+    await waitFor("activeProfileWorkspace?.querySelector('textarea')?.value.includes('Company: Acme')");
+    assert.equal(await evaluate("activeProfileWorkspace.querySelector('[data-job-source]').innerText.includes('https://jobs.example.test/123')"), true);
+    await evaluate('workflowTest.browserTabId = 74');
     await click('Generate Resume');
     await waitFor("activeProfileWorkspace.querySelector('textarea').value === '' && activeProfileWorkspace.innerText.includes('Prepared job: Acme')");
     assert.equal(await evaluate('workflowTest.tableRows'), 0);
+    assert.deepEqual(await evaluate('workflowTest.generationUrls'), ['https://jobs.example.test/123']);
+    assert.equal(await evaluate("Object.values(workflowTest.pending).find(entry => entry.applicationId === 'd1').tabId"), 75);
     assert.equal(await evaluate("activeProfileWorkspace.querySelector('pre').textContent.includes('Expected Rate')"), true);
     assert.equal(await evaluate("activeProfileWorkspace.querySelector('[data-submission-screenshot] button').disabled"), true);
     await evaluate("document.querySelector('[toast-close]')?.click()");
@@ -161,6 +196,7 @@ function fixture() {
     await waitFor("activeProfileWorkspace.querySelector('textarea').value === 'Why this role?'");
     await click('Generate Answers');
     await waitFor("workflowTest.answers.length === 1 && [...document.querySelectorAll('textarea')].some(el=>el.value === 'It fits my experience.')");
+    await evaluate('workflowTest.browserTabId = 75');
     await click('Load Last Job');
     await waitFor("workflowTest.requests.some(path=>path.startsWith('/applications/drafts/latest')) && document.body.innerText.includes('Last application loaded')");
     await click('Resume');
@@ -173,12 +209,19 @@ function fixture() {
     const secondTabId = await evaluate('activeProfileWorkspace.dataset.profileTabId');
     assert.notEqual(firstTabId, secondTabId);
     assert.equal(await evaluate("activeProfileWorkspace.querySelector('[data-submission-screenshot] button').disabled"), true);
-    await evaluate('workflowTest.browserTabId = 74');
-    await click('Scan Current Page');
+    const pastedJd = await evaluate("chrome.tabs.sendMessage(74, {}).then(context => context.jobDescription)");
+    await evaluate("activeProfileWorkspace.querySelector('textarea').focus()");
+    await page.send('Input.insertText', { text: pastedJd });
     await waitFor("activeProfileWorkspace.querySelector('textarea').value.includes('Company: Beta')");
+    assert.equal(await evaluate("[...activeProfileWorkspace.querySelectorAll('button')].find(el=>el.textContent.includes('Generate Resume')).disabled"), true);
+    await evaluate('workflowTest.browserTabId = 74');
+    await click('Link current page');
+    await waitFor("activeProfileWorkspace.querySelector('[data-job-source]').innerText.includes('https://jobs.example.test/456') && ![...activeProfileWorkspace.querySelectorAll('button')].find(el=>el.textContent.includes('Generate Resume')).disabled");
+    await evaluate('workflowTest.browserTabId = 75');
     await click('Generate Resume');
     await waitFor("activeProfileWorkspace.querySelector('textarea').value === '' && activeProfileWorkspace.innerText.includes('Prepared job: Beta')");
     assert.equal(await evaluate("activeProfileWorkspace.innerText.includes('$180,000')"), true);
+    assert.deepEqual(await evaluate('workflowTest.generationUrls'), ['https://jobs.example.test/123', 'https://jobs.example.test/456']);
     assert.equal(await evaluate("document.querySelector('select[aria-label=\"Application to screenshot\"]')"), null);
     assert.equal(await evaluate('Object.values(workflowTest.pending).length'), 2);
 
@@ -193,7 +236,7 @@ function fixture() {
     await waitFor("[...activeProfileWorkspace.querySelectorAll('textarea')].some(el => el.value === 'It fits my experience.')");
     await click('Resume');
     await evaluate('workflowTest.browserTabId = 73');
-    await page.send('Page.reload');
+    await reloadPage();
     await waitFor("document.querySelectorAll('[data-profile-tab-id]').length === 2 && activeProfileWorkspace.innerText.includes('Prepared job: Acme')");
     assert.equal(await evaluate('activeProfileWorkspace.dataset.profileTabId'), firstTabId);
     assert.equal(await evaluate("activeProfileWorkspace.querySelector('textarea').value"), '');
@@ -225,11 +268,11 @@ function fixture() {
     assert.deepEqual(await evaluate("chrome.runtime.sendMessage({ type: 'GET_SCREENSHOT_APPLICATIONS' }).then(result => result.items.map(item => item.applicationId))"), ['d2']);
     assert.equal(await evaluate('Boolean(workflowTest.pending.old)'), false);
     assert.deepEqual(await evaluate('workflowTest.added'), ['d1']);
-    assert.deepEqual(await evaluate('workflowTest.captures'), [73, 73]);
+    assert.deepEqual(await evaluate('workflowTest.captures'), [75, 75]);
     await click('Candidate');
     await waitFor("activeProfileWorkspace.querySelector('[data-submission-screenshot] button').disabled && !activeProfileWorkspace.querySelector('[data-submission-screenshot] input')");
     await evaluate('workflowTest.browserTabId = 73');
-    await page.send('Page.reload');
+    await reloadPage();
     await waitFor("document.querySelectorAll('[data-profile-tab-id]').length === 2 && activeProfileWorkspace.innerText.includes('Prepared job: Acme')");
     assert.equal(await evaluate("activeProfileWorkspace.querySelector('[data-submission-screenshot] button').disabled"), true);
     assert.equal(await evaluate("activeProfileWorkspace.querySelector('[data-submission-screenshot] input')"), null);
@@ -240,12 +283,12 @@ function fixture() {
     await waitFor('workflowTest.tableRows === 2 && Object.values(workflowTest.pending).length === 0');
     await waitFor("activeProfileWorkspace.querySelector('[data-submission-screenshot] button').disabled");
     assert.deepEqual(await evaluate('workflowTest.added'), ['d1', 'd2']);
-    assert.deepEqual(await evaluate('workflowTest.captures'), [73, 73, 74]);
+    assert.deepEqual(await evaluate('workflowTest.captures'), [75, 75, 74]);
     assert.equal(await evaluate("workflowTest.requests.includes('/applications/generated')"), false);
     assert.deepEqual(await evaluate('workflowTest.errors'), []);
     const capture = await page.send('Page.captureScreenshot', { format: 'png' });
     fs.writeFileSync('.tmp/application-workflow-verified.png', Buffer.from(capture.data, 'base64'));
-    console.log('PASS: independent jobs in two tabs for the same profile, tab state/answers restored after reload, scoped draft capture, original browser screenshot, failed-save retry, tab switching during upload, success toast, and completed tab stays disabled');
+    console.log('PASS: linked source URL stays with scanned/pasted JD across browser-tab switches and reload; changed/closed sources blocked before backend calls; reopened source used for capture; independent profile tabs, draft submission, retries, and success toast');
   } finally {
     if (page) page.close();
     if (browser) { await browser.send('Browser.close').catch(() => {}); browser.close(); }

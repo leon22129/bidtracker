@@ -27,6 +27,9 @@ when multiple tabs use the same profile. This state is restored when the panel i
 screenshot button submits that tab's draft using its original browser page; there is no separate
 application dropdown. After a successful save, a toast confirms completion and capture is disabled
 for that job. Failed saves remain available for retry; saved screenshots stay with their applications.
+Scanning also links the JD to its source URL and browser tab, shown separately above the JD input.
+Generation always uses that linked URL when the bidder switches browser tabs. Pasted JDs require
+**Link current page** first; **Open linked job** returns to the posting if its tab was closed or changed.
 
 To copy job links, check the desired rows and choose **Copy links**, or press **Ctrl+C**
 (**Cmd+C** on Mac) while the table is focused. Full URLs are copied one per line in table order.

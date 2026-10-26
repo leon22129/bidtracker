@@ -10,10 +10,13 @@ export type PreparedTabJob = {
   submittedAt?: string | null;
 };
 
+export type JobPageSource = { url: string; tabId?: number; title?: string };
+
 export type ProfileTabState = {
   profileId: string;
   jobDescription: string;
-  scannedJobUrl: string | null;
+  jobSource: JobPageSource | null;
+  scannedJobUrl?: string | null; // Read source URLs saved by older extension versions.
   preparedJob: PreparedTabJob | null;
   resumeData: ResumeData | null;
   conversationId: string | null;
