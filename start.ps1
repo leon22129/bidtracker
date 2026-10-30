@@ -12,11 +12,18 @@
 
 $ErrorActionPreference = "Stop"
 
+if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) {
+    Write-Error "start.ps1 requires Windows. Use the manual startup commands in README.md on this system."
+    exit 1
+}
+
 # Keep every process started by this script in a Windows job object. Windows closes
 # the job handle if this PowerShell process exits for any reason (including its
 # terminal being closed), and KILL_ON_JOB_CLOSE then stops the complete process tree.
+$ProcessJobTypeAvailable = $true
 if (-not ("BidTrackerProcessJob" -as [type])) {
-    Add-Type -TypeDefinition @"
+    try {
+        Add-Type -TypeDefinition @"
 using System;
 using System.ComponentModel;
 using System.Runtime.InteropServices;
@@ -125,6 +132,10 @@ public static class BidTrackerProcessJob
     }
 }
 "@
+    }
+    catch {
+        $ProcessJobTypeAvailable = $false
+    }
 }
 
 # ============================================================================
@@ -139,6 +150,7 @@ $BackendBuild = Join-Path $Backend "dist\main.js"
 $FrontendBuild = Join-Path $Frontend ".next"
 
 $FrontendUrl = "http://127.0.0.1:3000"
+$BackendUrl = "http://127.0.0.1:3001"
 $HealthUrl = "$FrontendUrl/api/health"
 
 $Rebuild = $false
@@ -146,8 +158,9 @@ $Dev = $false
 $NoCloudflare = $false
 $Processes = @()
 $ProcessJobCreated = $false
+$CloudflareProcess = $null
 
-$LogDirectory = Join-Path $env:TEMP "bidtracker"
+$LogDirectory = Join-Path ([IO.Path]::GetTempPath()) "bidtracker"
 
 if (!(Test-Path $LogDirectory)) {
     New-Item -ItemType Directory -Path $LogDirectory -Force | Out-Null
@@ -217,6 +230,13 @@ if ($Dev -and $Rebuild) {
 if ($Dev) {
     $NoCloudflare = $true
 }
+
+# Keep the two services aligned even when the host has unrelated PORT or
+# BACKEND_URL environment variables.
+$PreviousPortEnv = $env:PORT
+$PreviousBackendUrlEnv = $env:BACKEND_URL
+$env:PORT = "3001"
+$env:BACKEND_URL = $BackendUrl
 
 # ============================================================================
 # Functions
@@ -297,9 +317,21 @@ exit `$LASTEXITCODE
             -RedirectStandardError $StandardErrorPath `
             -PassThru
 
-        [BidTrackerProcessJob]::AddProcess($Process.Handle)
-        if (!$Ready.WaitOne(10000)) {
-            throw "npm process helper did not initialize within 100 seconds"
+        if ($ProcessJobCreated) {
+            try {
+                [BidTrackerProcessJob]::AddProcess($Process.Handle)
+            }
+            catch {
+                if ($Processes.Count -gt 0) {
+                    throw
+                }
+                [BidTrackerProcessJob]::Close()
+                $script:ProcessJobCreated = $false
+                Write-Host "Process job unavailable; Ctrl+C will stop the servers, but closing the terminal may leave them running." -ForegroundColor Yellow
+            }
+        }
+        if (!$Ready.WaitOne(30000)) {
+            throw "npm process helper did not initialize within 30 seconds"
         }
         $Gate.Set() | Out-Null
         return $Process
@@ -351,6 +383,18 @@ function Cleanup {
     }
 
     $Processes = @()
+    if ($null -eq $PreviousPortEnv) {
+        Remove-Item Env:PORT -ErrorAction SilentlyContinue
+    }
+    else {
+        $env:PORT = $PreviousPortEnv
+    }
+    if ($null -eq $PreviousBackendUrlEnv) {
+        Remove-Item Env:BACKEND_URL -ErrorAction SilentlyContinue
+    }
+    else {
+        $env:BACKEND_URL = $PreviousBackendUrlEnv
+    }
 }
 
 function Die {
@@ -364,34 +408,47 @@ function Die {
     exit 1
 }
 
-function Stop-PortProcess {
-    param(
-        [int]$Port
-    )
+function Assert-PortAvailable([int]$Port) {
+    $Listeners = [Net.NetworkInformation.IPGlobalProperties]::GetIPGlobalProperties().GetActiveTcpListeners()
+    if ($Listeners | Where-Object { $_.Port -eq $Port } | Select-Object -First 1) {
+        Die "Port $Port is in use. Stop the other server and run start.ps1 again."
+    }
+}
 
-    $Connections = Get-NetTCPConnection `
-        -LocalPort $Port `
-        -State Listen `
-        -ErrorAction SilentlyContinue
-
-    foreach ($Connection in $Connections) {
-
-        $ProcessId = $Connection.OwningProcess
-
-        if ($ProcessId -and $ProcessId -ne 0) {
-
-            Write-Host `
-                "Port $Port is already in use by PID $ProcessId. Stopping it..." `
-                -ForegroundColor Yellow
-
-            try {
-                taskkill.exe /PID $ProcessId /T /F 2>$null | Out-Null
-            }
-            catch {
-                # Process may already have exited.
-            }
+function Ensure-Dependencies([string]$Project) {
+    $ProjectPath = Join-Path $Root $Project
+    $InstalledLock = Join-Path $ProjectPath "node_modules\.package-lock.json"
+    $LockFile = Join-Path $ProjectPath "package-lock.json"
+    $ToolPath = if ($Project -eq "backend") {
+        Join-Path $ProjectPath "node_modules\.bin\prisma.cmd"
+    }
+    else {
+        Join-Path $ProjectPath "node_modules\.bin\next.cmd"
+    }
+    if (!(Test-Path -LiteralPath $LockFile)) {
+        Die "$Project/package-lock.json is missing; cannot install its dependencies reproducibly."
+    }
+    $NeedsInstall = !(Test-Path -LiteralPath $InstalledLock) -or !(Test-Path -LiteralPath $ToolPath)
+    if (!$NeedsInstall) {
+        return
+    }
+    Say "installing $Project dependencies"
+    Push-Location $ProjectPath
+    try {
+        & npm.cmd ci
+        if ($LASTEXITCODE -ne 0) {
+            Die "$Project dependency install failed. Check npm's error above and run start.ps1 again."
         }
     }
+    finally {
+        Pop-Location
+    }
+}
+
+trap {
+    Write-Host "Startup failed: $($_.Exception.Message)" -ForegroundColor Red
+    Cleanup
+    exit 1
 }
 
 # ============================================================================
@@ -409,37 +466,67 @@ if (!(Test-Path $Frontend)) {
 }
 
 if (!(Test-Path (Join-Path $Backend ".env"))) {
-    Die "Backend .env not found: $Backend\.env"
+    Die "Backend .env is missing. Copy .env.example to backend/.env and set DATABASE_URL, JWT_SECRET, and the admin credentials."
 }
 
-if (!(Get-Command npm.cmd -ErrorAction SilentlyContinue)) {
-    Die "npm was not found in PATH."
+if (!(Get-Command node.exe -ErrorAction SilentlyContinue) -or !(Get-Command npm.cmd -ErrorAction SilentlyContinue)) {
+    Die "Node.js and npm are required. Install Node.js 20.19.4 or newer, then reopen PowerShell."
+}
+
+$NodeVersion = (& node.exe -p "process.versions.node").Trim()
+$NodeParts = $NodeVersion.Split('.') | ForEach-Object { [int]$_ }
+if ($NodeParts[0] -lt 20 -or ($NodeParts[0] -eq 20 -and
+    ($NodeParts[1] -lt 19 -or ($NodeParts[1] -eq 19 -and $NodeParts[2] -lt 4)))) {
+    Die "Node.js $NodeVersion is too old. Install Node.js 20.19.4 or newer."
 }
 
 if (!$NoCloudflare -and !(Get-Command cloudflared.exe -ErrorAction SilentlyContinue)) {
-    Die "cloudflared was not found in PATH."
+    Write-Host "cloudflared is unavailable; starting in local mode." -ForegroundColor Yellow
+    $NoCloudflare = $true
 }
 
-try {
-    [BidTrackerProcessJob]::Create()
-    $ProcessJobCreated = $true
+if ($ProcessJobTypeAvailable) {
+    try {
+        [BidTrackerProcessJob]::Create()
+        $ProcessJobCreated = $true
+    }
+    catch {
+        $ProcessJobTypeAvailable = $false
+    }
 }
-catch {
-    Die "Could not create the process cleanup job: $($_.Exception.Message)"
+if (!$ProcessJobTypeAvailable) {
+    Write-Host "Process job unavailable; Ctrl+C will stop the servers, but closing the terminal may leave them running." -ForegroundColor Yellow
 }
 
 Say "checking ports"
 
-Stop-PortProcess -Port 3001
-Stop-PortProcess -Port 3000
+Assert-PortAvailable -Port 3001
+Assert-PortAvailable -Port 3000
 
-Start-Sleep -Milliseconds 500
+Ensure-Dependencies -Project "backend"
+Ensure-Dependencies -Project "frontend"
 
 # ============================================================================
 # Build backend
 # ============================================================================
 
-if (!$Dev -and ($Rebuild -or !(Test-Path $BackendBuild))) {
+$BackendBuildInfo = Join-Path $Backend "dist\tsconfig.build.tsbuildinfo"
+$BackendBuildTime = if (Test-Path -LiteralPath $BackendBuildInfo) {
+    (Get-Item -LiteralPath $BackendBuildInfo).LastWriteTimeUtc
+}
+else {
+    [DateTime]::MinValue
+}
+$BackendSourceChanged = Get-ChildItem (Join-Path $Backend "src") -Recurse -File -Filter "*.ts" |
+    Where-Object { $_.Name -notlike "*.spec.ts" -and $_.LastWriteTimeUtc -gt $BackendBuildTime } |
+    Select-Object -First 1
+$BackendConfigChanged = Get-Item (Join-Path $Backend "tsconfig.json"),
+    (Join-Path $Backend "tsconfig.build.json"),
+    (Join-Path $Backend "package.json") |
+    Where-Object { $_.LastWriteTimeUtc -gt $BackendBuildTime } |
+    Select-Object -First 1
+
+if (!$Dev -and ($Rebuild -or !(Test-Path $BackendBuild) -or $BackendSourceChanged -or $BackendConfigChanged)) {
 
     Say "building backend"
 
@@ -461,13 +548,25 @@ if (!$Dev -and ($Rebuild -or !(Test-Path $BackendBuild))) {
 # Build frontend
 # ============================================================================
 
-if (!$Dev -and ($Rebuild -or !(Test-Path $FrontendBuild))) {
+$FrontendBuildId = Join-Path $FrontendBuild "BUILD_ID"
+$FrontendBuildTime = if (Test-Path -LiteralPath $FrontendBuildId) {
+    (Get-Item -LiteralPath $FrontendBuildId).LastWriteTimeUtc
+}
+else {
+    [DateTime]::MinValue
+}
+$FrontendSourceChanged = Get-ChildItem (Join-Path $Frontend "src") -Recurse -File |
+    Where-Object { $_.LastWriteTimeUtc -gt $FrontendBuildTime } |
+    Select-Object -First 1
+$FrontendConfigChanged = Get-Item (Join-Path $Frontend "next.config.mjs"),
+    (Join-Path $Frontend "package.json"),
+    (Join-Path $Frontend "tsconfig.json") |
+    Where-Object { $_.LastWriteTimeUtc -gt $FrontendBuildTime } |
+    Select-Object -First 1
+
+if (!$Dev -and ($Rebuild -or !(Test-Path -LiteralPath $FrontendBuildId) -or $FrontendSourceChanged -or $FrontendConfigChanged)) {
 
     Say "building frontend"
-
-    if ($Rebuild -and (Test-Path $FrontendBuild)) {
-        Remove-Item $FrontendBuild -Recurse -Force
-    }
 
     Push-Location $Frontend
 
@@ -522,9 +621,15 @@ function Format-AiTokenCount([object]$Value) {
     return "{0:N0}" -f [long]$Value
 }
 
-function Format-AiCost([object]$Value) {
+function Format-AiCost([object]$Value, [object]$UsageAvailable, [object]$PricingConfigured) {
+    if ($UsageAvailable -eq $false) {
+        return "token usage unavailable"
+    }
     if ($null -eq $Value) {
-        return "pricing not configured"
+        if ($PricingConfigured -eq $false) {
+            return "pricing not configured"
+        }
+        return "cost unavailable"
     }
     return '$' + ("{0:F6}" -f [double]$Value)
 }
@@ -599,15 +704,15 @@ function Show-NewAiUsageSummaries {
             "  Resume only:        {0} input + {1} output = {2}" -f `
                 (Format-AiTokenCount $Entry.resume_input_tokens), `
                 (Format-AiTokenCount $Entry.resume_output_tokens), `
-                (Format-AiCost $Entry.resume_estimated_total_cost_usd)
+                (Format-AiCost $Entry.resume_estimated_total_cost_usd $Entry.resume_usage_available $Entry.resume_pricing_rates_configured)
         )
         Write-Host (
             "  Initial application: {0} input + {1} output = {2}" -f `
                 (Format-AiTokenCount $Entry.application_input_tokens), `
                 (Format-AiTokenCount $Entry.application_output_tokens), `
-                (Format-AiCost $Entry.application_estimated_total_cost_usd)
+                (Format-AiCost $Entry.application_estimated_total_cost_usd $Entry.application_usage_available $Entry.application_pricing_rates_configured)
         ) -ForegroundColor Green
-        Write-Host "  Application ID:     $($Entry.application_id)"
+        Write-Host "  Draft ID:           $($Entry.draft_id)"
         Write-Host "  Application total includes eligibility + resume; later answers are separate."
         Write-Host ""
     }
@@ -673,7 +778,7 @@ Say "waiting for application"
 
 $LocalHealthy = $false
 
-for ($i = 1; $i -le 60; $i++) {
+for ($i = 1; $i -le 120; $i++) {
 
     if ($BackendProcess.HasExited) {
         Write-Host ""
@@ -722,7 +827,7 @@ for ($i = 1; $i -le 60; $i++) {
         # Still starting.
     }
 
-    Write-Host "Waiting... $i/60"
+    Write-Host "Waiting... $i/120"
     Start-Sleep -Seconds 1
 }
 
@@ -745,7 +850,7 @@ if (!$LocalHealthy) {
         Get-Content $FrontendErr -Tail 40
     }
 
-    Die "application did not become ready within 60 seconds."
+    Die "application did not become ready within 120 seconds."
 }
 
 if ($NoCloudflare) {
@@ -759,17 +864,33 @@ else {
 
 Say "opening Cloudflare tunnel"
 
-$CloudflareProcess = Start-Process `
-    -FilePath "cloudflared.exe" `
-    -ArgumentList "tunnel --url $FrontendUrl --no-autoupdate" `
-    -WorkingDirectory $Root `
-    -WindowStyle Hidden `
-    -RedirectStandardOutput $CloudflareOut `
-    -RedirectStandardError $CloudflareErr `
-    -PassThru
+try {
+    $CloudflareProcess = Start-Process `
+        -FilePath "cloudflared.exe" `
+        -ArgumentList "tunnel --url $FrontendUrl --no-autoupdate" `
+        -WorkingDirectory $Root `
+        -WindowStyle Hidden `
+        -RedirectStandardOutput $CloudflareOut `
+        -RedirectStandardError $CloudflareErr `
+        -PassThru
+    $Processes += $CloudflareProcess
+    if ($ProcessJobCreated) {
+        [BidTrackerProcessJob]::AddProcess($CloudflareProcess.Handle)
+    }
+}
+catch {
+    Write-Host "Cloudflare could not start: $($_.Exception.Message)" -ForegroundColor Yellow
+    Write-Host "Continuing in local mode." -ForegroundColor Yellow
+    if ($null -ne $CloudflareProcess -and !$CloudflareProcess.HasExited) {
+        Stop-ProcessTree $CloudflareProcess.Id
+    }
+    $CloudflareProcess = $null
+    $NoCloudflare = $true
+    $Public = $FrontendUrl
+    $Reachable = $true
+}
 
-[BidTrackerProcessJob]::AddProcess($CloudflareProcess.Handle)
-$Processes += $CloudflareProcess
+if (!$NoCloudflare) {
 
 Write-Host "Cloudflare PID: $($CloudflareProcess.Id)"
 
@@ -804,7 +925,12 @@ for ($i = 1; $i -le 40; $i++) {
             Get-Content $CloudflareErr -Tail 50
         }
 
-        Die "Cloudflare tunnel failed to start."
+        Write-Host "Continuing in local mode." -ForegroundColor Yellow
+        $CloudflareProcess = $null
+        $NoCloudflare = $true
+        $Public = $FrontendUrl
+        $Reachable = $true
+        break
     }
 
     $Output = ""
@@ -843,13 +969,21 @@ if (!$Public) {
         Get-Content $CloudflareErr
     }
 
-    Die "Cloudflare tunnel did not provide a public URL."
+    Write-Host "Continuing in local mode." -ForegroundColor Yellow
+    if ($null -ne $CloudflareProcess -and !$CloudflareProcess.HasExited) {
+        Stop-ProcessTree $CloudflareProcess.Id
+    }
+    $CloudflareProcess = $null
+    $NoCloudflare = $true
+    $Public = $FrontendUrl
+    $Reachable = $true
 }
 
 # ============================================================================
 # Verify public URL
 # ============================================================================
 
+if (!$NoCloudflare) {
 Say "checking public URL"
 
 $Reachable = $false
@@ -879,6 +1013,18 @@ for ($i = 1; $i -le 30; $i++) {
     }
 
     Start-Sleep -Seconds 2
+}
+if (!$Reachable) {
+    Write-Host "Cloudflare URL did not become reachable; continuing in local mode." -ForegroundColor Yellow
+    if ($null -ne $CloudflareProcess -and !$CloudflareProcess.HasExited) {
+        Stop-ProcessTree $CloudflareProcess.Id
+    }
+    $CloudflareProcess = $null
+    $NoCloudflare = $true
+    $Public = $FrontendUrl
+    $Reachable = $true
+}
+}
 }
 }
 
@@ -930,7 +1076,12 @@ else {
     Write-Host "  The URL changes when you run the script again."
 }
 Write-Host ""
-Write-Host "  Press Ctrl+C or close this terminal to stop everything."
+if ($ProcessJobCreated) {
+    Write-Host "  Press Ctrl+C or close this terminal to stop everything."
+}
+else {
+    Write-Host "  Press Ctrl+C to stop everything."
+}
 Write-Host ""
 Write-Host "============================================================" -ForegroundColor Green
 Write-Host ""
@@ -963,8 +1114,9 @@ try {
 
         if ($null -ne $CloudflareProcess -and $CloudflareProcess.HasExited) {
             Write-Host ""
-            Write-Host "WARNING: Cloudflare tunnel has stopped." -ForegroundColor Yellow
-            break
+            Write-Host "Cloudflare tunnel stopped. The app is still available at $FrontendUrl" -ForegroundColor Yellow
+            $CloudflareProcess = $null
+            $NoCloudflare = $true
         }
     }
 }

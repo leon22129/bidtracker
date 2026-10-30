@@ -62,11 +62,14 @@ No managed services, no paid dependencies, runs on the smallest VPS you can rent
 
 ### Windows quick start
 
+Install Node.js 20.19.4 or newer and PostgreSQL 16 first. The launcher installs
+backend and frontend npm dependencies when they are missing.
+
 ```powershell
 Copy-Item .env.example backend/.env
 # Start PostgreSQL 16 as a local service, then edit backend/.env.
 cd backend
-npm install
+npm ci
 npx prisma migrate deploy
 cd ..
 .\start.ps1 --no-cloudflare
@@ -75,8 +78,9 @@ cd ..
 Open [http://localhost:3000](http://localhost:3000) and sign in with `DEFAULT_ADMIN_EMAIL` /
 `DEFAULT_ADMIN_PASSWORD`. Change the password immediately from **Account**.
 
-On Windows, `start.ps1` starts the local services and a temporary Cloudflare Quick Tunnel by
-default. To run without Cloudflare, use:
+On Windows, `start.ps1` starts the local services and tries to open a temporary Cloudflare Quick
+Tunnel by default. If `cloudflared` is missing or the tunnel fails, the app stays available at
+`http://127.0.0.1:3000`. To skip the tunnel, use:
 
 ```powershell
 .\start.ps1 --no-cloudflare
@@ -91,7 +95,9 @@ no build step:
 ```
 
 Development mode is always local-only and does not start a Cloudflare tunnel.
-Stopping the script with Ctrl+C or closing its terminal also stops both development servers.
+Stopping the script with Ctrl+C stops both development servers. Closing its terminal also stops
+them when Windows permits the launcher to create a process job; otherwise the script prints a warning.
+The launcher reports occupied ports instead of stopping unrelated programs.
 The backend regenerates its Prisma client before compiling so schema updates are available to TypeScript.
 
 Use [http://127.0.0.1:3000](http://127.0.0.1:3000) for BidTracker and
