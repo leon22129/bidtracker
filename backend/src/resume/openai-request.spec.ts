@@ -1,15 +1,17 @@
 import { ApplicationGenerationService } from './resume.service';
+import { DEFAULT_RESUME_PROMPT } from '../ai/resume-prompt';
 
 describe('OpenAI request recovery', () => {
-  const originalApiKey = process.env.OPENAI_API_KEY;
+  const config = { provider: 'openai', model: 'gpt-6.1-sol', apiKey: 'test-key',
+    baseUrl: 'https://api.openai.com/v1', resumePrompt: DEFAULT_RESUME_PROMPT };
   let service: ApplicationGenerationService;
   let fetchMock: jest.SpyInstance;
 
   beforeEach(() => {
-    process.env.OPENAI_API_KEY = 'test-key';
+
     jest.useFakeTimers();
     service = new ApplicationGenerationService(
-      {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any,
+      {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any,
     );
     (service as any).logger = { log: jest.fn(), warn: jest.fn(), error: jest.fn() };
     fetchMock = jest.spyOn(globalThis, 'fetch');
@@ -18,23 +20,73 @@ describe('OpenAI request recovery', () => {
   afterEach(() => {
     jest.restoreAllMocks();
     jest.useRealTimers();
-    if (originalApiKey === undefined) delete process.env.OPENAI_API_KEY;
-    else process.env.OPENAI_API_KEY = originalApiKey;
+
+
   });
 
+  const generate = (prompt: string, options = {}) => (service as any).openAi(prompt, { config, ...options });
   const json = (data: unknown, status = 200, headers?: Record<string, string>) =>
     new Response(JSON.stringify(data), { status, headers });
   const request = (target: ApplicationGenerationService) =>
-    (target as any).openAiRequest('/conversations', { items: [] }, 'POST', 'conversation_create');
+    (target as any).openAiRequest('/conversations', { items: [] }, 'POST', 'conversation_create', config);
   const stream = (data: unknown, type: string) => new Response(
     `event: ${type}\ndata: ${JSON.stringify({ type, response: data })}\n\n`,
     { headers: { 'content-type': 'text/event-stream' } },
   );
 
+  it('routes DeepSeek generation with the saved model and its own key, including local question context', async () => {
+    fetchMock.mockResolvedValueOnce(stream({ status: 'completed', output_text: 'Answer' }, 'response.completed'));
+    await expect(generate('Why this role?', {
+      config: { provider: 'deepseek', model: 'deepseek-v4-pro', apiKey: 'deepseek-secret', baseUrl: 'https://api.deepseek.com' },
+      referenceContext: 'Candidate resume and job description',
+    })).resolves.toBe('Answer');
+    const [url, request] = fetchMock.mock.calls[0];
+    expect(url).toBe('https://api.deepseek.com/responses');
+    expect(request.headers.Authorization).toBe('Bearer deepseek-secret');
+    const body = JSON.parse(request.body);
+    expect(body.model).toBe('deepseek-v4-pro');
+    expect(body.input).toContain('Candidate resume and job description');
+    expect(body.reasoning.effort).toBe('high');
+    expect(body).not.toHaveProperty('conversation');
+    expect(body).not.toHaveProperty('store');
+  });
+
+  it('omits reasoning for non-reasoning OpenAI models', async () => {
+    fetchMock.mockResolvedValueOnce(stream({ status: 'completed', output_text: 'Resume' }, 'response.completed'));
+    await generate('Generate', {
+      config: { provider: 'openai', model: 'gpt-4.1', apiKey: 'saved-openai-key', baseUrl: 'https://api.openai.com/v1' },
+    });
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(body.model).toBe('gpt-4.1');
+    expect(body).not.toHaveProperty('reasoning');
+    expect(body.store).toBe(false);
+  });
+
+  it('uses a non-streaming request for o3-pro', async () => {
+    fetchMock.mockResolvedValueOnce(json({ output_text: 'Answer' }));
+    await generate('Generate', {
+      config: { provider: 'openai', model: 'o3-pro', apiKey: 'saved-key', baseUrl: 'https://api.openai.com/v1' },
+    });
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).not.toHaveProperty('stream');
+  });
+
+  it('redacts the configured credential from provider errors and logs', async () => {
+    fetchMock.mockResolvedValueOnce(json({ error: { message: 'Invalid key: test-key', code: 'invalid_api_key' } }, 401));
+    await expect(generate('Generate')).rejects.toThrow('Invalid key: [redacted]');
+    expect(JSON.stringify((service as any).logger.error.mock.calls)).not.toContain('test-key');
+  });
+
+  it('does not fall back to the OpenAI key when DeepSeek has no configured key', async () => {
+    await expect(generate('Generate', {
+      config: { provider: 'deepseek', model: 'deepseek-flash', apiKey: '', baseUrl: 'https://api.deepseek.com' },
+    })).rejects.toThrow('configure an API key');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it('recovers from an incomplete response by increasing the output budget', async () => {
     fetchMock.mockResolvedValueOnce(stream({ status: 'incomplete', incomplete_details: { reason: 'max_output_tokens' } }, 'response.incomplete'))
       .mockResolvedValueOnce(stream({ status: 'completed', output_text: '{"company_name":"Acme","job_title":"Engineer"}' }, 'response.completed'));
-    await expect((service as any).openAi('Extract metadata', { maxOutputTokens: 2048, reasoningEffort: 'low' }))
+    await expect(generate('Extract metadata', { maxOutputTokens: 2048, reasoningEffort: 'low' }))
       .resolves.toContain('Acme');
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(JSON.parse(fetchMock.mock.calls[1][1].body).max_output_tokens).toBe(4096);
@@ -44,13 +96,13 @@ describe('OpenAI request recovery', () => {
 
   it('reports an exhausted output limit without mislabeling it as a connection failure', async () => {
     fetchMock.mockImplementation(async () => stream({ status: 'incomplete', incomplete_details: { reason: 'max_output_tokens' } }, 'response.incomplete'));
-    await expect((service as any).openAi('Resume prompt')).rejects.toThrow('output limit');
+    await expect(generate('Resume prompt')).rejects.toThrow('output limit');
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it('does not replay a response that ended incomplete for another reason', async () => {
     fetchMock.mockResolvedValueOnce(stream({ status: 'incomplete', incomplete_details: { reason: 'content_filter' } }, 'response.incomplete'));
-    await expect((service as any).openAi('Resume prompt')).rejects.toThrow('could not complete');
+    await expect(generate('Resume prompt')).rejects.toThrow('could not complete');
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
@@ -58,7 +110,7 @@ describe('OpenAI request recovery', () => {
     fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ status: 'completed', output_text: 'Generated resume' }), {
       headers: { 'content-type': 'application/json' },
     }));
-    await expect((service as any).openAi('Resume prompt')).resolves.toBe('Generated resume');
+    await expect(generate('Resume prompt')).resolves.toBe('Generated resume');
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
@@ -67,7 +119,7 @@ describe('OpenAI request recovery', () => {
       controller.enqueue(new TextEncoder().encode('data: {"type":"response.completed","response":{"status":"completed","output_text":"Generated resume"}}\n\n'));
     } });
     fetchMock.mockResolvedValueOnce(new Response(body, { headers: { 'content-type': 'text/event-stream' } }));
-    await expect((service as any).openAi('Resume prompt')).resolves.toBe('Generated resume');
+    await expect(generate('Resume prompt')).resolves.toBe('Generated resume');
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
@@ -75,13 +127,13 @@ describe('OpenAI request recovery', () => {
     fetchMock.mockResolvedValueOnce(new Response('data: {"type":"error","code":"invalid_api_key","message":"Invalid provider credential"}\n\n', {
       headers: { 'content-type': 'text/event-stream' },
     }));
-    await expect((service as any).openAi('Resume prompt')).rejects.toThrow('Invalid provider credential');
+    await expect(generate('Resume prompt')).rejects.toThrow('Invalid provider credential');
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it('gives company extraction enough output space for reasoning and JSON', async () => {
     const openAi = jest.spyOn(service as any, 'openAi').mockResolvedValue('{"company_name":"Acme","job_title":"Engineer"}');
-    await expect((service as any).extractJobIdentity('Acme is hiring an engineer.')).resolves.toMatchObject({ company_name: 'Acme' });
+    await expect((service as any).extractJobIdentity('Acme is hiring an engineer.', config)).resolves.toMatchObject({ company_name: 'Acme' });
     expect(openAi).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ maxOutputTokens: 2048, reasoningEffort: 'low' }));
   });
 
@@ -165,7 +217,7 @@ describe('OpenAI request recovery', () => {
       status: 'completed', output_text: 'Generated resume',
     }, 'response.completed'));
 
-    const result = expect((service as any).openAi('Resume prompt')).resolves.toBe('Generated resume');
+    const result = expect(generate('Resume prompt')).resolves.toBe('Generated resume');
     await jest.advanceTimersByTimeAsync(10_000);
     await result;
     expect(fetchMock).toHaveBeenCalledTimes(2);
@@ -175,7 +227,7 @@ describe('OpenAI request recovery', () => {
     fetchMock.mockImplementation(async () => new Response('data: invalid-json\n\n', {
       headers: { 'content-type': 'text/event-stream' },
     }));
-    const result = expect((service as any).openAi('Resume prompt')).rejects.toThrow('unreadable response');
+    const result = expect(generate('Resume prompt')).rejects.toThrow('unreadable response');
     await jest.advanceTimersByTimeAsync(10000);
     await result;
     expect(fetchMock).toHaveBeenCalledTimes(3);
@@ -186,7 +238,7 @@ describe('OpenAI request recovery', () => {
     fetchMock.mockImplementation(async () => new Response('data: {"type":"response.created","response":{"id":"resp_partial"}}\n\n', {
       headers: { 'content-type': 'text/event-stream' },
     }));
-    const result = expect((service as any).openAi('Resume prompt')).rejects.toThrow('interrupted its response');
+    const result = expect(generate('Resume prompt')).rejects.toThrow('interrupted its response');
     await jest.advanceTimersByTimeAsync(10000);
     await result;
     expect(JSON.parse((service as any).logger.error.mock.calls[0][0]).failure_type).toBe('stream');

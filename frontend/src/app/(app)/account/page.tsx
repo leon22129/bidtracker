@@ -5,14 +5,9 @@ import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 import { isAdmin, roleLabel } from '@/lib/permissions';
 import { useToast } from '@/components/ui/toast';
+import { AiSettingsForm } from '@/components/ai-settings-form';
 
-/**
- * Account page — currently just "change my password".
- *
- * This closes the loop on the default-admin requirement: the bootstrapped admin signs in with the
- * env-var password and changes it here. The bootstrap only runs when zero admins exist, so a changed
- * password is never reverted by a server restart.
- */
+/** Personal account settings and administrator-managed integrations. */
 export default function AccountPage() {
   const { user } = useAuth();
   const toast = useToast();
@@ -30,7 +25,7 @@ export default function AccountPage() {
   const tooShort = next.length > 0 && next.length < 8;
 
   useEffect(() => {
-    if (!isAdmin(user)) return;
+    if (!user) return;
     void api.slackSettings()
       .then((settings) => {
         setWebhookConfigured(settings.webhook_configured);
@@ -61,7 +56,7 @@ export default function AccountPage() {
     setSlackBusy(true);
     try {
       const settings = await api.updateSlackSettings({
-        ...(slackWebhook.trim() ? { slack_webhook_url: slackWebhook.trim() } : {}),
+        ...(isAdmin(user) && slackWebhook.trim() ? { slack_webhook_url: slackWebhook.trim() } : {}),
         slack_user_id: slackUserId.trim() || null,
       });
       setWebhookConfigured(settings.webhook_configured);
@@ -92,7 +87,7 @@ export default function AccountPage() {
   if (!user) return null;
 
   return (
-    <main className="mx-auto max-w-lg px-4 py-6">
+    <main className="mx-auto max-w-2xl px-4 py-6">
       <h1 className="text-lg font-semibold">Account</h1>
 
       <dl className="card mt-4 divide-y divide-gray-100 p-4 text-xs">
@@ -113,16 +108,17 @@ export default function AccountPage() {
         Only an admin can change a username, email, or role — ask one if these are wrong.
       </p>
 
-      {isAdmin(user) && (
+      {isAdmin(user) && <AiSettingsForm />}
+
         <form onSubmit={saveSlack} className="card mt-5 space-y-3 p-4">
           <div>
             <h2 className="text-sm font-semibold">Slack notifications</h2>
             <p className="mt-1 text-2xs text-gray-500">
-              Receive a message for each new daily milestone of 10 applications you submit.
+              Your admin’s Slack channel receives each new daily milestone of 10 submitted applications. Add your Slack member ID to be mentioned by name and receive Slack alerts.
             </p>
           </div>
 
-          <div>
+          {isAdmin(user) && <div>
             <label className="label" htmlFor="slack-webhook">Slack Webhook URL</label>
             <input
               id="slack-webhook"
@@ -136,10 +132,10 @@ export default function AccountPage() {
               onChange={(event) => setSlackWebhook(event.target.value)}
             />
             <p className="mt-1 text-2xs text-gray-500">The saved URL is never displayed again.</p>
-          </div>
+          </div>}
 
           <div>
-            <label className="label" htmlFor="slack-user-id">Slack User ID</label>
+            <label className="label" htmlFor="slack-user-id">Slack member ID (optional)</label>
             <input
               id="slack-user-id"
               className="input"
@@ -149,12 +145,12 @@ export default function AccountPage() {
               maxLength={30}
             />
             <p className="mt-1 text-2xs text-gray-500">
-              Used for the real Slack mention in milestone messages.
+              In Slack, open your profile → More → Copy member ID. Leave blank to use your BidTracker username without a Slack mention.
             </p>
           </div>
 
           <div className="flex justify-end gap-2 pt-1">
-            {webhookConfigured && (
+            {isAdmin(user) && webhookConfigured && (
               <button
                 type="button"
                 className="btn-danger"
@@ -169,7 +165,6 @@ export default function AccountPage() {
             </button>
           </div>
         </form>
-      )}
 
       <form onSubmit={submit} className="card mt-5 space-y-3 p-4">
         <h2 className="text-sm font-semibold">Change password</h2>

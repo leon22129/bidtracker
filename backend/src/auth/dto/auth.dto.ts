@@ -1,4 +1,5 @@
 import { IsEmail, IsOptional, IsString, Matches, MaxLength, MinLength } from 'class-validator';
+import { Transform } from 'class-transformer';
 
 export class LoginDto {
   @IsEmail({}, { message: 'A valid email address is required' })
@@ -27,6 +28,7 @@ export class UpdateSlackSettingsDto {
   @MaxLength(500)
   slack_webhook_url?: string | null;
 
+  @Transform(({ value }) => typeof value === 'string' ? value.trim().toUpperCase() || null : value)
   @IsOptional()
   @IsString()
   @MaxLength(30)

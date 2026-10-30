@@ -108,6 +108,13 @@ function qs(params: Record<string, unknown>): string {
 }
 
 export const api = {
+  aiSettings: () => request<import('./ai-types').AiSettings>('/ai-settings'),
+  updateAiSettings: (data: {
+    provider: import('./ai-types').AiProvider; model: string; api_key?: string; remove_api_key?: boolean;
+  }) => request<import('./ai-types').AiSettings>('/ai-settings', { method: 'PATCH', body: JSON.stringify(data) }),
+  updateResumePrompt: (resume_prompt: string | null) => request<import('./ai-types').AiSettings>(
+    '/ai-settings/resume-prompt', { method: 'PATCH', body: JSON.stringify({ resume_prompt }) },
+  ),
   // ---- auth ----
   login: (email: string, password: string) =>
     request<{ access_token: string; user: User }>('/auth/login', {

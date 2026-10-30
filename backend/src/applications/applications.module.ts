@@ -9,8 +9,10 @@ import { SlackNotificationService } from './slack-notification.service';
 import { ApplicationScreenshotService } from './application-screenshot.service';
 import { ApplicationScreenshotCleanupService } from './application-screenshot-cleanup.service';
 import { ApplicationDraftService } from './application-draft.service';
+import { AiSettingsModule } from '../ai/ai-settings.module';
 
 @Module({
+  imports: [AiSettingsModule],
   controllers: [ApplicationsController],
   providers: [
     ApplicationsService, NumberingService, DuplicateService, BannedUrlService,

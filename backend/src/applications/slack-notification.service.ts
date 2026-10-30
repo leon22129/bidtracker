@@ -48,8 +48,7 @@ export class SlackNotificationService {
     if (
       !config ||
       !['admin', 'super_admin'].includes(config.role) ||
-      !config.slack_webhook_url ||
-      !config.slack_user_id
+      !config.slack_webhook_url
     ) return;
 
     const day = todayUtc();
@@ -108,8 +107,8 @@ export class SlackNotificationService {
       .map(([name, count]) => `${name}: ${count}`)
       .join(' • ');
     const bidderName = actor.username.replace(/[<>&]/g, '');
-    const bidderLabel = actor.id === config.id && /^[UW][A-Z0-9]+$/.test(config.slack_user_id)
-      ? `<@${config.slack_user_id}>`
+    const bidderLabel = actor.slack_user_id && /^[UW][A-Z0-9]+$/.test(actor.slack_user_id)
+      ? `<@${actor.slack_user_id}>`
       : `@${bidderName}`;
     const text = `${total} applications received today with ${bidderLabel}.` +
       (breakdownText ? `\n• ${breakdownText}` : '');

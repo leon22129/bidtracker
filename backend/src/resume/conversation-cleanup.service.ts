@@ -2,6 +2,7 @@ import { Injectable, Logger, ServiceUnavailableException } from '@nestjs/common'
 import { Cron } from '@nestjs/schedule';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { AiSettingsService } from '../ai/ai-settings.service';
 
 const OPENAI_API_BASE = 'https://api.openai.com/v1';
 const CLEANUP_LOCK_ID = 734927451012345679n;
@@ -16,7 +17,7 @@ function retentionDays() {
 export class ConversationCleanupService {
   private readonly logger = new Logger(ConversationCleanupService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService, private readonly aiSettings: AiSettingsService) {}
 
   /** Daily provider-side retention cleanup. Failed provider deletes remain in the DB for retry. */
   @Cron('30 3 * * *', { name: 'openai-conversation-retention', timeZone: 'UTC' })
@@ -36,7 +37,7 @@ export class ConversationCleanupService {
 
       const rows = await tx.resumeConversation.findMany({
         where: { updated_at: { lt: cutoff } },
-        select: { id: true, openai_conversation_id: true },
+        select: { id: true, openai_conversation_id: true, workspace_id: true, profile: { select: { workspace_id: true } } },
         orderBy: { updated_at: 'asc' },
         take: 50,
       });
@@ -60,7 +61,7 @@ export class ConversationCleanupService {
   private async deleteMatchingOrThrow(where: { workspace_id?: string; user_id?: string }) {
     const rows = await this.prisma.resumeConversation.findMany({
       where,
-      select: { id: true, openai_conversation_id: true },
+      select: { id: true, openai_conversation_id: true, workspace_id: true, profile: { select: { workspace_id: true } } },
     });
     if (!rows.length) return 0;
 
@@ -78,17 +79,13 @@ export class ConversationCleanupService {
   }
 
   private async deleteAtProvider(
-    rows: Array<{ id: string; openai_conversation_id: string }>,
+    rows: Array<{ id: string; openai_conversation_id: string; workspace_id: string | null; profile: { workspace_id: string } }>,
   ): Promise<string[]> {
-    const apiKey = process.env.OPENAI_API_KEY?.trim();
-    if (!apiKey) {
-      if (rows.length) this.logger.error('Cannot clean OpenAI conversations: OPENAI_API_KEY is missing');
-      return [];
-    }
-
     const results = await mapWithConcurrency(rows, PROVIDER_CONCURRENCY, async (row) => {
+      if (row.openai_conversation_id.startsWith('local_')) return row.id;
       try {
-        await this.purgeProviderConversation(row.openai_conversation_id, apiKey);
+        const config = await this.aiSettings.forWorkspace(row.workspace_id || row.profile.workspace_id, 'openai');
+        await this.purgeProviderConversation(row.openai_conversation_id, config.apiKey);
         return row.id;
       } catch (error) {
         this.logger.warn(

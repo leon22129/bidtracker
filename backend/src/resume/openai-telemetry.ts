@@ -45,19 +45,20 @@ function usd(tokens: number, usdPerMillionTokens: number | null): number | null 
 }
 
 /**
- * OpenAI returns token counts but not dollar costs. Rates are deliberately supplied through the
- * environment so model price changes do not silently make the logs inaccurate.
+ * Providers return token counts, not dollar costs. Admin-selected models supply catalog rates;
+ * legacy environment configuration retains its explicit environment pricing overrides.
  */
-export function openAiUsageFields(usage?: OpenAiUsage): Record<string, unknown> {
+export interface AiUsageRates { input: number | null; cached_input: number | null; output: number | null }
+export function openAiUsageFields(usage?: OpenAiUsage, rates?: AiUsageRates): Record<string, unknown> {
   if (!usage) return { usage_available: false };
 
   const inputTokens = usage.input_tokens ?? 0;
   const cachedInputTokens = Math.min(usage.input_tokens_details?.cached_tokens ?? 0, inputTokens);
   const uncachedInputTokens = inputTokens - cachedInputTokens;
   const outputTokens = usage.output_tokens ?? 0;
-  const inputRate = rate('OPENAI_INPUT_COST_PER_1M_TOKENS');
-  const cachedInputRate = rate('OPENAI_CACHED_INPUT_COST_PER_1M_TOKENS') ?? inputRate;
-  const outputRate = rate('OPENAI_OUTPUT_COST_PER_1M_TOKENS');
+  const inputRate = rates ? rates.input : rate('OPENAI_INPUT_COST_PER_1M_TOKENS');
+  const cachedInputRate = rates ? rates.cached_input : rate('OPENAI_CACHED_INPUT_COST_PER_1M_TOKENS') ?? inputRate;
+  const outputRate = rates ? rates.output : rate('OPENAI_OUTPUT_COST_PER_1M_TOKENS');
   const uncachedInputCost = usd(uncachedInputTokens, inputRate);
   const cachedInputCost = usd(cachedInputTokens, cachedInputRate);
   const outputCost = usd(outputTokens, outputRate);
@@ -88,8 +89,8 @@ export function openAiUsageFields(usage?: OpenAiUsage): Record<string, unknown> 
   };
 }
 
-export function prefixedOpenAiUsageFields(prefix: string, usage?: OpenAiUsage) {
+export function prefixedOpenAiUsageFields(prefix: string, usage?: OpenAiUsage, rates?: AiUsageRates) {
   return Object.fromEntries(
-    Object.entries(openAiUsageFields(usage)).map(([key, value]) => [`${prefix}_${key}`, value]),
+    Object.entries(openAiUsageFields(usage, rates)).map(([key, value]) => [`${prefix}_${key}`, value]),
   );
 }

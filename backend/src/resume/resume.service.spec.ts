@@ -1,5 +1,6 @@
 import { Logger } from '@nestjs/common';
 import { ApplicationGenerationService } from './resume.service';
+import { DEFAULT_RESUME_PROMPT, RESUME_OUTPUT_INSTRUCTIONS } from '../ai/resume-prompt';
 
 describe('ApplicationGenerationService application metadata eligibility', () => {
   const user = {
@@ -85,6 +86,10 @@ describe('ApplicationGenerationService application metadata eligibility', () => 
     };
     const bannedUrls = { matches: jest.fn().mockResolvedValue(false), matchesJob: jest.fn().mockResolvedValue(false) };
     const drafts = { prepare: jest.fn(async (_user, data) => ({ id: 'draft-1', ...data })) };
+    const aiSettings = { forWorkspace: jest.fn(async () => ({
+      provider: 'openai', model: 'gpt-6.1-sol', apiKey: 'test-key',
+      baseUrl: 'https://api.openai.com/v1', resumePrompt: DEFAULT_RESUME_PROMPT,
+    })) };
     const service = new ApplicationGenerationService(
       prisma as any,
       access as any,
@@ -93,13 +98,14 @@ describe('ApplicationGenerationService application metadata eligibility', () => 
       applications as any,
       {} as any,
       drafts as any,
+      aiSettings as any,
     );
     jest.spyOn(service as any, 'extractJobIdentity').mockResolvedValue({ company_name: 'Acme', job_title: 'Software Engineer' });
     jest.spyOn(service as any, 'createAnswerConversation').mockResolvedValue({
       id: 'conversation-1',
       openai_conversation_id: 'conv_openai_1',
     });
-    return { service, duplicates, prisma, access, applications, bannedUrls, drafts };
+    return { service, duplicates, prisma, access, applications, bannedUrls, drafts, aiSettings };
   }
 
   const eligible = (overrides: Record<string, unknown> = {}) => JSON.stringify({
@@ -120,9 +126,7 @@ describe('ApplicationGenerationService application metadata eligibility', () => 
     ...overrides,
   });
 
-  it('saves the prepared draft when conversation creation recovers from a 503', async () => {
-    const originalApiKey = process.env.OPENAI_API_KEY;
-    process.env.OPENAI_API_KEY = 'test-key';
+  it('saves question context locally without creating a provider conversation', async () => {
     jest.useFakeTimers();
     try {
       const { service, prisma, applications, drafts } = setup();
@@ -144,7 +148,11 @@ describe('ApplicationGenerationService application metadata eligibility', () => 
       });
       await jest.advanceTimersByTimeAsync(10_000);
       await result;
-      expect(provider).toHaveBeenCalledTimes(2);
+      expect(provider).not.toHaveBeenCalled();
+      expect(prisma.resumeConversation.create).toHaveBeenCalledWith({ data: expect.objectContaining({
+        openai_conversation_id: expect.stringMatching(/^local_/),
+        reference_context: expect.stringContaining('Final generated candidate resume:'),
+      }) });
       expect(openAi).toHaveBeenCalledTimes(2);
       expect(applications.createGenerated).not.toHaveBeenCalled();
       expect(drafts.prepare).toHaveBeenCalledWith(user, expect.objectContaining({
@@ -153,9 +161,26 @@ describe('ApplicationGenerationService application metadata eligibility', () => 
     } finally {
       jest.restoreAllMocks();
       jest.useRealTimers();
-      if (originalApiKey === undefined) delete process.env.OPENAI_API_KEY;
-      else process.env.OPENAI_API_KEY = originalApiKey;
     }
+  });
+
+  it('uses the owning admin\'s custom prompt and preserves the resume output contract', async () => {
+    const { service, aiSettings } = setup();
+    const config = await aiSettings.forWorkspace();
+    aiSettings.forWorkspace.mockResolvedValue({ ...config, resumePrompt:
+      'Write concise accomplishments.\n{{job_description}}\n{{career_milestones}}\n{{candidate_location}}\n{{candidate_info}}' });
+    const openAi = jest.spyOn(service as any, 'openAi')
+      .mockResolvedValueOnce(eligible())
+      .mockResolvedValueOnce(JSON.stringify({ summary: 'Custom resume', annual_salary: '$150,000', hourly_rate: '$72.12' }));
+    await expect(service.generate(user, dto)).resolves.toMatchObject({ success: true });
+    expect(aiSettings.forWorkspace).toHaveBeenLastCalledWith(dto.workspace_id);
+    expect(openAi).toHaveBeenLastCalledWith(expect.stringContaining('Write concise accomplishments.'),
+      expect.objectContaining({ operation: 'resume_generation', instructions: RESUME_OUTPUT_INSTRUCTIONS }));
+    const prompt = openAi.mock.calls[1][0] as string;
+    expect(prompt).toContain(dto.job_description);
+    expect(prompt).toContain('Chicago, IL');
+    expect(prompt).toContain('US work status: US Citizen');
+    expect(prompt).not.toContain('{{candidate_info}}');
   });
 
   it('blocks a banned URL before duplicate or eligibility checks without adding a row', async () => {
@@ -430,6 +455,24 @@ describe('ApplicationGenerationService application metadata eligibility', () => 
     }));
   });
 
+  it('uses the current workspace AI settings and saved reference context for local conversations', async () => {
+    const { service, prisma } = setup();
+    prisma.resumeConversation.findUnique.mockResolvedValue({
+      id: 'local-conversation', user_id: user.id, workspace_id: dto.workspace_id,
+      openai_conversation_id: 'local_uuid', reference_context: 'Saved resume and JD', profile_id: profile.id,
+    });
+    const config = { provider: 'deepseek', model: 'deepseek-v4-pro', apiKey: 'test-key', baseUrl: 'https://api.deepseek.com' };
+    (service as any).aiSettings.forWorkspace.mockResolvedValue(config);
+    const generate = jest.spyOn(service as any, 'openAi').mockResolvedValue(JSON.stringify({
+      answers: [{ question: 'Why this role?', answer: 'A good fit.' }],
+    }));
+    await service.answerQuestions(user, { conversation_id: 'local-conversation', questions: [{ question: 'Why this role?', options: [] }] });
+    const options = generate.mock.calls[0][1] as any;
+    expect(options).toMatchObject({ config, referenceContext: 'Saved resume and JD' });
+    expect(options).not.toHaveProperty('conversationId');
+    expect((service as any).aiSettings.forWorkspace).toHaveBeenCalledWith(dto.workspace_id);
+  });
+
   it('checks a scanned company ban before eligibility and leaves the application table untouched', async () => {
     const { service, bannedUrls, drafts, applications } = setup();
     (service as any).extractJobIdentity.mockRestore();
@@ -547,8 +590,8 @@ describe('ApplicationGenerationService application metadata eligibility', () => 
       { summary: 'Tailored summary' },
     );
 
-    const body = request.mock.calls[0][1] as any;
-    const context = body.items[0].content as string;
+    expect(request).not.toHaveBeenCalled();
+    const context = prisma.resumeConversation.create.mock.calls[0][0].data.reference_context as string;
     expect(context).toContain('Candidate info:');
     expect(context).toContain('US work status: US Citizen');
     expect(context).toContain('Require employment sponsorship now or later: No');

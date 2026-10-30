@@ -144,6 +144,30 @@ describe('SlackNotificationService', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it('mentions the bidder using their optional Slack ID even if the admin has no Slack ID', async () => {
+    const { service, prisma } = setup();
+    prisma.user.findUnique.mockResolvedValue({
+      id: 'bidder-1', username: 'bidder', role: 'bidder', slack_webhook_url: null,
+      slack_user_id: 'U987BIDDER',
+      creator: { id: 'admin-1', role: 'admin', slack_webhook_url: webhook, slack_user_id: null },
+    });
+    const fetchMock = jest.spyOn(global, 'fetch').mockResolvedValue({ ok: true } as Response);
+    await service.notifyApplicationCreated('bidder-1');
+    expect(fetchMock.mock.calls[0][0]).toBe(webhook);
+    expect(JSON.parse(fetchMock.mock.calls[0][1]?.body as string).text).toContain('<@U987BIDDER>');
+  });
+
+  it('still sends milestones when neither the bidder nor admin entered a Slack ID', async () => {
+    const { service, prisma } = setup();
+    prisma.user.findUnique.mockResolvedValue({
+      id: 'bidder-1', username: 'bidder', role: 'bidder', slack_webhook_url: null, slack_user_id: null,
+      creator: { id: 'admin-1', role: 'admin', slack_webhook_url: webhook, slack_user_id: null },
+    });
+    const fetchMock = jest.spyOn(global, 'fetch').mockResolvedValue({ ok: true } as Response);
+    await service.notifyApplicationCreated('bidder-1');
+    expect(JSON.parse(fetchMock.mock.calls[0][1]?.body as string).text).toContain('with @bidder.');
+  });
+
   it('contains Slack failures so application creation can still succeed', async () => {
     const { service } = setup();
     jest.spyOn(global, 'fetch').mockRejectedValue(new Error(`request to ${webhook} failed`));

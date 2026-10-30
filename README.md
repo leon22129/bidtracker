@@ -139,8 +139,42 @@ cd frontend && npm run typecheck && npm run build
 After building the backend, `cd backend && npm run test:company-cooldown` verifies simultaneous
 company submissions against PostgreSQL. It creates and removes an isolated schema for its fixtures.
 
-For resume-generation connection errors, run `cd backend && npm run check:ai` on the API server.
-It checks the configured OpenAI key and model access without generating text or displaying the key.
+For resume-generation connection errors, run `cd backend && npm run check:ai -- <admin-email-or-id>`
+on the API server after building. It checks that admin's saved key and model access without generating
+text or displaying the key. Each admin must configure **Account → AI generation**, choosing OpenAI or
+DeepSeek, compare model input/cached-input/output prices per million tokens, and save an API key.
+These settings apply to workspaces created by that admin, including generation by their bidders.
+Keys are encrypted on the server and never returned to the browser; each provider keeps its own key.
+Set a stable `AI_SETTINGS_ENCRYPTION_KEY` (32+ characters), or the server uses `JWT_SECRET`.
+Rotating that secret requires re-entering saved keys. Provider keys are never read from `.env` or other
+environment variables. Removing a saved key disables generation with that provider until the admin
+saves a replacement. No admin can use another admin's credentials.
+
+Admins can also edit **Account → Base resume generation prompt**. The editor starts with the original
+full prompt and applies saved changes to new resumes and cover letters for that admin's profiles.
+Keep `{{job_description}}`, `{{career_milestones}}`, `{{candidate_location}}`, and `{{candidate_info}}`
+so generation receives the correct inputs. Required resume fields and JSON formatting are enforced
+separately. **Restore original prompt**, followed by **Save prompt**, removes the customization.
+Prompt changes can be saved before configuring an API key and do not affect other admins.
+
+The catalog covers publicly available text generation families compatible with this workflow,
+including deprecated models still listed by the provider. Dated snapshots and duplicate aliases
+are omitted. Image/audio/embedding/moderation, restricted research, and shut-down models are
+excluded. Prices were verified on 2026-10-30 against [OpenAI](https://developers.openai.com/api/docs/pricing)
+and [DeepSeek](https://api-docs.deepseek.com/quick_start/pricing/); update `backend/src/ai/ai-catalog.ts`
+when prices or availability change. DeepSeek peak and off-peak prices are shown separately.
+Generation uses standard processing; the display is a reference, not a billing guarantee.
+
+Run `npm run prisma:deploy` in `backend` and rebuild/restart both services when installing this change.
+New application question context is stored locally, allowing provider/key changes between generation
+and follow-up questions. Existing remote OpenAI conversations require the owning admin's saved
+OpenAI key with access to the original OpenAI project, including for provider cleanup. Local context
+follows the same retention period.
+
+All users can optionally save their **Slack member ID** in Account. Milestone notifications use the
+creating admin's webhook and mention the bidder's own ID (`<@U…>`), so Slack resolves their display
+name and applies their notification preferences. Without an ID, the BidTracker username is used.
+Only admins can configure webhooks; an admin Slack member ID is no longer required to send messages.
 Rebuild and restart the API after backend changes so Resume Builder uses the updated code.
 
 The unit tests cover the policy functions in isolation. Two scripts cover what they cannot — that the
@@ -742,8 +776,7 @@ Full annotated list in [.env.example](.env.example). The ones worth knowing:
 | `OPENAI_CONVERSATION_RETENTION_DAYS`              | `90`                  | Deletes inactive provider items, conversations, and local mappings daily.               |
 | `DISABLE_CONVERSATION_CLEANUP`                    | `false`               | Disables provider conversation retention cleanup when explicitly required.             |
 | `ALLOW_BIDDER_PENDING_TO_REJECTED`                 | `false`               | Adds one extra transition beyond the spec's two.                                       |
-| `OPENAI_API_KEY`                                    | —                    | Server-only key used by `POST /api/applications/generate`; never send it to the browser. |
-| `OPENAI_MODEL`                                      | `gpt-6.1-sol`        | OpenAI Responses API model used for eligibility, resume, and answer generation.        |
+| `AI_SETTINGS_ENCRYPTION_KEY`                       | `JWT_SECRET`         | Stable server secret (32+ characters) that encrypts admins' saved provider keys.         |
 
 ### Logging and AI cost variables
 
@@ -754,12 +787,10 @@ Full annotated list in [.env.example](.env.example). The ones worth knowing:
 AI content is excluded by default because prompts and responses contain resumes and job
 descriptions. Set `AI_LOG_CONTENT=true` to include previews, bounded by
 `AI_LOG_CONTENT_MAX_CHARS` (default 2,000; hard maximum 10,000). Token usage, latency, model, and
-provider request IDs are logged regardless. Set `OPENAI_INPUT_COST_PER_1M_TOKENS`,
-`OPENAI_CACHED_INPUT_COST_PER_1M_TOKENS`, and `OPENAI_OUTPUT_COST_PER_1M_TOKENS` to the current
-rates for `OPENAI_MODEL` to add separate input/output and total estimated USD costs.
-The example configuration uses GPT-6.1 Sol Standard rates per million tokens: $2 input,
-$0.10 cached input, and $10 output for prompts up to 272K input tokens. Confirm current
-[OpenAI pricing](https://developers.openai.com/api/docs/models/gpt-6.1-sol) when changing models.
+provider request IDs are logged regardless. Input/output and total estimated USD costs use the
+selected model's rates from `backend/src/ai/ai-catalog.ts`. DeepSeek token usage is logged without a
+dollar estimate because its peak schedule excludes Chinese public holidays. Keep the catalog current
+with the providers' pricing pages; estimates may differ from invoices.
 For each successfully generated application, the launcher also prints a compact comparison of the
 resume-only usage and the combined eligibility-plus-resume usage. Later application-answer calls
 are logged separately and are not included in that initial generation total.
