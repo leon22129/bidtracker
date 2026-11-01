@@ -445,6 +445,88 @@ function Ensure-Dependencies([string]$Project) {
     }
 }
 
+function Test-PublicHealth {
+    param([string]$Url)
+
+    $Result = [pscustomobject]@{
+        Reachable = $false
+        DnsFailure = $false
+        Error = $null
+    }
+
+    try {
+        $Response = Invoke-WebRequest `
+            -Uri "$Url/api/health" `
+            -TimeoutSec 10 `
+            -UseBasicParsing `
+            -ErrorAction Stop
+
+        if ($Response.StatusCode -eq 200) {
+            try {
+                $Health = $Response.Content | ConvertFrom-Json -ErrorAction Stop
+                $Result.Reachable = $Health.ok -is [bool] -and $Health.ok -eq $true
+            }
+            catch {
+                # An HTML error page or malformed JSON is not a healthy API.
+            }
+        }
+        if (!$Result.Reachable) {
+            $Result.Error = "HTTP $($Response.StatusCode); expected a JSON health response with ok=true."
+        }
+    }
+    catch {
+        $Result.Error = $_.Exception.Message
+        $Exception = $_.Exception
+        while ($null -ne $Exception) {
+            if (($Exception -is [Net.WebException] -and
+                    $Exception.Status -eq [Net.WebExceptionStatus]::NameResolutionFailure) -or
+                ($Exception -is [Net.Sockets.SocketException] -and
+                    $Exception.SocketErrorCode -in @(
+                        [Net.Sockets.SocketError]::HostNotFound,
+                        [Net.Sockets.SocketError]::TryAgain,
+                        [Net.Sockets.SocketError]::NoData
+                    ))) {
+                $Result.DnsFailure = $true
+            }
+            $Exception = $Exception.InnerException
+        }
+    }
+
+    return $Result
+}
+
+function Wait-PublicHealth {
+    param(
+        [string]$Url,
+        $TunnelProcess,
+        [int]$Attempts = 30,
+        [int]$DelaySeconds = 2
+    )
+
+    for ($Attempt = 1; $Attempt -le $Attempts; $Attempt++) {
+        if ($TunnelProcess.HasExited) {
+            return [pscustomobject]@{
+                Reachable = $false
+                DnsFailure = $false
+                Error = "cloudflared exited with code $($TunnelProcess.ExitCode)."
+            }
+        }
+
+        $Result = Test-PublicHealth -Url $Url
+        if ($Result.Reachable) {
+            return $Result
+        }
+        if ($Attempt -eq 1 -or $Attempt % 5 -eq 0) {
+            Write-Host "Public health check $Attempt/${Attempts}: $($Result.Error)" -ForegroundColor Yellow
+        }
+        if ($Attempt -lt $Attempts) {
+            Start-Sleep -Seconds $DelaySeconds
+        }
+    }
+
+    return $Result
+}
+
 trap {
     Write-Host "Startup failed: $($_.Exception.Message)" -ForegroundColor Red
     Cleanup
@@ -985,44 +1067,33 @@ if (!$Public) {
 
 if (!$NoCloudflare) {
 Say "checking public URL"
+Write-Host "Cloudflare URL: $Public"
 
-$Reachable = $false
-
-# Quick Tunnel hostnames can take a little while to become reachable after
-# cloudflared prints the URL. Keep the local services alive while the edge settles.
-for ($i = 1; $i -le 30; $i++) {
-
-    try {
-
-        $HealthResponse = Invoke-WebRequest `
-            -Uri "$Public/api/health" `
-            -TimeoutSec 10 `
-            -UseBasicParsing `
-            -ErrorAction Stop
-
-        if (
-            $HealthResponse.StatusCode -eq 200 -and
-            $HealthResponse.Content -match '"ok"\s*:\s*true'
-        ) {
-            $Reachable = $true
-            break
+# A hostname lookup or HTTPS request from this PC can fail even while
+# cloudflared is connected. Keep the tunnel alive so other clients can use it
+# and so a delayed DNS record or recovering network has time to become ready.
+$PublicHealth = Wait-PublicHealth -Url $Public -TunnelProcess $CloudflareProcess
+$Reachable = $PublicHealth.Reachable
+if (!$Reachable) {
+    Write-Host "Public health check failed: $($PublicHealth.Error)" -ForegroundColor Yellow
+    if ($CloudflareProcess.HasExited) {
+        Write-Host "Cloudflare stopped; continuing in local mode." -ForegroundColor Yellow
+        $CloudflareProcess = $null
+        $NoCloudflare = $true
+        $Public = $FrontendUrl
+        $Reachable = $true
+    }
+    else {
+        Write-Host "Keeping the tunnel running; public access is not yet verified. Retrying every 30 seconds." -ForegroundColor Yellow
+        if ($PublicHealth.DnsFailure) {
+            Write-Host "This PC could not resolve the tunnel hostname. Try the URL from another network and compare DNS with:" -ForegroundColor Yellow
+            Write-Host "  Resolve-DnsName $(([Uri]$Public).DnsSafeHost) -Server 1.1.1.1"
+        }
+        Write-Host "Cloudflare logs: $CloudflareErr"
+        if (Test-Path -LiteralPath $CloudflareErr) {
+            Get-Content -LiteralPath $CloudflareErr -Tail 10
         }
     }
-    catch {
-        # Tunnel may still be connecting.
-    }
-
-    Start-Sleep -Seconds 2
-}
-if (!$Reachable) {
-    Write-Host "Cloudflare URL did not become reachable; continuing in local mode." -ForegroundColor Yellow
-    if ($null -ne $CloudflareProcess -and !$CloudflareProcess.HasExited) {
-        Stop-ProcessTree $CloudflareProcess.Id
-    }
-    $CloudflareProcess = $null
-    $NoCloudflare = $true
-    $Public = $FrontendUrl
-    $Reachable = $true
 }
 }
 }
@@ -1037,11 +1108,11 @@ if ($NoCloudflare) {
     $StatusColor = "Green"
 }
 elseif ($Reachable) {
-    $Status = "verified reachable from the internet"
+    $Status = "public /api/health verified from this PC"
     $StatusColor = "Green"
 }
 else {
-    $Status = "WARNING: public URL did not pass /api/health"
+    $Status = "tunnel running; public access unverified (retrying)"
     $StatusColor = "Yellow"
 }
 
@@ -1087,6 +1158,7 @@ Write-Host "============================================================" -Foreg
 Write-Host ""
 
 Initialize-AiUsageMonitor
+$NextPublicHealthCheck = [DateTime]::UtcNow.AddSeconds(30)
 
 # ============================================================================
 # Keep running
@@ -1117,6 +1189,16 @@ try {
             Write-Host "Cloudflare tunnel stopped. The app is still available at $FrontendUrl" -ForegroundColor Yellow
             $CloudflareProcess = $null
             $NoCloudflare = $true
+        }
+
+        if (!$NoCloudflare -and !$Reachable -and [DateTime]::UtcNow -ge $NextPublicHealthCheck) {
+            $PublicHealth = Test-PublicHealth -Url $Public
+            $Reachable = $PublicHealth.Reachable
+            $NextPublicHealthCheck = [DateTime]::UtcNow.AddSeconds(30)
+            if ($Reachable) {
+                Write-Host ""
+                Write-Host "Public /api/health now verified: $Public" -ForegroundColor Green
+            }
         }
     }
 }

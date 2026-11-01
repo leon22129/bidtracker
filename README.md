@@ -86,6 +86,13 @@ Tunnel by default. If `cloudflared` is missing or the tunnel fails, the app stay
 .\start.ps1 --no-cloudflare
 ```
 
+If the tunnel process is running but the public health check fails, the launcher keeps the tunnel
+and displays its URL with an **unverified** status. It shows the check's error and retries every
+30 seconds. A DNS lookup failure on this PC does not necessarily mean the tunnel is unavailable
+to other users. Try the URL from another network and compare the local DNS result with
+`Resolve-DnsName <tunnel-hostname> -Server 1.1.1.1`. If only the public resolver succeeds, check
+your network's DNS settings. Tunnel diagnostics are in `%TEMP%\bidtracker\cloudflared-err.log`.
+
 For development, run both the backend and frontend directly from source with automatic reloads and
 no build step:
 
