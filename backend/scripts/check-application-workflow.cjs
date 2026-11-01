@@ -6,14 +6,15 @@ const { spawnSync } = require('node:child_process');
 const { readFileSync } = require('node:fs');
 const { join } = require('node:path');
 const { PrismaClient } = require('@prisma/client');
-const { ApplicationsService } = require('../dist/applications/applications.service');
-const { ApplicationDraftService } = require('../dist/applications/application-draft.service');
-const { ApplicationGenerationService } = require('../dist/resume/resume.service');
-const { DuplicateService } = require('../dist/applications/duplicate.service');
-const { BannedUrlService } = require('../dist/applications/banned-url.service');
-const { NumberingService } = require('../dist/applications/numbering.service');
-const { WorkspaceAccessService } = require('../dist/workspaces/workspace-access.service');
-const { PaymentsService } = require('../dist/payments/payments.service');
+const build = join(__dirname, '..', process.env.WORKFLOW_CHECK_BUILD || 'dist');
+const { ApplicationsService } = require(join(build, 'applications/applications.service'));
+const { ApplicationDraftService } = require(join(build, 'applications/application-draft.service'));
+const { ApplicationGenerationService } = require(join(build, 'resume/resume.service'));
+const { DuplicateService } = require(join(build, 'applications/duplicate.service'));
+const { BannedUrlService } = require(join(build, 'applications/banned-url.service'));
+const { NumberingService } = require(join(build, 'applications/numbering.service'));
+const { WorkspaceAccessService } = require(join(build, 'workspaces/workspace-access.service'));
+const { PaymentsService } = require(join(build, 'payments/payments.service'));
 
 const schema = `application_workflow_test_${randomUUID().replaceAll('-', '')}`;
 const root = new PrismaClient();
@@ -48,7 +49,11 @@ async function main() {
   const numbering = new NumberingService(db);
   const applications = new ApplicationsService(db, access, numbering, duplicates, banned, { notifyApplicationCreated: async () => {} });
   const drafts = new ApplicationDraftService(db, access, applications, duplicates, banned, numbering);
-  const generation = new ApplicationGenerationService(db, access, duplicates, banned, applications, {}, drafts);
+  const { DEFAULT_RESUME_PROMPT } = require(join(build, 'ai/resume-prompt'));
+  // Provider calls are stubbed below; credential persistence has its own integration check.
+  const aiSettings = { forWorkspace: async () => ({ provider: 'openai', model: 'gpt-6.1-sol',
+    apiKey: 'workflow-fixture', baseUrl: 'https://api.openai.com/v1', resumePrompt: DEFAULT_RESUME_PROMPT }) };
+  const generation = new ApplicationGenerationService(db, access, duplicates, banned, applications, {}, drafts, aiSettings);
   const payments = new PaymentsService(db, access);
   const calls = [];
   generation.openAi = async (prompt, options) => {

@@ -4,6 +4,22 @@ import { AuthService } from './auth.service';
 describe('AuthService', () => {
   afterEach(() => jest.useRealTimers());
 
+  it('allows a bidder to save and clear their own optional Slack ID, but never edit a webhook', async () => {
+    const prisma = { user: {
+      findUnique: jest.fn().mockResolvedValue({ role: 'bidder', slack_webhook_url: null, slack_user_id: null }),
+      update: jest.fn().mockResolvedValue({ slack_webhook_url: null, slack_user_id: 'U123BIDDER' }),
+    }, jobApplication: { count: jest.fn() } };
+    const service = new AuthService(prisma as any, {} as any);
+    await expect(service.updateSlackSettings('bidder-1', { slack_user_id: 'U123BIDDER' })).resolves.toMatchObject({ slack_user_id: 'U123BIDDER' });
+    expect(prisma.user.update).toHaveBeenLastCalledWith(expect.objectContaining({
+      where: { id: 'bidder-1' }, data: { slack_user_id: 'U123BIDDER' },
+    }));
+    await service.updateSlackSettings('bidder-1', { slack_user_id: null });
+    expect(prisma.user.update).toHaveBeenLastCalledWith(expect.objectContaining({ data: { slack_user_id: null } }));
+    await expect(service.updateSlackSettings('bidder-1', { slack_webhook_url: null })).rejects.toThrow('Only admins');
+    expect(prisma.jobApplication.count).not.toHaveBeenCalled();
+  });
+
   it('blocks deactivated users before issuing a token', async () => {
     const prisma = {
       user: {

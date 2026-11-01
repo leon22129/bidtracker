@@ -5,6 +5,7 @@ import { ApplicationGenerationService } from '../resume/resume.service';
 import { WorkspaceAccessService } from './workspace-access.service';
 import { WorkspacesService } from './workspaces.service';
 import { ApplicationDraftService } from '../applications/application-draft.service';
+import { DEFAULT_RESUME_PROMPT } from '../ai/resume-prompt';
 
 describe('Archived profile write protection across services', () => {
   const user = {
@@ -80,6 +81,8 @@ describe('Archived profile write protection across services', () => {
     const generation = new ApplicationGenerationService(
       prisma as never, access, duplicates as never, bannedUrls as never, applications, workspaces,
       new ApplicationDraftService(prisma as never, access, applications, duplicates as never, bannedUrls as never, numbering as never),
+      { forWorkspace: jest.fn().mockResolvedValue({ provider: 'openai', model: 'gpt-6.1-sol',
+        apiKey: 'test-key', baseUrl: 'https://api.openai.com/v1', resumePrompt: DEFAULT_RESUME_PROMPT }) } as any,
     );
     jest.spyOn(generation as any, 'extractJobIdentity').mockResolvedValue({ company_name: 'Acme', job_title: 'Engineer' });
     const imports = new ImportService(

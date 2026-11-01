@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcryptjs';
 import { PrismaService } from '../prisma/prisma.service';
@@ -78,9 +78,13 @@ export class AuthService {
   async updateSlackSettings(userId: string, dto: UpdateSlackSettingsDto) {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
-      select: { slack_webhook_url: true, slack_user_id: true },
+      select: { role: true, slack_webhook_url: true, slack_user_id: true },
     });
     if (!user) throw new UnauthorizedException();
+
+    if (dto.slack_webhook_url !== undefined && !['admin', 'super_admin'].includes(user.role)) {
+      throw new ForbiddenException('Only admins can change the Slack webhook');
+    }
 
     const webhook = dto.slack_webhook_url === undefined
       ? undefined
@@ -95,9 +99,8 @@ export class AuthService {
 
     // Enabling notifications starts at the next milestone instead of sending old milestones late.
     const resultingWebhook = webhook === undefined ? user.slack_webhook_url : webhook;
-    const resultingSlackUserId = slackUserId === undefined ? user.slack_user_id : slackUserId;
-    const wasComplete = Boolean(user.slack_webhook_url && user.slack_user_id);
-    const willBeComplete = Boolean(resultingWebhook && resultingSlackUserId);
+    const wasComplete = Boolean(user.slack_webhook_url);
+    const willBeComplete = Boolean(resultingWebhook);
     if (!wasComplete && willBeComplete) {
       const day = todayUtc();
       const tomorrow = new Date(day.getTime() + 86_400_000);

@@ -19,6 +19,7 @@ datasource db {
 // User
 // ---------------------------------------------------------------------------
 model User {
+  aiSettings AiSettings?
   id                   String    @id @default(cuid())
   username             String    @unique
   email                String    @unique
@@ -141,9 +142,10 @@ model ResumeProfile {
   @@map("resume_profiles")
 }
 
-// Server-owned mapping to a compact OpenAI conversation used only for
-// application questions. The public id is this row's id, never the provider id.
+// Compact local context for application questions. Legacy rows retain their remote OpenAI id;
+// new rows use local_<uuid>. The public id is always this row's id.
 model ResumeConversation {
+  reference_context      String?
   id                     String   @id @default(cuid())
   openai_conversation_id String   @unique
   user_id                String
@@ -163,6 +165,19 @@ model ResumeConversation {
   @@index([updated_at])
   @@map("resume_conversations")
   draft ApplicationDraft?
+}
+
+model AiSettings {
+  resume_prompt String?
+  admin_id String @id
+  provider String @default("openai")
+  model String @default("gpt-6.1-sol")
+  openai_key String?
+  deepseek_key String?
+  updated_at DateTime @updatedAt
+  admin User @relation(fields: [admin_id], references: [id], onDelete: Cascade)
+
+  @@map("ai_settings")
 }
 
 // ---------------------------------------------------------------------------
