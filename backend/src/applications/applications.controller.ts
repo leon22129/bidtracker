@@ -22,6 +22,7 @@ import { ApplicationGenerationService } from '../resume/resume.service';
 import { GenerateApplicationDto } from '../resume/dto/generate.dto';
 import { ApplicationScreenshotService } from './application-screenshot.service';
 import { ApplicationDraftService } from './application-draft.service';
+import { RequireResumeBuilderVersion } from '../common/decorators/resume-builder-version.decorator';
 
 @Controller('applications')
 @UseGuards(RolesGuard)
@@ -64,12 +65,14 @@ export class ApplicationsController {
   }
 
   @Get('latest-generated')
+  @RequireResumeBuilderVersion()
   latestGenerated(@CurrentUser() user: AuthUser, @Query('workspace_id') workspaceId: string) {
     return this.applications.getLatestGenerated(user, workspaceId);
   }
 
   // Static routes must precede ':id' so they are not captured as an id.
   @Post('generated')
+  @RequireResumeBuilderVersion()
   createGenerated(
     @CurrentUser() user: AuthUser,
     @Body() dto: CreateGeneratedApplicationDto,
@@ -78,11 +81,13 @@ export class ApplicationsController {
   }
 
   @Get('drafts/latest')
+  @RequireResumeBuilderVersion()
   latestDraft(@CurrentUser() user: AuthUser, @Query('workspace_id') workspaceId: string) {
     return this.drafts.latest(user, workspaceId);
   }
 
   @Post('drafts/:draftId/submit')
+  @RequireResumeBuilderVersion()
   @UseInterceptors(FileInterceptor('screenshot', { limits: { fileSize: 5 * 1024 * 1024, files: 1 } }))
   submitDraft(@CurrentUser() user: AuthUser, @Param('draftId') draftId: string,
     @Body('submitted') submitted: string, @UploadedFile() file?: Express.Multer.File) {
@@ -91,6 +96,7 @@ export class ApplicationsController {
 
   /** Canonical application workflow endpoint. `/resume/generate` remains a compatibility alias. */
   @Post('generate')
+  @RequireResumeBuilderVersion()
   generate(@CurrentUser() user: AuthUser, @Body() dto: GenerateApplicationDto) {
     return this.generation.generate(user, dto);
   }
@@ -101,6 +107,7 @@ export class ApplicationsController {
   }
 
   @Post(':id/screenshot')
+  @RequireResumeBuilderVersion()
   @UseInterceptors(FileInterceptor('screenshot', {
     limits: { fileSize: 5 * 1024 * 1024, files: 1 },
   }))

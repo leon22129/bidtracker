@@ -6,6 +6,9 @@ const vm = require('node:vm');
 
 class Element {
   constructor(text = '') {
+    this.nodeType = 1;
+    this.tagName = 'DIV';
+    this.childNodes = [{ nodeType: 3, textContent: text }];
     this.hidden = false;
     this.innerText = text;
     this.textContent = text;
@@ -68,7 +71,7 @@ function loadContentScript({ pathname, hostname = 'thomsonreuters.wd5.myworkdayj
     DOMParser: class DOMParser {
       parseFromString(value) {
         const text = String(value).replace(/<[^>]*>/g, ' ');
-        return { body: { innerText: text, textContent: text } };
+        return { body: new Element(text) };
       }
     },
     CSS: { escape: (value) => value },

@@ -4,7 +4,9 @@ const path = require('node:path');
 const test = require('node:test');
 const vm = require('node:vm');
 
-class Element {}
+class Element {
+  getClientRects() { return [{}]; }
+}
 class Input extends Element {}
 class Textarea extends Element {}
 class Button extends Element {}
@@ -14,6 +16,7 @@ class Select extends Element {
   constructor(name, caption, optionValues, wrapperText) {
     super();
     this.id = '';
+    this.tagName = 'SELECT';
     this.name = name;
     this.caption = caption;
     this.options = optionValues.map((value) => ({ value, textContent: value, disabled: false }));
@@ -54,7 +57,8 @@ class Select extends Element {
   }
 }
 
-function loadContentScript() {
+function loadContentScript(fields = []) {
+  let onMessage;
   const context = {
     console,
     setTimeout,
@@ -83,12 +87,12 @@ function loadContentScript() {
       href: 'https://jobs.lever.co/bellese/job/apply',
     },
     document: {
-      querySelectorAll: () => [],
+      querySelectorAll: (selector) => selector.includes('textarea') ? fields : [],
       getElementById: () => null,
     },
     chrome: {
       runtime: {
-        onMessage: { addListener: () => {} },
+        onMessage: { addListener: (listener) => { onMessage = listener; } },
       },
     },
     getComputedStyle: () => ({ display: 'block', visibility: 'visible', opacity: '1' }),
@@ -96,13 +100,12 @@ function loadContentScript() {
   vm.createContext(context);
   const sourcePath = path.resolve(__dirname, '../src/renderer/public/content-script.js');
   const source = `${fs.readFileSync(sourcePath, 'utf8')}
-    globalThis.testApi = { fieldLabel, profileValueForField, fillField };`;
+    globalThis.testApi = { extractFields };`;
   vm.runInContext(source, context);
-  return context.testApi;
+  return { ...context.testApi, onMessage };
 }
 
-test('fills Lever Gender and Race selects from saved profile values', async () => {
-  const api = loadContentScript();
+test('scans Lever Gender and Race questions and choices without changing their values', () => {
   const gender = new Select(
     'eeo[gender]',
     'Gender',
@@ -121,26 +124,21 @@ test('fills Lever Gender and Race selects from saved profile values', async () =
     'Race Hispanic or Latino White (Not Hispanic or Latino) '
       + 'A person having origins in any of the original peoples of Europe, the Middle East, or North Africa.',
   );
-  const profile = { gender: 'Male', hispanicLatino: 'No', ethnicity: 'White' };
-
-  assert.equal(api.fieldLabel(gender), 'Gender');
-  assert.equal(api.fieldLabel(race), 'Race');
-
-  const genderAnswer = api.profileValueForField(gender, profile);
-  const raceAnswer = api.profileValueForField(race, profile);
-  assert.equal(genderAnswer, 'Male');
-  assert.equal(raceAnswer, 'White');
-
-  assert.equal(await api.fillField({ field: gender }, genderAnswer), true);
-  assert.equal(await api.fillField({ field: race }, raceAnswer), true);
-  assert.equal(gender.value, 'Male');
-  assert.equal(race.value, 'White (Not Hispanic or Latino)');
-  assert.deepEqual(gender.events, ['input', 'change', 'blur']);
-  assert.deepEqual(race.events, ['input', 'change', 'blur']);
+  gender.value = 'Decline to self-identify';
+  race.value = 'Decline to self-identify';
+  const api = loadContentScript([gender, race]);
+  const questions = api.extractFields();
+  assert.equal(questions.length, 2);
+  for (const [index, field] of [gender, race].entries()) {
+    assert.equal(questions[index].question, field.caption);
+    assert.equal(questions[index].sensitive, true);
+    assert.deepEqual(Array.from(questions[index].options), field.options.map((option) => option.value));
+    assert.equal(field.value, 'Decline to self-identify');
+    assert.deepEqual(field.events, []);
+  }
 });
 
-test('fills the negative option exposed by a Lever Veteran status select', async () => {
-  const api = loadContentScript();
+test('scans Lever Veteran status without selecting an answer', () => {
   const veteran = new Select(
     'eeo[veteran]',
     'Veteran status',
@@ -148,10 +146,30 @@ test('fills the negative option exposed by a Lever Veteran status select', async
     'Veteran status I am a veteran I am not a veteran Decline to self-identify',
   );
 
-  assert.equal(api.fieldLabel(veteran), 'Veteran status');
-  const answer = api.profileValueForField(veteran, {});
-  assert.equal(answer, 'I am not a veteran');
-  assert.equal(await api.fillField({ field: veteran }, answer), true);
-  assert.equal(veteran.value, 'I am not a veteran');
-  assert.deepEqual(veteran.events, ['input', 'change', 'blur']);
+  const api = loadContentScript([veteran]);
+  const [question] = api.extractFields();
+  assert.equal(question.question, 'Veteran status');
+  assert.equal(question.sensitive, true);
+  assert.deepEqual(Array.from(question.options), veteran.options.map((option) => option.value));
+  assert.equal(veteran.value, '');
+  assert.deepEqual(veteran.events, []);
+});
+
+test('ignores legacy fill messages without responding or changing application fields', () => {
+  const field = new Select('availability', 'Available to start immediately?', ['Yes', 'No'], 'Availability');
+  field.value = 'No';
+  const api = loadContentScript([field]);
+  let responded = false;
+  const result = api.onMessage({
+    type: 'RESUME_AI_FILL_ANSWERS',
+    answers: [{ question: field.caption, answer: 'Yes' }],
+    profile: { fullName: 'Example Candidate' },
+    coverLetterText: 'Example cover letter',
+    inputBoxesOnly: true,
+  }, {}, () => { responded = true; });
+
+  assert.equal(result, undefined);
+  assert.equal(responded, false);
+  assert.equal(field.value, 'No');
+  assert.deepEqual(field.events, []);
 });

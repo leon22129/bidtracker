@@ -1,6 +1,7 @@
 import { Briefcase, MapPin, UserRound } from "lucide-react";
 import type { ReactNode } from "react";
 import type { PersonalInfo } from "@/lib/parse-resume";
+import { getLinkedInProfile } from "@/lib/profile-utils";
 
 type Detail = readonly [label: string, value: string | undefined];
 
@@ -11,7 +12,7 @@ function DetailList({ items }: { items: Detail[] }) {
         const href = !value?.trim() ? null
           : label === "Email" ? `mailto:${value}`
           : label === "Phone" ? `tel:${value}`
-          : label === "LinkedIn" ? (/^https?:\/\//i.test(value) ? value : `https://${value}`)
+          : label === "LinkedIn" ? getLinkedInProfile(value)?.href
           : null;
         return (
           <div key={label} className="grid min-w-0 grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)] items-baseline gap-x-3 border-b border-border/40 py-0.5 md:block md:py-1">

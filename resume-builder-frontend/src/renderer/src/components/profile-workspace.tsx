@@ -38,8 +38,6 @@ import {
   Briefcase,
   Check,
   Pencil,
-  RefreshCw,
-  ClipboardCheck,
   Eye,
   History,
   MessagesSquare,
@@ -71,15 +69,12 @@ import {
   getResumeDetailsForProfile,
 } from "@/lib/profile-utils";
 import {
-  canScanCurrentPage,
   armApplicationScreenshot,
   chooseProfileDirectory,
-  fillCurrentPageAnswers,
   getCurrentBrowserTabUrl,
   getCurrentBrowserTabContext,
   getBrowserTabContext,
   openBrowserJobPage,
-  getCurrentPageContext,
   getProfileDownloadPaths,
   type PageQuestion,
 } from "@/lib/extension-storage";
@@ -210,16 +205,12 @@ export function ProfileWorkspace({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isGeneratingAnswers, setIsGeneratingAnswers] = useState(false);
-  const [isScanningPage, setIsScanningPage] = useState(false);
-  const [isFillingPage, setIsFillingPage] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
   const [isLoadingLastApplication, setIsLoadingLastApplication] = useState(false);
   const [isLinkingJob, setIsLinkingJob] = useState(false);
   const [error, setError] = useState("");
   const [applicationError, setApplicationError] = useState("");
-  const [pageScanMessage, setPageScanMessage] = useState("");
-  const [questionScanMessage, setQuestionScanMessage] = useState("");
-  const [pageFillMessage, setPageFillMessage] = useState("");
+  const isJobBusy = isGenerating || isGeneratingAnswers || isSubmitting || isLoadingLastApplication || isLinkingJob;
 
   // UI state
   const [previewOpen, setPreviewOpen] = useState(false);
@@ -292,7 +283,7 @@ export function ProfileWorkspace({
   };
 
   const handleLinkJobPage = async (openLinked = false) => {
-    if (isGenerating || isSubmitting || isScanningPage || isLinkingJob) return;
+    if (isJobBusy) return;
     setIsLinkingJob(true);
     setError("");
     try {
@@ -309,13 +300,13 @@ export function ProfileWorkspace({
   };
 
   const handleGenerate = async () => {
-    if (isSubmitting || isGenerating || isScanningPage || isLinkingJob || isLoadingLastApplication) return;
+    if (isJobBusy) return;
     if (!jobDescription.trim()) {
       setError("Please enter a job description");
       return;
     }
     if (!jobSource || jobSource.tabId === undefined) {
-      setError("Scan the job page or use Link current page to select the URL for this JD before generating.");
+      setError("Use Link current page to select the URL for this JD before generating.");
       return;
     }
     setError("");
@@ -332,7 +323,7 @@ export function ProfileWorkspace({
       const sourceTab = await getBrowserTabContext(jobSource.tabId);
       const tabUrl = jobSource.url;
       if (comparableJobUrl(sourceTab.url) !== comparableJobUrl(tabUrl)) {
-        throw new Error("The linked browser tab has changed to another page. Open linked job to return to this posting, or scan a different job.");
+        throw new Error("The linked browser tab has changed to another page. Open linked job to return to this posting, or paste a new JD and link its job page.");
       }
       const data = await window.aiProfiles.generate({
         profileId: profile.id,
@@ -487,7 +478,7 @@ export function ProfileWorkspace({
   };
 
   const handleLoadLastApplication = async () => {
-    if (!profile.workspaceId || isLoadingLastApplication || isSubmitting) return;
+    if (!profile.workspaceId || isJobBusy) return;
     setIsLoadingLastApplication(true);
     setError("");
     try {
@@ -581,82 +572,8 @@ export function ProfileWorkspace({
     }
   };
 
-  const handleScanPage = async (scope: "page" | "questions" = "page") => {
-    const questionsOnly = scope === "questions";
-    if (!canScanCurrentPage()) {
-      const message = "Page scanning is available in the Chrome extension. You can paste the content manually.";
-      if (questionsOnly) setQuestionScanMessage(message);
-      else setPageScanMessage(message);
-      return;
-    }
-    setIsScanningPage(true);
-    if (questionsOnly) setQuestionScanMessage("");
-    else setPageScanMessage("");
-    try {
-      const context = await getCurrentPageContext({ includeQuestions: questionsOnly });
-      const nonSensitiveQuestions = context.questions.filter((item) => !item.sensitive);
-      const safeQuestions = nonSensitiveQuestions.slice(0, 50);
-      const sensitiveCount = context.questions.length - nonSensitiveQuestions.length;
-      const omittedCount = nonSensitiveQuestions.length - safeQuestions.length;
-      const choiceCount = safeQuestions.filter((item) => item.options.length).length;
-
-      if (!questionsOnly) {
-        setJobDescription(context.jobDescription.trim());
-        setJobSource({ url: context.url, tabId: context.tabId, title: context.jobTitle || context.title });
-        setError("");
-      }
-      if (questionsOnly) {
-        setApplicationQuestions(safeQuestions.map(formatQuestionEditorLine).join("\n"));
-        setScannedQuestions(safeQuestions);
-        setApplicationAnswers([]);
-        setAnswersReadOnly(false);
-        setApplicationError("");
-        setPageFillMessage("");
-      }
-
-      const parts = [
-        ...(!questionsOnly ? [context.jobDescription.trim()
-          ? "Job description found"
-          : "No job description was identified; paste it manually"] : []),
-        ...(questionsOnly ? [safeQuestions.length
-          ? `${safeQuestions.length} application question${safeQuestions.length === 1 ? "" : "s"} found`
-          : "no application questions found on this page"] : []),
-      ];
-      if (questionsOnly && sensitiveCount) parts.push(`${sensitiveCount} sensitive field${sensitiveCount === 1 ? " was" : "s were"} excluded from AI and will use saved profile values when available`);
-      if (questionsOnly && choiceCount) parts.push(`allowed choices captured for ${choiceCount} question${choiceCount === 1 ? "" : "s"}`);
-      if (questionsOnly && omittedCount) parts.push(`${omittedCount} extra field${omittedCount === 1 ? " was" : "s were"} omitted from the 50-question limit`);
-      const message = `${parts.join("; ")}.`;
-      if (questionsOnly) setQuestionScanMessage(message);
-      else setPageScanMessage(message);
-    } catch (err) {
-      const message = getFriendlyErrorMessage(err, "This page could not be scanned. Enter the content manually.");
-      if (questionsOnly) setQuestionScanMessage(message);
-      else setPageScanMessage(message);
-    } finally {
-      setIsScanningPage(false);
-    }
-  };
-
-  const handleFillPage = async () => {
-    setIsFillingPage(true);
-    setPageFillMessage("");
-    try {
-      const result = await fillCurrentPageAnswers(applicationAnswers, personalInfo, coverLetterText ?? undefined);
-      const skipped = result.skipped
-        ? ` ${result.skipped} answer${result.skipped === 1 ? "" : "s"} could not be safely matched and must be entered manually.`
-        : "";
-      const skippedDetails = result.skippedQuestions.length
-        ? ` Skipped: ${result.skippedQuestions.slice(0, 5).join("; ")}.`
-        : "";
-      setPageFillMessage(`Filled ${result.filled} profile or answer field${result.filled === 1 ? "" : "s"}.${skipped}${skippedDetails} Review the page before continuing.`);
-    } catch (err) {
-      setPageFillMessage(getFriendlyErrorMessage(err, "The answers could not be filled on this page."));
-    } finally {
-      setIsFillingPage(false);
-    }
-  };
-
   const handleGenerateAnswers = async () => {
+    if (isJobBusy) return;
     if (!resumeData || !conversationId) {
       setApplicationError("Generate a resume before answering application questions.");
       return;
@@ -870,7 +787,7 @@ export function ProfileWorkspace({
         applicationId={preparedJob?.submittedAt ? null : preparedJob?.applicationId ?? null}
         companyName={preparedJob?.companyName}
         jobTitle={preparedJob?.jobTitle}
-        busy={isGenerating || isLoadingLastApplication}
+        busy={isJobBusy}
         onCapturingChange={setIsSubmitting}
         onSaved={(applicationId) => {
           setPreparedJob((current) => current?.applicationId === applicationId
@@ -895,7 +812,7 @@ export function ProfileWorkspace({
       <Button
         type="button"
         onClick={() => void handleLoadLastApplication()}
-        disabled={!profile.workspaceId || isLoadingLastApplication || isGenerating || isSubmitting}
+        disabled={!profile.workspaceId || isJobBusy}
         variant="secondary"
         className="group mb-5 h-auto min-h-14 w-full max-w-xl justify-start whitespace-normal border border-input px-4 py-3 text-left"
       >
@@ -929,7 +846,7 @@ export function ProfileWorkspace({
               Resume
             </span>
             <span className="hidden pl-8 text-xs font-normal text-muted-foreground sm:block">
-              Scan the job, generate files, and review the result
+              Paste the job description, generate files, and review the result
             </span>
           </TabsTrigger>
           <TabsTrigger
@@ -943,7 +860,7 @@ export function ProfileWorkspace({
               Questions
             </span>
             <span className="hidden pl-8 text-xs font-normal text-muted-foreground sm:block">
-              Scan questions, write answers, and fill the application
+              Enter questions, generate answers, and review them
             </span>
           </TabsTrigger>
         </TabsList>
@@ -958,7 +875,7 @@ export function ProfileWorkspace({
                 Job Description & Resume
               </CardTitle>
               <CardDescription className="mt-2">
-                Scan or paste a new JD. Generated jobs are saved separately and added to the table after submission and screenshot capture.
+                Paste a new JD. Generated jobs are saved separately and added to the table after submission and screenshot capture.
               </CardDescription>
             </div>
             <Tooltip>
@@ -1001,15 +918,15 @@ export function ProfileWorkspace({
               <p className="text-xs text-muted-foreground">Generate Resume uses this linked job, even when another browser tab is active.</p>
             </>
           ) : (
-            <p className="text-xs text-muted-foreground">Scan a job page to link its URL, or paste the JD and link its job page before generating.</p>
+            <p className="text-xs text-muted-foreground">Paste the JD and link its job page before generating.</p>
           )}
           <div className="flex flex-wrap gap-2">
-            <Button type="button" variant="outline" size="sm" disabled={isGenerating || isSubmitting || isScanningPage || isLinkingJob || isLoadingLastApplication}
+            <Button type="button" variant="outline" size="sm" disabled={isJobBusy}
               onClick={() => void handleLinkJobPage()}>
               <Link2 />{isLinkingJob ? "Linking…" : "Link current page"}
             </Button>
             {jobSource && (
-              <Button type="button" variant="outline" size="sm" disabled={isGenerating || isSubmitting || isScanningPage || isLinkingJob || isLoadingLastApplication}
+              <Button type="button" variant="outline" size="sm" disabled={isJobBusy}
                 onClick={() => void handleLinkJobPage(true)}>
                 <ExternalLink />Open linked job
               </Button>
@@ -1017,7 +934,7 @@ export function ProfileWorkspace({
           </div>
         </div>
         <Textarea
-          disabled={isGenerating || isSubmitting}
+          disabled={isJobBusy}
           placeholder={`Paste the job description here...
 
   Example:
@@ -1050,31 +967,6 @@ export function ProfileWorkspace({
           </details>
         )}
 
-        <div className="space-y-2">
-          <p className="text-sm font-semibold text-foreground">Job page actions</p>
-          <div className="max-w-xl">
-            <Button
-              type="button"
-              onClick={() => void handleScanPage("page")}
-              disabled={isScanningPage || isGenerating || isSubmitting || isLinkingJob || isLoadingLastApplication}
-              className="group h-auto min-h-14 w-full justify-start whitespace-normal px-4 py-3 text-left"
-            >
-              <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-white/15">
-                <RefreshCw className={isScanningPage ? "animate-spin" : ""} />
-              </span>
-              <span className="min-w-0">
-                <span className="block font-semibold">
-                  {isScanningPage ? "Scanning Current Page..." : "Scan Current Page"}
-                </span>
-                <span className="block text-xs font-normal text-primary-foreground group-disabled:text-current">
-                  Import the active job description
-                </span>
-              </span>
-            </Button>
-          </div>
-          {pageScanMessage && <p className="text-sm text-muted-foreground">{pageScanMessage}</p>}
-        </div>
-
         {error && (
           <Alert variant="destructive">
           <AlertCircle className="h-4 w-4" />
@@ -1084,7 +976,7 @@ export function ProfileWorkspace({
 
         <div className="space-y-3">
           <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap">
-            <Button disabled={isGenerating || isSubmitting || isScanningPage || isLinkingJob || isLoadingLastApplication || !jobDescription.trim() || jobSource?.tabId === undefined} onClick={() => void handleGenerate()}>
+            <Button disabled={isJobBusy || !jobDescription.trim() || jobSource?.tabId === undefined} onClick={() => void handleGenerate()}>
               {isGenerating ? "Generating..." : "Generate Resume"}
             </Button>
             <Button
@@ -1112,15 +1004,15 @@ export function ProfileWorkspace({
       <DashboardSection
         title="Application questions"
         description={preparedJob
-          ? `For ${preparedJob.companyName} · ${preparedJob.jobTitle}. Scan questions, generate answers, and review them before submitting.`
-          : "Scan each application page, write tailored answers, and fill its text fields."}
+          ? `For ${preparedJob.companyName} · ${preparedJob.jobTitle}. Paste questions one per line, generate answers, and review them before submitting.`
+          : "Paste application questions one per line, generate tailored answers, and copy them into the form manually."}
         icon={<MessagesSquare className="h-5 w-5" />}
       >
           {!resumeData && (
             <Alert>
               <AlertCircle className="h-4 w-4" />
               <AlertDescription>
-                You can scan questions now. Generate or load a resume in Step 1 before asking AI to write answers.
+                You can enter questions now. Generate or load a resume in Step 1 before asking AI to write answers.
               </AlertDescription>
             </Alert>
           )}
@@ -1139,7 +1031,7 @@ export function ProfileWorkspace({
               setApplicationQuestions(event.target.value);
               setApplicationError("");
             }}
-            disabled={isGenerating || isGeneratingAnswers}
+            disabled={isJobBusy}
           />
           {applicationError && (
             <Alert variant="destructive">
@@ -1149,34 +1041,14 @@ export function ProfileWorkspace({
           )}
           <div className="flex items-center gap-3 flex-wrap">
             <Button
-              type="button"
-              onClick={() => void handleScanPage("questions")}
-              disabled={isScanningPage || isGeneratingAnswers}
-              variant="outline"
-              className="min-h-10 px-4"
-            >
-              <RefreshCw className={isScanningPage ? "animate-spin" : ""} />
-              {isScanningPage ? "Scanning Questions..." : "Scan Questions"}
-            </Button>
-            <Button
               onClick={() => void handleGenerateAnswers()}
-              disabled={!resumeData || !conversationId || isGeneratingAnswers || isGenerating || isScanningPage}
+              disabled={!resumeData || !conversationId || isJobBusy}
               className="min-h-10 px-4"
             >
               <MessagesSquare />
               {isGeneratingAnswers ? "Writing Answers..." : "Generate Answers"}
             </Button>
-            <Button
-              type="button"
-              onClick={() => void handleFillPage()}
-              disabled={isFillingPage || isGeneratingAnswers}
-            >
-              <ClipboardCheck className="h-4 w-4 mr-2" />
-              {isFillingPage ? "Filling Text Boxes..." : "Fill Text Boxes"}
-            </Button>
           </div>
-          {questionScanMessage && <p className="text-sm text-muted-foreground">{questionScanMessage}</p>}
-          {pageFillMessage && <p className="text-sm text-muted-foreground">{pageFillMessage}</p>}
           {applicationAnswers.length > 0 && (
             <div className="space-y-4">
               {applicationAnswers.map((item, index) => (

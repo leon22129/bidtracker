@@ -15,6 +15,7 @@ function setup(local = {}, session = {}) {
   const captures = [];
   const uploads = [];
   const tabs = new Map([[7, { id: 7, windowId: 1 }], [8, { id: 8, windowId: 1 }]]);
+  let activeTabId = 7;
   local.resume_ai_access_token ??= 'test-token';
   local.resume_ai_api_url ??= 'https://api.example.com/api';
   const storage = (data) => ({
@@ -30,6 +31,7 @@ function setup(local = {}, session = {}) {
       action: { onClicked: { addListener() {} } },
       sidePanel: { setPanelBehavior() {}, open() {} },
       runtime: {
+        getManifest: () => require('../src/renderer/public/manifest.json'),
         onInstalled: { addListener() {} },
         onMessage: { addListener(callback) { listener = callback; } },
       },
@@ -39,7 +41,8 @@ function setup(local = {}, session = {}) {
           if (!tabs.has(id)) throw new Error('No tab with this ID');
           return tabs.get(id);
         },
-        update: async (id) => tabs.get(id),
+        update: async (id) => { activeTabId = id; return tabs.get(id); },
+        query: async ({ windowId }) => [...tabs.values()].filter((tab) => tab.id === activeTabId && tab.windowId === windowId),
         captureVisibleTab: async (windowId) => {
           captures.push(windowId);
           return 'data:image/png;base64,iVBORw0KGgo=';
@@ -65,7 +68,7 @@ function setup(local = {}, session = {}) {
   return {
     local, session, tabs, captures, uploads, send, arm,
     list: () => send({ type: 'GET_SCREENSHOT_APPLICATIONS' }),
-    capture: (applicationId, tabId = 7) => send({ type: 'CAPTURE_APPLICATION_SCREENSHOT', applicationId, tabId }),
+    capture: (applicationId, tabId = 7, confirmed = true) => send({ type: 'CAPTURE_APPLICATION_SCREENSHOT', applicationId, tabId, confirmed }),
     setUploadStatus: (value) => { uploadStatus = value; },
   };
 }
@@ -77,6 +80,16 @@ test('the stable button can load an application before any submission signal', a
   assert.equal(items.length, 1);
   assert.equal(items[0].companyName, 'Company one');
   assert.equal(items[0].submitted, false);
+});
+
+test('capture requires confirmation before taking or uploading a screenshot', async () => {
+  const app = setup();
+  await app.arm('one');
+  assert.deepEqual(await app.capture('one', 7, false), {
+    ok: false, error: 'Confirm that the application was submitted successfully first.',
+  });
+  assert.equal(app.captures.length, 0);
+  assert.equal(app.uploads.length, 0);
 });
 
 test('concurrent registrations retain multiple applications from the same tab', async () => {
@@ -107,17 +120,18 @@ test('older tab-keyed records migrate and recent applications remain for eight d
   assert.equal(app.local[key].expired, undefined);
 });
 
-test('capture uploads to the selected application and keeps saved status after reopening', async () => {
+test('capture uploads to the selected application and removes it from pending jobs after reopening', async () => {
   const app = setup();
   await app.arm('one');
   assert.equal((await app.capture('one')).ok, true);
   assert.equal(app.uploads[0].url, 'https://api.example.com/api/applications/one/screenshot');
   assert.equal(app.uploads[0].options.headers.Authorization, 'Bearer test-token');
   assert.ok(app.uploads[0].options.body.get('screenshot'));
-  assert.ok((await app.list()).items[0].capturedAt);
+  assert.deepEqual((await app.list()).items, []);
   const reopened = setup(app.local, app.session);
-  assert.ok((await reopened.list()).items[0].capturedAt);
-  assert.equal((await reopened.capture('one')).ok, true);
+  assert.deepEqual((await reopened.list()).items, []);
+  assert.equal((await reopened.capture('one')).ok, false);
+  assert.equal(reopened.uploads.length, 0);
 });
 
 test('failed uploads leave the application available for retry', async () => {
@@ -138,7 +152,7 @@ test('browser restart retains application choices but blocks capture using a sta
   assert.equal((await restarted.list()).items.length, 1);
   const result = await restarted.capture('one');
   assert.equal(result.ok, false);
-  assert.match(result.error, /Load Last Application/);
+  assert.match(result.error, /Load Last Job/);
   assert.equal(restarted.captures.length, 0);
   await restarted.arm('one', 8);
   assert.equal((await restarted.capture('one', 8)).ok, true);
@@ -150,8 +164,9 @@ test('a closed tab gives an actionable error and reloading the application rebin
   app.tabs.delete(7);
   assert.match((await app.capture('one')).error, /original application tab is closed/);
   await app.arm('one', 8);
-  assert.equal((await app.capture('one', 8)).ok, true);
   assert.equal((await app.list()).items.length, 1);
+  assert.equal((await app.capture('one', 8)).ok, true);
+  assert.equal((await app.list()).items.length, 0);
 });
 
 test('a mismatched application and tab cannot capture another page', async () => {

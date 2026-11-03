@@ -173,7 +173,10 @@ async function captureAndUpload(tabId, applicationId, confirmed, profileTabId) {
     : `/applications/${encodeURIComponent(applicationId)}/screenshot`;
   const response = await fetch(`${apiUrl}${endpoint}`, {
     method: "POST",
-    headers: { Authorization: `Bearer ${token}` },
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "X-Resume-Builder-Version": chrome.runtime.getManifest().version,
+    },
     body,
   });
   if (!response.ok) {

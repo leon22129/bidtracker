@@ -7,8 +7,10 @@ import {
 } from './dto/generate.dto';
 import { AuthUser, CurrentUser } from '../common/decorators/current-user.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
+import { RequireResumeBuilderVersion } from '../common/decorators/resume-builder-version.decorator';
 
 @Controller('resume')
+@RequireResumeBuilderVersion()
 @UseGuards(RolesGuard)
 export class ResumeController {
   constructor(private readonly generation: ApplicationGenerationService) {}

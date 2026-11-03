@@ -11,11 +11,26 @@ npm run dev
 
 Create an AI Profile, paste a job description, generate the resume, and download the PDF from the browser.
 
-## Job-page scanning and application answers
+## Job descriptions and application answers
 
-When installed as the Chrome extension, Resume Builder scans the active tab for JobPosting metadata and common job-description containers. If nothing reliable is found, paste or edit the job description manually.
+Paste or enter the job description manually. When installed as the Chrome extension, open the job posting and use **Link current page** to associate its URL with the description before generating a resume.
 
-The same scan collects visible application questions. Questions present during resume generation are sent with the resume request; later pages can be handled with **Scan Next Page** and the existing backend conversation. Review the generated answers, choose **Autofill Profile + Answers**, and verify the form before continuing. Contact and optional demographic fields use saved profile values rather than AI inference; veteran status uses the fixed non-veteran default. The extension never submits an application, and file uploads remain manual.
+Enter or paste application questions one per line, then use **Generate Answers** to write answers using the resume's existing backend conversation. Review the generated answers and copy them into the application form manually. Contact details and sensitive fields must also be entered manually. The extension generates documents and answers; entering form values, uploading files, and submitting applications are manual steps.
+
+## Required extension version
+
+The backend requires Resume Builder **0.9.2 or newer** by default. Every extension API
+request, including login and screenshot uploads, sends `X-Resume-Builder-Version`.
+Older, missing, or invalid versions receive HTTP 426 with an update-required message.
+Resume generation, answers, draft restoration/submission, profile settings, and screenshot
+uploads require this header even when the client sends no extension origin. Shared dashboard
+routes continue to support normal web requests.
+
+Set `RESUME_BUILDER_MIN_VERSION` on the backend and restart it to raise the minimum after
+distributing a new build. To release a version, update `package.json`, the root package entries
+in `package-lock.json`, and `src/renderer/public/manifest.json` together; the build checks that
+the package and manifest versions match. Run `npm run build`, distribute `dist-web`, and reload
+the extension in Chrome. Deploying the backend check is required to reject older installations.
 
 ## Submission screenshots
 

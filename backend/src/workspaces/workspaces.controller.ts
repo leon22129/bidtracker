@@ -6,6 +6,7 @@ import { CreateWorkspaceDto, UpdateWorkspaceDto } from './dto/workspace.dto';
 import { Roles } from '../common/decorators/roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { AuthUser, CurrentUser } from '../common/decorators/current-user.decorator';
+import { RequireResumeBuilderVersion } from '../common/decorators/resume-builder-version.decorator';
 
 @Controller('workspaces')
 @UseGuards(RolesGuard)
@@ -24,6 +25,7 @@ export class WorkspacesController {
   }
 
   @Patch('profiles/:profileId')
+  @RequireResumeBuilderVersion()
   updateProfile(
     @Param('profileId') profileId: string,
     @Body() dto: UpdateWorkspaceDto,

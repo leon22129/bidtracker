@@ -30,8 +30,15 @@ class UnauthorizedError extends Error {
 async function apiFetch(path: string, init: RequestInit = {}): Promise<Response> {
   const token = await authStorage.getToken()
   const headers = new Headers(init.headers)
+  headers.set("X-Resume-Builder-Version", __APP_VERSION__)
   if (token) headers.set("Authorization", `Bearer ${token}`)
   const response = await fetch(`${await getApiBaseUrl()}${path}`, { ...init, headers })
+  if (response.status === 426) {
+    const data = await response.json().catch(() => null) as { message?: string } | null
+    const message = data?.message || "Update Resume Builder to the latest version, then reload the extension in Chrome."
+    window.dispatchEvent(new CustomEvent("resume-ai-update-required", { detail: message }))
+    throw new Error(message)
+  }
   if (response.status === 401 && path !== "/auth/login") {
     await authStorage.clearToken()
     window.dispatchEvent(new CustomEvent("resume-ai-auth-invalid"))

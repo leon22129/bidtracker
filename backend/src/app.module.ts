@@ -11,6 +11,7 @@ import { PaymentsModule } from './payments/payments.module';
 import { AnalyticsModule } from './analytics/analytics.module';
 import { HealthController } from './health.controller';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
+import { ResumeBuilderVersionGuard } from './common/guards/resume-builder-version.guard';
 import { AdminBootstrapService } from './bootstrap/admin-bootstrap.service';
 import { ResumeModule } from './resume/resume.module';
 import { ConversationCleanupModule } from './resume/conversation-cleanup.module';
@@ -32,6 +33,7 @@ import { ConversationCleanupModule } from './resume/conversation-cleanup.module'
   controllers: [HealthController],
   providers: [
     AdminBootstrapService,
+    { provide: APP_GUARD, useClass: ResumeBuilderVersionGuard },
     // Deny by default: every route needs a valid JWT unless explicitly marked @Public().
     // Forgetting the decorator makes an endpoint private, which is the safe direction to fail.
     { provide: APP_GUARD, useClass: JwtAuthGuard },

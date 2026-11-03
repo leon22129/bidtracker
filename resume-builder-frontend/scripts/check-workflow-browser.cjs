@@ -24,7 +24,7 @@ async function connect(url) {
     const id = ++next; pending.set(id, { resolve, reject }); socket.send(JSON.stringify({ id, method, params }));
   }), close: () => socket.close() };
 }
-function fixture() {
+function fixture(extensionVersion) {
   const previous = JSON.parse(sessionStorage.getItem('workflow-fixture') || 'null');
   if (!previous) localStorage.clear();
   const state = window.workflowTest = previous?.state || { requests: [], tableRows: 0, answers: [], pending: {}, errors: [], failNextUpload: true, uploadWaiting: false, browserTabId: 73, added: [], captures: [], latestDraft: 'd1' };
@@ -34,7 +34,6 @@ function fixture() {
   ];
   state.browserTabs ||= Object.fromEntries(jobs.map((job) => [job.browserTabId, job.url]));
   state.nextBrowserTabId ||= 75;
-  if (!previous) state.switchBrowserAfterScan = true;
   const jd = (job) => `Job Information\nTitle: Engineer\nCompany: ${job.company}\n\nJob Description\nRemote US role for an engineer.`;
   const personal = { fullName: 'Test Candidate', title: 'Engineer', email: 'candidate@example.test', location: 'Chicago, IL' };
   const rawResume = (job) => ({ summary: `${job.company} summary`, skills: ['TypeScript'], workexperience: [], annual_salary: job.salary, hourly_rate: '$72.12', rate_in_jd: false });
@@ -57,7 +56,7 @@ function fixture() {
       remove: async (key) => { delete store[key]; },
     }, session: { get: async () => sessions, set: async (items) => Object.assign(sessions, items) },
     onChanged: { addListener: (fn) => storageListeners.push(fn), removeListener: (fn) => { const index = storageListeners.indexOf(fn); if (index >= 0) storageListeners.splice(index, 1); } } },
-    runtime: { onInstalled: { addListener() {} }, onMessage: { addListener: (fn) => messageListeners.push(fn) },
+    runtime: { getManifest: () => ({ version: extensionVersion }), onInstalled: { addListener() {} }, onMessage: { addListener: (fn) => messageListeners.push(fn) },
       sendMessage: (message) => new Promise((resolve, reject) => { try { messageListeners[0](message, {}, resolve); } catch (error) { reject(error); } }),
     },
     tabs: { query: async () => [{ id: state.browserTabId, windowId: 1, url: state.browserTabs[state.browserTabId] }],
@@ -66,7 +65,6 @@ function fixture() {
       create: async ({ url }) => { const id = state.nextBrowserTabId++; state.browserTabs[id] = url; state.browserTabId = id; return { id, url }; },
       captureVisibleTab: async () => { state.captures.push(state.browserTabId); return 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII='; },
       sendMessage: async (id, message) => { const job = jobs.find((job) => job.url === state.browserTabs[id]);
-        if (state.switchBrowserAfterScan && message.type === 'RESUME_AI_EXTRACT_PAGE' && !message.includeQuestions) { state.browserTabId = 74; state.switchBrowserAfterScan = false; }
         return { url: job.url, title: 'Engineer', jobTitle: 'Engineer', jobDescription: jd(job), jobDescriptionSource: 'fixture', questions: message.includeQuestions ? [{ question: 'Why this role?', fieldType: 'text', options: [], sensitive: false }] : [] }; },
     }, webNavigation: { getAllFrames: async () => [{ frameId: 0 }] },
   };
@@ -75,6 +73,12 @@ function fixture() {
     if (!String(url).startsWith('https://workflow.test/api')) return originalFetch(url, init);
     const endpoint = String(url).slice('https://workflow.test/api'.length);
     state.requests.push(endpoint);
+    const suppliedVersion = new Headers(init?.headers).get('X-Resume-Builder-Version');
+    if (suppliedVersion !== extensionVersion) throw Error('Missing or incorrect extension version on ' + endpoint);
+    if (state.requireUpdate) return new Response(JSON.stringify({
+      code: 'RESUME_BUILDER_UPDATE_REQUIRED',
+      message: 'Update Resume Builder to version 0.9.3 or newer, then reload the extension in Chrome.',
+    }), { status: 426, headers: { 'Content-Type': 'application/json' } });
     const json = (body) => new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } });
     if (endpoint === '/auth/me') return json({ id: 'u1', username: 'Bidder', role: 'bidder', is_active: true });
     if (endpoint === '/workspaces/profiles/assigned') return json([{ id: 'p1', workspace_id: 'w1', name: 'Candidate', personal_info: personal, education: [], certifications: [], auto_download: false }]);
@@ -86,7 +90,15 @@ function fixture() {
       state.latestDraft = job.id;
       return json({ success: true, eligible: true, draft: { id: job.id, url: job.url, company_name: job.company, job_title: 'Engineer' }, resume: rawResume(job), conversation_id: job.id + '-conversation', job_description: updated(job) });
     }
-    if (endpoint === '/resume/answers') { state.answers = [{ question: 'Why this role?', answer: 'It fits my experience.' }]; return json({ answers: state.answers }); }
+    if (endpoint === '/resume/answers') {
+      if (state.holdAnswers) {
+        state.answersWaiting = true;
+        await new Promise((resolve) => { state.releaseAnswers = resolve; });
+        state.answersWaiting = false;
+      }
+      state.answers = [{ question: 'Why this role?', answer: 'It fits my experience.' }];
+      return json({ answers: state.answers });
+    }
     if (endpoint.startsWith('/applications/drafts/latest')) {
       const job = jobs.find((job) => job.id === state.latestDraft);
       return json({ id: job.id, draft_id: job.id, submitted_at: state.added.includes(job.id) ? new Date().toISOString() : null, url: job.url, company_name: job.company, job_title: 'Engineer', resume: snapshot(job), template: 'classic', job_description: updated(job), conversation_id: job.id + '-conversation', questions: state.answers.map((answer) => ({ question: answer.question, options: [] })), answers: state.answers });
@@ -127,7 +139,8 @@ function fixture() {
     await page.send('Runtime.enable');
     await page.send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false });
     const worker = fs.readFileSync('resume-builder-frontend/src/renderer/public/background.js', 'utf8');
-    await page.send('Page.addScriptToEvaluateOnNewDocument', { source: `(${fixture.toString()})();\n(function(){${worker}\n})();` });
+    const extensionVersion = require('../package.json').version;
+    await page.send('Page.addScriptToEvaluateOnNewDocument', { source: `(${fixture.toString()})(${JSON.stringify(extensionVersion)});\n(function(){${worker}\n})();` });
     await page.send('Page.navigate', { url: 'http://127.0.0.1:5173' });
     const evaluate = async (expression) => {
       const result = await page.send('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true });
@@ -161,8 +174,13 @@ function fixture() {
     assert.deepEqual(await evaluate("chrome.runtime.sendMessage({ type: 'GET_SCREENSHOT_APPLICATIONS' }).then(result => result.items)"), []);
     assert.equal(await evaluate("document.querySelector('select[aria-label=\"Application to screenshot\"]')"), null);
     const firstTabId = await evaluate("activeProfileWorkspace.dataset.profileTabId");
-    await click('Scan Current Page');
+    const firstJd = await evaluate("chrome.tabs.sendMessage(73, {}).then(context => context.jobDescription)");
+    await evaluate("activeProfileWorkspace.querySelector('textarea').focus()");
+    await page.send('Input.insertText', { text: firstJd });
     await waitFor("activeProfileWorkspace.querySelector('textarea').value.includes('Company: Acme')");
+    await click('Link current page');
+    await waitFor("activeProfileWorkspace.querySelector('[data-job-source]').innerText.includes('https://jobs.example.test/123') && ![...activeProfileWorkspace.querySelectorAll('button')].find(el=>el.textContent.includes('Generate Resume')).disabled");
+    await evaluate('workflowTest.browserTabId = 74');
     assert.equal(await evaluate('workflowTest.browserTabId'), 74);
     assert.equal(await evaluate("activeProfileWorkspace.querySelector('[data-job-source]').innerText.includes('https://jobs.example.test/123')"), true);
     // The source page can change independently of the active tab; block before any backend request.
@@ -192,10 +210,39 @@ function fixture() {
     await evaluate("document.querySelector('[toast-close]')?.click()");
     await click('Questions');
     await waitFor("[...document.querySelectorAll('button')].some(el=>el.textContent.includes('Generate Answers'))");
-    await click('Scan Questions');
+    assert.equal(await evaluate("[...activeProfileWorkspace.querySelectorAll('button')].some(el => /autofill|fill text boxes|scan questions|extract questions/i.test(el.textContent))"), false);
+    await evaluate("activeProfileWorkspace.querySelector('textarea').focus()");
+    await page.send('Input.insertText', { text: 'Why this role?' });
     await waitFor("activeProfileWorkspace.querySelector('textarea').value === 'Why this role?'");
+    // Keep a valid JD ready so the generation button is blocked by the pending answer request.
+    await click('Resume');
+    await evaluate("activeProfileWorkspace.querySelector('textarea').focus(); workflowTest.browserTabId = 75");
+    await page.send('Input.insertText', { text: firstJd });
+    await click('Link current page');
+    await waitFor("![...activeProfileWorkspace.querySelectorAll('button')].find(el=>el.textContent.includes('Generate Resume')).disabled");
+    await evaluate("activeProfileWorkspace.querySelector('input[type=checkbox]').click()");
+    await waitFor("!activeProfileWorkspace.querySelector('[data-submission-screenshot] button').disabled");
+    await click('Questions');
+    await evaluate('workflowTest.holdAnswers = true');
     await click('Generate Answers');
+    await waitFor('workflowTest.answersWaiting');
+    assert.equal(await evaluate("[...activeProfileWorkspace.querySelectorAll('button')].find(el=>el.textContent.includes('Load Last Job')).disabled"), true);
+    assert.equal(await evaluate("activeProfileWorkspace.querySelector('[data-submission-screenshot] button').disabled"), true);
+    // The loading overlay blocks the mouse but does not prevent keyboard navigation.
+    await evaluate("[...activeProfileWorkspace.querySelectorAll('[role=tab]')].find(el=>el.textContent.includes('Resume')).focus()");
+    await page.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', code: 'Enter' });
+    await page.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', code: 'Enter' });
+    await waitFor("[...activeProfileWorkspace.querySelectorAll('button')].some(el=>el.textContent.includes('Generate Resume'))");
+    assert.equal(await evaluate("[...activeProfileWorkspace.querySelectorAll('button')].find(el=>el.textContent.includes('Generate Resume')).disabled"), true);
+    assert.equal(await evaluate("[...activeProfileWorkspace.querySelectorAll('button')].find(el=>el.textContent.includes('Link current page')).disabled"), true);
+    await evaluate("[...activeProfileWorkspace.querySelectorAll('[role=tab]')].find(el=>el.textContent.includes('Questions')).focus()");
+    await page.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', code: 'Enter' });
+    await page.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', code: 'Enter' });
+    await evaluate('workflowTest.releaseAnswers(); workflowTest.holdAnswers = false');
     await waitFor("workflowTest.answers.length === 1 && [...document.querySelectorAll('textarea')].some(el=>el.value === 'It fits my experience.')");
+    assert.equal(await evaluate("[...activeProfileWorkspace.querySelectorAll('button')].find(el=>el.textContent.includes('Load Last Job')).disabled"), false);
+    assert.equal(await evaluate("activeProfileWorkspace.querySelector('[data-submission-screenshot] button').disabled"), false);
+    await evaluate("activeProfileWorkspace.querySelector('input[type=checkbox]').click()");
     await evaluate('workflowTest.browserTabId = 75');
     await click('Load Last Job');
     await waitFor("workflowTest.requests.some(path=>path.startsWith('/applications/drafts/latest')) && document.body.innerText.includes('Last application loaded')");
@@ -256,6 +303,10 @@ function fixture() {
     assert.equal(await evaluate('workflowTest.tableRows'), 0);
     assert.equal(await evaluate("Object.values(workflowTest.pending).some(entry => entry.applicationId === 'd1')"), true);
     assert.equal(await evaluate("[...activeProfileWorkspace.querySelectorAll('button')].find(el=>el.textContent.includes('Generate Resume')).disabled"), true);
+    await click('Questions');
+    await waitFor("[...activeProfileWorkspace.querySelectorAll('button')].some(el=>el.textContent.includes('Generate Answers'))");
+    assert.equal(await evaluate("[...activeProfileWorkspace.querySelectorAll('button')].find(el=>el.textContent.includes('Generate Answers')).disabled"), true);
+    await click('Resume');
     await click('Candidate - 2');
     await waitFor(`activeProfileWorkspace.dataset.profileTabId === ${JSON.stringify(secondTabId)}`);
     assert.equal(await evaluate("activeProfileWorkspace.innerText.includes('Prepared job: Beta') && !activeProfileWorkspace.querySelector('input[type=checkbox]').checked"), true);
@@ -288,7 +339,17 @@ function fixture() {
     assert.deepEqual(await evaluate('workflowTest.errors'), []);
     const capture = await page.send('Page.captureScreenshot', { format: 'png' });
     fs.writeFileSync('.tmp/application-workflow-verified.png', Buffer.from(capture.data, 'base64'));
-    console.log('PASS: linked source URL stays with scanned/pasted JD across browser-tab switches and reload; changed/closed sources blocked before backend calls; reopened source used for capture; independent profile tabs, draft submission, retries, and success toast');
+    await evaluate('workflowTest.requireUpdate = true');
+    const updateError = await evaluate('window.aiProfiles.list().then(() => null, error => error.message)');
+    assert.match(updateError, /Update Resume Builder to version 0\.9\.3/);
+    await waitFor("document.body.innerText.includes('Resume Builder update required') && !window.activeProfileWorkspace");
+    assert.equal(await evaluate(`document.body.innerText.includes('Installed version: v${extensionVersion}')`), true);
+    await page.send('Page.reload');
+    await waitFor("document.body.innerText.includes('Resume Builder update required') && !window.activeProfileWorkspace");
+    assert.equal(await evaluate("chrome.storage.local.get('resume_ai_access_token').then(store => store.resume_ai_access_token)"), 'fixture-token');
+    console.log('PASS: every API request and screenshot upload carries the extension version; HTTP 426 blocks the workspace during a session and after reload without deleting the login token');
+    console.log('PASS: linked source URL stays with pasted JD across browser-tab switches and reload; changed/closed sources blocked before backend calls; reopened source used for capture; independent profile tabs, draft submission, retries, and success toast');
+    console.log('PASS: a pending answer request blocks resume generation, job restoration, relinking, and submission until the answers are saved');
   } finally {
     if (page) page.close();
     if (browser) { await browser.send('Browser.close').catch(() => {}); browser.close(); }

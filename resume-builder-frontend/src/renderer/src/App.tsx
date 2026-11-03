@@ -107,6 +107,7 @@ export default function Home() {
   const [webUsername, setWebUsername] = useState("");
   const [webPassword, setWebPassword] = useState("");
   const [webAuthMessage, setWebAuthMessage] = useState("");
+  const [updateRequiredMessage, setUpdateRequiredMessage] = useState("");
   const [isWebAuthRunning, setIsWebAuthRunning] = useState(false);
   const [backendUrl, setBackendUrl] = useState("");
   const [backendUrlMessage, setBackendUrlMessage] = useState("");
@@ -203,7 +204,14 @@ export default function Home() {
       setWebAuthMessage("Your session expired. Please sign in again.");
     };
     window.addEventListener("resume-ai-auth-invalid", handleInvalidAuth);
-    return () => window.removeEventListener("resume-ai-auth-invalid", handleInvalidAuth);
+    const handleUpdateRequired = (event: Event) => {
+      setUpdateRequiredMessage((event as CustomEvent<string>).detail);
+    };
+    window.addEventListener("resume-ai-update-required", handleUpdateRequired);
+    return () => {
+      window.removeEventListener("resume-ai-auth-invalid", handleInvalidAuth);
+      window.removeEventListener("resume-ai-update-required", handleUpdateRequired);
+    };
   }, []);
 
   const handleWebLogin = async (event: FormEvent<HTMLFormElement>) => {
@@ -393,6 +401,27 @@ export default function Home() {
   };
 
   // ─── Browser login ──────────────────────────────────────────────────────────
+
+  if (updateRequiredMessage) {
+    return (
+      <main className="min-h-screen bg-background px-5 py-10">
+        <div className="mx-auto max-w-lg">
+          <Card>
+            <CardHeader>
+              <CardTitle>Resume Builder update required</CardTitle>
+              <CardDescription>Installed version: v{__APP_VERSION__}</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Alert>
+                <AlertCircle className="h-4 w-4" />
+                <AlertDescription>{updateRequiredMessage}</AlertDescription>
+              </Alert>
+            </CardContent>
+          </Card>
+        </div>
+      </main>
+    );
+  }
 
   if (!webAuthStatus) {
     return (

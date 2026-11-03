@@ -16,24 +16,7 @@ export const LEGACY_STORAGE_KEY_EDUCATION = "resume_education"
 export const LEGACY_STORAGE_KEY_CAREER_MILESTONES = "resume_career_milestones"
 export const STORAGE_KEY_ACTIVE_TAB = "resume_active_tab_id"
 
-export function getLinkedInProfile(value: string): { href: string; label: string } | null {
-  const input = value.trim()
-  if (!input) return null
-
-  const href = /^https?:\/\//i.test(input)
-    ? input
-    : /^www\.linkedin\.com\//i.test(input) || /^linkedin\.com\//i.test(input)
-      ? `https://${input}`
-      : `https://www.linkedin.com/in/${input.replace(/^\/+|\/+$/g, "")}`
-
-  try {
-    const url = new URL(href)
-    const profileMatch = url.pathname.match(/\/in\/([^/]+)/i)
-    return { href, label: profileMatch?.[1] ?? input }
-  } catch {
-    return { href, label: input }
-  }
-}
+export { getLinkedInProfile } from "../../../shared/linkedin-profile"
 
 export type ProfileFormMode = "create" | "edit"
 
