@@ -37,8 +37,9 @@ async function main() {
   await root.$executeRawUnsafe(`CREATE SCHEMA "${schema}"`);
   createdSchema = true;
   // Create the old tables, then exercise the actual draft migration against that existing schema.
-  await runSql(diff.stdout.split(';').filter((statement) => !statement.includes('"application_drafts"')).join(';'));
+  await runSql(diff.stdout.replace(/^\s*"application_form_json" TEXT,?\r?\n/gm, '').split(';').filter((statement) => !statement.includes('"application_drafts"')).join(';'));
   await runSql(readFileSync(join(__dirname, '../prisma/migrations/20261026000000_add_application_drafts/migration.sql'), 'utf8'));
+  await runSql(readFileSync(join(__dirname, '../prisma/migrations/20261103000000_add_application_form_capture/migration.sql'), 'utf8'));
   const user = await db.user.create({ data: { username: 'workflow-bidder', email: 'workflow@example.test', password_hash: 'fixture', role: 'bidder' } });
   const other = await db.user.create({ data: { username: 'other-bidder', email: 'other@example.test', password_hash: 'fixture', role: 'bidder' } });
   const workspace = await db.workspace.create({ data: { name: 'Workflow', owner_user_id: user.id } });
@@ -98,6 +99,18 @@ async function main() {
   assert.equal(saved.resume.summary, 'Prepared resume');
   await generation.answerQuestions(user, { conversation_id: prepared.conversation_id, questions: [{ question: 'Why this role?' }] });
   assert.equal((await drafts.latest(user, workspace.id)).answers[0].answer, 'It fits my experience.');
+  const capturedStep = (key, answer, time) => ({ key, step: key, url: source.url, captured_at: time,
+    fields: [{ id: 'why', question: 'Why this role?', answer, section: '', field_type: 'textarea' }] });
+  const capturedAt = Date.now();
+  await assert.rejects(drafts.saveFormStep(other, prepared.draft.id, capturedStep('Questions', 'Wrong bidder', capturedAt)), (error) => error.getStatus() === 404);
+  await Promise.all([
+    drafts.saveFormStep(user, prepared.draft.id, capturedStep('Questions', 'Actual bidder answer', capturedAt)),
+    drafts.saveFormStep(user, prepared.draft.id, capturedStep('Experience', 'Actual experience', capturedAt)),
+  ]);
+  await drafts.saveFormStep(user, prepared.draft.id, capturedStep('Questions', 'Revised bidder answer', capturedAt + 1));
+  await drafts.saveFormStep(user, prepared.draft.id, capturedStep('Questions', 'Stale retry', capturedAt));
+  // Generating another suggestion must never change observed form entries.
+  await generation.answerQuestions(user, { conversation_id: prepared.conversation_id, questions: [{ question: 'Why this role?' }] });
   assert.equal(await count(), 0);
   await assert.rejects(drafts.submit(user, prepared.draft.id, undefined, true), /valid PNG/);
   await assert.rejects(drafts.submit(user, prepared.draft.id, { buffer: png.subarray(0, 8) }, true), /valid PNG/);
@@ -125,6 +138,15 @@ async function main() {
   assert.match(recorded.job_description, /Responsibilities:\n\n- Build cloud services\n- Review changes\./);
   assert.match(recorded.job_description, /Qualifications:\n\n5\+ years with TypeScript\./);
   assert.deepEqual(JSON.parse(recorded.application_answers_json), [{ question: 'Why this role?', answer: 'It fits my experience.' }]);
+  const artifact = await applications.getResume(user, recorded.id);
+  assert.equal(artifact.answers_source, 'form');
+  assert.deepEqual(artifact.answers.map((item) => item.answer).sort(), ['Actual experience', 'Revised bidder answer']);
+  assert.deepEqual((await drafts.latest(user, workspace.id)).answers.map((item) => item.answer).sort(), ['Actual experience', 'Revised bidder answer']);
+  const savedCapture = recorded.application_form_json;
+  await db.jobApplication.update({ where: { id: recorded.id }, data: { application_form_json: null } });
+  assert.deepEqual((await applications.getResume(user, recorded.id)).answers, [], 'legacy AI suggestions must not be reported as actual answers');
+  await db.jobApplication.update({ where: { id: recorded.id }, data: { application_form_json: savedCapture } });
+  await assert.rejects(drafts.saveFormStep(user, prepared.draft.id, capturedStep('Questions', 'Too late', capturedAt + 2)), (error) => error.getStatus() === 409);
 
   calls.length = 0;
   assert.equal((await generation.generate(user, input('Acme'))).duplicate, true);
@@ -151,7 +173,7 @@ async function main() {
   await assert.rejects(drafts.submit(user, urlDrafts[1].draft.id, file, true), /already in the application table/);
   assert.equal(await db.applicationScreenshot.count(), 4);
   assert.equal(await count(), 4);
-  console.log('PASS: draft migration, checks before eligibility, no early table/payment rows, persisted JD/resume/answers, atomic screenshot commit, failed-upload rollback, ownership, retries, final rechecks, and concurrent duplicate exclusion');
+  console.log('PASS: draft/form migrations, actual answers across steps, corrections/stale retries, AI separation, ownership/frozen submission, atomic screenshot commit, rollback, and concurrent duplicate exclusion');
 }
 
 main().catch((error) => { console.error(error); process.exitCode = 1; }).finally(async () => {

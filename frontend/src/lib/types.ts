@@ -264,7 +264,8 @@ export interface ResumeArtifact {
   cover_letter_template: string;
   conversation_available: boolean;
   questions: Array<{ question: string; options: string[] }>;
-  answers: Array<{ question: string; answer: string }>;
+  answers: Array<{ question: string; answer: string; id?: string; step?: string; section?: string; captured_at?: string }>;
+  answers_source?: 'form' | null;
 }
 
 export interface UpcomingInterview {

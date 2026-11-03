@@ -94,6 +94,12 @@ export class ApplicationsController {
     return this.drafts.submit(user, draftId, file, submitted === 'true');
   }
 
+  @Patch('drafts/:draftId/form-capture')
+  @RequireResumeBuilderVersion()
+  saveFormStep(@CurrentUser() user: AuthUser, @Param('draftId') draftId: string, @Body() step: unknown) {
+    return this.drafts.saveFormStep(user, draftId, step);
+  }
+
   /** Canonical application workflow endpoint. `/resume/generate` remains a compatibility alias. */
   @Post('generate')
   @RequireResumeBuilderVersion()

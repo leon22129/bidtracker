@@ -1002,7 +1002,7 @@ export function ProfileWorkspace({
 
       <TabsContent value="questions" className="mt-0">
       <DashboardSection
-        title="Application questions"
+        title={answersReadOnly ? "Captured application answers" : "AI answer suggestions"}
         description={preparedJob
           ? `For ${preparedJob.companyName} · ${preparedJob.jobTitle}. Paste questions one per line, generate answers, and review them before submitting.`
           : "Paste application questions one per line, generate tailored answers, and copy them into the form manually."}

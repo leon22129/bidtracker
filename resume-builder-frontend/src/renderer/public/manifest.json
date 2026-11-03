@@ -26,6 +26,7 @@
   "permissions": [
     "sidePanel",
     "storage",
+    "alarms",
     "tabs",
     "scripting",
     "webNavigation",
@@ -38,7 +39,8 @@
         "https://*/*"
       ],
       "js": [
-        "content-script.js"
+        "content-script.js",
+        "application-capture.js"
       ],
       "run_at": "document_idle",
       "all_frames": true,

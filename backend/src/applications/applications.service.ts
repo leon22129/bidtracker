@@ -2,6 +2,7 @@ import {
   BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import { capturedFormHistory } from '../common/utils/application-form.util';
 import { PrismaService } from '../prisma/prisma.service';
 import { WorkspaceAccessService } from '../workspaces/workspace-access.service';
 import { isNumberCollision, NumberingService } from './numbering.service';
@@ -203,18 +204,14 @@ export class ApplicationsService {
         conversation_id: true,
         cover_letter_text: true,
         cover_letter_template: true,
-        application_questions_json: true,
-        application_answers_json: true,
+        application_form_json: true,
       },
     });
     if (!row) throw new NotFoundException('Application not found');
     if (!row.generated_resume_json) throw new NotFoundException('No saved resume for this application');
 
     try {
-      const history = parseApplicationHistory(
-        row.application_questions_json,
-        row.application_answers_json,
-      );
+      const history = capturedFormHistory(row.application_form_json);
       return {
         id: row.id,
         job_title: row.job_title,
@@ -228,6 +225,7 @@ export class ApplicationsService {
         conversation_available: Boolean(row.conversation_id),
         questions: history?.questions ?? [],
         answers: history?.answers ?? [],
+        answers_source: history.answers_source,
       };
     } catch {
       throw new BadRequestException('The saved resume is corrupted');

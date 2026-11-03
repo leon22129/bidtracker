@@ -6,6 +6,7 @@ const MAX_PENDING_AGE_MS = 8 * 24 * 60 * 60 * 1000;
 const BROWSER_SESSION_KEY = "resume_ai_screenshot_browser_session";
 
 const pendingKey = (applicationId, profileTabId) => profileTabId ? `${profileTabId}:${applicationId}` : applicationId;
+const hasUnsavedSteps = (entry) => (entry.captureSteps || []).some((step) => step.captured_at > (entry.syncedSteps?.[step.key] || 0));
 
 chrome.runtime.onInstalled.addListener(() => {
   chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
@@ -63,9 +64,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       await updatePending((entries) => {
         const key = pendingKey(message.applicationId, message.profileTabId);
         const previous = entries[key];
+        for (const entry of Object.values(entries)) {
+          if (entry.tabId === Number(message.tabId)) entry.captureActive = false;
+        }
         // A new job replaces only this profile tab's capture context.
         for (const [entryKey, entry] of Object.entries(entries)) {
-          if (message.profileTabId && entry.profileTabId === message.profileTabId) delete entries[entryKey];
+          if (message.profileTabId && entry.profileTabId === message.profileTabId) {
+            entry.captureActive = false;
+            // A new job must not discard observations waiting for a network retry.
+            if (!hasUnsavedSteps(entry)) delete entries[entryKey];
+          }
         }
         entries[key] = {
           ...previous,
@@ -74,6 +82,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           draftId: message.draftId,
           tabId: Number(message.tabId),
           sessionId,
+          captureActive: Boolean(message.draftId),
+          captureToken: previous?.tabId === Number(message.tabId) && previous?.sessionId === sessionId
+            ? previous.captureToken || crypto.randomUUID() : crypto.randomUUID(),
           companyName: message.companyName,
           jobTitle: message.jobTitle,
           url: message.url,
@@ -81,6 +92,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           submitted: previous?.tabId === Number(message.tabId) && previous?.sessionId === sessionId ? previous.submitted : false,
         };
       });
+      chrome.tabs.sendMessage?.(Number(message.tabId), { type: 'APPLICATION_CAPTURE_START' }).catch(() => undefined);
       sendResponse({ ok: true });
     })().catch((error) => sendResponse({ ok: false, error: error.message }));
     return true;
@@ -99,7 +111,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === "CLEAR_PROFILE_TAB_SCREENSHOT") {
     updatePending((entries) => {
       for (const [key, entry] of Object.entries(entries)) {
-        if (entry.profileTabId === message.profileTabId) delete entries[key];
+        if (entry.profileTabId === message.profileTabId) {
+          entry.captureActive = false;
+          if (!hasUnsavedSteps(entry)) delete entries[key];
+        }
       }
     }).then(() => sendResponse({ ok: true })).catch((error) => sendResponse({ ok: false, error: error.message }));
     return true;
@@ -130,11 +145,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     (async () => {
       let updated = false;
       await updatePending((entries) => {
-        const matches = Object.values(entries).filter((entry) => entry.tabId === sender.tab.id && !entry.capturedAt);
+        const matches = Object.values(entries).filter((entry) => entry.tabId === sender.tab.id && !entry.capturedAt
+          && (entry.captureActive || !entry.draftId));
         // A browser event cannot identify the profile tab when several jobs share the same page.
         const pending = matches.length === 1 ? matches[0] : null;
         if (pending && !pending.submitted) {
           pending.submitted = true;
+          pending.submittedAt = Date.now();
           updated = true;
         }
       });
@@ -144,6 +161,116 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 });
 
+// Every observation is written locally before a network request. The database receives
+// one complete step at a time, so revisiting a step also removes deleted repeat rows.
+const captureSyncs = new Map();
+async function syncCapturedSteps(key) {
+  if (captureSyncs.has(key)) return captureSyncs.get(key);
+  const task = (async () => {
+    try {
+      while (true) {
+        const pending = (await pendingEntries())[key];
+        if (!pending?.draftId) return;
+        const step = (pending.captureSteps || []).find((item) => item.captured_at > (pending.syncedSteps?.[item.key] || 0));
+        if (!step) return;
+        const settings = await chrome.storage.local.get([TOKEN_KEY, API_URL_KEY]);
+        if (!settings[TOKEN_KEY]) throw new Error('Sign in to save captured form answers.');
+        const response = await fetch(`${String(settings[API_URL_KEY] || DEFAULT_API_URL).replace(/\/+$/, '')}/applications/drafts/${encodeURIComponent(pending.draftId)}/form-capture`, {
+          method: 'PATCH',
+          headers: { Authorization: `Bearer ${settings[TOKEN_KEY]}`, 'Content-Type': 'application/json',
+            'X-Resume-Builder-Version': chrome.runtime.getManifest().version },
+          body: JSON.stringify(step),
+        });
+        if (!response.ok) {
+          const payload = await response.json().catch(() => null);
+          throw new Error(payload?.message || `Unable to save form answers (${response.status}).`);
+        }
+        await updatePending((entries) => {
+          const entry = entries[key];
+          if (!entry) return;
+          entry.syncedSteps = { ...entry.syncedSteps, [step.key]: step.captured_at };
+          entry.captureError = null;
+        });
+      }
+    } catch (error) {
+      await updatePending((entries) => {
+        if (entries[key]) entries[key].captureError = error.message;
+      });
+      throw error;
+    }
+  })();
+  captureSyncs.set(key, task);
+  try { return await task; } finally { captureSyncs.delete(key); }
+}
+
+async function captureContext(sender, includeSubmitted = false) {
+  if (sender.tab?.id === undefined) return null;
+  const sessionId = await currentBrowserSession();
+  const entries = await pendingEntries();
+  return Object.entries(entries).find(([, entry]) => entry.tabId === sender.tab.id
+    && entry.sessionId === sessionId && entry.captureActive && entry.draftId
+    && (includeSubmitted || !entry.submitted)) || null;
+}
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.type === 'GET_FORM_CAPTURE_CONTEXT') {
+    captureContext(sender).then((match) => sendResponse({ ok: true, token: match?.[1].captureToken || null }))
+      .catch(() => sendResponse({ ok: false }));
+    return true;
+  }
+  if (message?.type !== 'APPLICATION_FORM_CAPTURE' || sender.tab?.id === undefined) return;
+  (async () => {
+    const match = await captureContext(sender, true);
+    if (!match || message.token !== match[1].captureToken) return sendResponse({ ok: false });
+    const [key] = match;
+    const step = message.step;
+    // An observation made before confirmation may still be queued in its frame.
+    if (match[1].submitted && !(step?.captured_at <= match[1].submittedAt)) return sendResponse({ ok: false });
+    const sourceUrl = new URL(sender.url);
+    const url = sourceUrl.origin + sourceUrl.pathname;
+    if (!['http:', 'https:'].includes(sourceUrl.protocol) || !step || step.url !== url
+      || typeof step.key !== 'string' || step.key.length > 2000 || typeof step.step !== 'string'
+      || !Array.isArray(step.fields) || step.fields.length > 500
+      || !Number.isSafeInteger(step.captured_at) || step.captured_at > Date.now() + 300000
+      || JSON.stringify(step).length > 90000) throw new Error('This form step could not be captured.');
+    await updatePending((entries) => {
+      const entry = entries[key];
+      if (!entry || entry.captureToken !== message.token || !entry.captureActive
+        || (entry.submitted && !(step.captured_at <= entry.submittedAt))) return;
+      entry.captureSteps ||= [];
+      const index = entry.captureSteps.findIndex((item) => item.key === step.key);
+      if (index < 0) entry.captureSteps.push(step);
+      else if (entry.captureSteps[index].captured_at < step.captured_at) entry.captureSteps[index] = step;
+      if (entry.captureSteps.length > 100 || JSON.stringify(entry.captureSteps).length > 500000) {
+        throw new Error('Application form capture is too large to save.');
+      }
+      entry.capturedAnswerCount = entry.captureSteps.reduce((count, item) => count + item.fields.length, 0);
+      entry.captureError = null;
+    });
+    sendResponse({ ok: true });
+    void syncCapturedSteps(key).catch(() => undefined);
+  })().catch(async (error) => {
+    const match = await captureContext(sender);
+    if (match) await updatePending((entries) => { if (entries[match[0]]) entries[match[0]].captureError = error.message; });
+    sendResponse({ ok: false, error: error.message });
+  });
+  return true;
+});
+
+chrome.alarms?.create('retry-application-form-capture', { periodInMinutes: 0.5 });
+chrome.alarms?.onAlarm.addListener((alarm) => {
+  if (alarm.name === 'retry-application-form-capture') {
+    pendingEntries().then((entries) => Promise.allSettled(Object.keys(entries).map(syncCapturedSteps)));
+  }
+});
+
+async function flushFormCapture(tabId) {
+  const frames = await chrome.webNavigation?.getAllFrames({ tabId }).catch(() => []) || [];
+  await Promise.allSettled(frames.map(({ frameId }) => chrome.tabs.sendMessage(tabId,
+    { type: 'APPLICATION_CAPTURE_FLUSH' }, { frameId })));
+  await storageChanges;
+}
+
 async function captureAndUpload(tabId, applicationId, confirmed, profileTabId) {
   const entries = await pendingEntries();
   const pending = entries[pendingKey(applicationId, profileTabId)];
@@ -151,6 +278,17 @@ async function captureAndUpload(tabId, applicationId, confirmed, profileTabId) {
   if (!pending.submitted && !confirmed) throw new Error("Confirm that the application was submitted successfully first.");
   if (pending.sessionId !== await currentBrowserSession()) {
     throw new Error('Reopen the confirmation page and use Load Last Job to select it again after restarting or reloading the extension.');
+  }
+  if (pending.draftId) {
+    await flushFormCapture(tabId);
+    const key = pendingKey(applicationId, profileTabId);
+    for (let attempt = 0; attempt < 5; attempt++) {
+      await syncCapturedSteps(key);
+      const latest = (await pendingEntries())[key];
+      if (latest?.captureError) throw new Error(latest.captureError);
+      if (!latest || !hasUnsavedSteps(latest)) break;
+      if (attempt === 4) throw new Error('Form answers are still saving. Try adding the application again.');
+    }
   }
   const tab = await chrome.tabs.get(tabId).catch(() => null);
   if (!tab) throw new Error("The original application tab is closed. Reopen the confirmation page and load the application again.");

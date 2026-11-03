@@ -21,23 +21,25 @@ export function ApplicationAnswersModal({
         <div className="flex items-start justify-between border-b border-gray-200 px-5 py-4">
           <div>
             <h2 id="application-answers-title" className="text-base font-semibold text-gray-900">
-              Application questions and answers
+              Captured application answers
             </h2>
             <p className="mt-1 text-xs text-gray-500">
               {[artifact.company_name, artifact.job_title].filter(Boolean).join(' — ') || 'Saved application'}
             </p>
+            <p className="mt-1 text-xs text-gray-500">Recorded from the application form as the bidder completed it.</p>
           </div>
           <button type="button" className="btn-secondary btn-xs" onClick={onClose}>Close</button>
         </div>
         <div className="overflow-y-auto p-5">
           {artifact.answers.length === 0 ? (
-            <p className="text-sm text-gray-500">No application questions and answers were saved.</p>
+            <p className="text-sm text-gray-500">No form answers were captured for this application.</p>
           ) : (
             <div className="space-y-4">
               {artifact.answers.map((item, index) => (
                 <section key={`${item.question}-${index}`} className="rounded-md border border-gray-200 bg-gray-50 p-4">
+                  {(item.step || item.section) && <p className="mb-2 text-xs text-gray-500">{[item.step, item.section].filter(Boolean).join(' · ')}</p>}
                   <h3 className="text-sm font-semibold text-gray-900">{item.question}</h3>
-                  <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-gray-700">{item.answer}</p>
+                  <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-gray-700">{item.answer || 'Left blank'}</p>
                 </section>
               ))}
             </div>
