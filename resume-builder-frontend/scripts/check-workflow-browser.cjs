@@ -77,7 +77,7 @@ function fixture(extensionVersion) {
     if (suppliedVersion !== extensionVersion) throw Error('Missing or incorrect extension version on ' + endpoint);
     if (state.requireUpdate) return new Response(JSON.stringify({
       code: 'RESUME_BUILDER_UPDATE_REQUIRED',
-      message: 'Update Resume Builder to version 0.9.3 or newer, then reload the extension in Chrome.',
+      message: 'Update Resume Builder to version 0.9.4 or newer, then reload the extension in Chrome.',
     }), { status: 426, headers: { 'Content-Type': 'application/json' } });
     const json = (body) => new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } });
     if (endpoint === '/auth/me') return json({ id: 'u1', username: 'Bidder', role: 'bidder', is_active: true });
@@ -341,7 +341,7 @@ function fixture(extensionVersion) {
     fs.writeFileSync('.tmp/application-workflow-verified.png', Buffer.from(capture.data, 'base64'));
     await evaluate('workflowTest.requireUpdate = true');
     const updateError = await evaluate('window.aiProfiles.list().then(() => null, error => error.message)');
-    assert.match(updateError, /Update Resume Builder to version 0\.9\.3/);
+    assert.match(updateError, /Update Resume Builder to version 0\.9\.4/);
     await waitFor("document.body.innerText.includes('Resume Builder update required') && !window.activeProfileWorkspace");
     assert.equal(await evaluate(`document.body.innerText.includes('Installed version: v${extensionVersion}')`), true);
     await page.send('Page.reload');
