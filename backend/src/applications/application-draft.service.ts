@@ -13,6 +13,7 @@ import { toDayStart } from '../common/utils/date.util';
 import { parseApplicationHistory } from '../common/utils/application-history.util';
 import { assertScreenshotFile, screenshotDates } from './application-screenshot.service';
 import { formatJobDescription } from '../common/utils/job-description.util';
+import { capturedFormHistory, mergeCapturedStep, validateCapturedStep } from '../common/utils/application-form.util';
 
 @Injectable()
 export class ApplicationDraftService {
@@ -40,7 +41,8 @@ export class ApplicationDraftService {
       where: { workspace_id: workspaceId, created_by_user_id: user.id }, orderBy: { created_at: 'desc' },
     });
     if (!draft) throw new NotFoundException('No prepared job found');
-    const history = parseApplicationHistory(draft.application_questions_json, draft.application_answers_json);
+    const history = draft.submitted_at ? capturedFormHistory(draft.application_form_json)
+      : parseApplicationHistory(draft.application_questions_json, draft.application_answers_json);
     return {
       id: draft.id, draft_id: draft.id, application_id: draft.submitted_application_id,
       submitted_at: draft.submitted_at, url: draft.url, company_name: draft.company_name, job_title: draft.job_title,
@@ -49,6 +51,24 @@ export class ApplicationDraftService {
       conversation_id: draft.conversation_id, cover_letter_text: draft.cover_letter_text,
       cover_letter_template: draft.cover_letter_template, questions: history?.questions ?? [], answers: history?.answers ?? [],
     };
+  }
+
+  async saveFormStep(user: AuthUser, draftId: string, input: unknown) {
+    const step = validateCapturedStep(input);
+    const owned = await this.prisma.applicationDraft.findFirst({
+      where: { id: draftId, created_by_user_id: user.id }, select: { workspace_id: true },
+    });
+    if (!owned) throw new NotFoundException('Prepared job not found');
+    return this.applications.withWorkspaceWrite(owned.workspace_id, async ({ db }) => {
+      await this.access.assertCanEdit(user, owned.workspace_id, { db });
+      const draft = await db.applicationDraft.findFirst({ where: { id: draftId, created_by_user_id: user.id } });
+      if (!draft) throw new NotFoundException('Prepared job not found');
+      if (draft.submitted_at) throw new ConflictException('Submitted application answers are already saved');
+      await db.applicationDraft.update({ where: { id: draftId }, data: {
+        application_form_json: mergeCapturedStep(draft.application_form_json, step),
+      } });
+      return { saved: true };
+    });
   }
 
   /** The application, its screenshot, and the draft receipt are committed together. */
@@ -89,6 +109,7 @@ export class ApplicationDraftService {
           cover_letter_text: draft.cover_letter_text, cover_letter_template: draft.cover_letter_template,
           conversation_id: draft.conversation_id, application_questions_json: draft.application_questions_json,
           application_answers_json: draft.application_answers_json,
+          application_form_json: draft.application_form_json,
         },
         select: { id: true, number: true, application_status: true, workspace_id: true, company_name: true, job_title: true },
       }), 1, db);

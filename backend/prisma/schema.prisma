@@ -204,6 +204,7 @@ model JobApplication {
   cover_letter_template      String?
   application_questions_json String?
   application_answers_json   String?
+  application_form_json      String?
 
   // Immutable payment subject: the bidder who created/performed this application.
   created_by_user_id String
@@ -311,6 +312,7 @@ model ApplicationDraft {
   conversation_id String? @unique
   application_questions_json String?
   application_answers_json String?
+  application_form_json String?
   submitted_application_id String? @unique
   submitted_at DateTime?
   created_at DateTime @default(now())

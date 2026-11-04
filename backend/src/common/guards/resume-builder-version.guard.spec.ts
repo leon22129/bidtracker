@@ -39,14 +39,14 @@ describe('ResumeBuilderVersionGuard', () => {
     else process.env.RESUME_BUILDER_MIN_VERSION = previousMinimum;
   });
 
-  it.each(['0.9.2', '0.9.2.0', '0.9.2.1', '0.9.10', '0.10.0', '1.0.0'])(
+  it.each(['0.9.3', '0.9.3.0', '0.9.3.1', '0.9.10', '0.10.0', '1.0.0'])(
     'accepts supported version %s using numeric comparison', (version) => {
       expect(guard.canActivate(context({ 'x-resume-builder-version': version }))).toBe(true);
     },
   );
 
-  it.each([undefined, '', '0.9.1', '0.8.99', 'invalid', '0.9', '0.9.2-beta', '0.9.2.0.1',
-    'Infinity.0.0', '65536.0.0', ['0.9.2', '0.9.1']])('rejects missing, old or invalid version %s', (version) => {
+  it.each([undefined, '', '0.9.2', '0.9.2.1', '0.8.99', 'invalid', '0.9', '0.9.3-beta', '0.9.3.0.1',
+    'Infinity.0.0', '65536.0.0', ['0.9.3', '0.9.2']])('rejects missing, old or invalid version %s', (version) => {
     const headers = { authorization: 'Bearer existing-session',
       ...(version === undefined ? {} : { 'x-resume-builder-version': version }) };
     try {
@@ -56,7 +56,7 @@ describe('ResumeBuilderVersionGuard', () => {
       expect(error).toBeInstanceOf(HttpException);
       expect((error as HttpException).getStatus()).toBe(426);
       expect((error as HttpException).getResponse()).toMatchObject({
-        code: 'RESUME_BUILDER_UPDATE_REQUIRED', minimum_version: '0.9.2',
+        code: 'RESUME_BUILDER_UPDATE_REQUIRED', minimum_version: '0.9.3',
       });
     }
   });
@@ -70,7 +70,7 @@ describe('ResumeBuilderVersionGuard', () => {
   it.each([
     { origin: 'chrome-extension://example' },
     { referer: 'chrome-extension://example/index.html' },
-    { 'x-resume-builder-version': '0.9.1' },
+    { 'x-resume-builder-version': '0.9.2' },
     { 'x-resume-builder-version': '' },
   ])('rejects legacy extension requests on shared routes: %o', (headers) => {
     expect(() => guard.canActivate(context(headers, false))).toThrow(HttpException);
@@ -96,7 +96,7 @@ describe('Resume Builder version enforcement over HTTP', () => {
   const generate = jest.fn(() => ({ success: true }));
 
   beforeAll(async () => {
-    process.env.RESUME_BUILDER_MIN_VERSION = '0.9.2';
+    process.env.RESUME_BUILDER_MIN_VERSION = '0.9.3';
     const module = await Test.createTestingModule({
       controllers: [ResumeController, ApplicationsController, WorkspacesController],
       providers: [
@@ -142,12 +142,12 @@ describe('Resume Builder version enforcement over HTTP', () => {
 
   it('rejects an outdated version and accepts the current build', async () => {
     const oldResponse = await fetch(`${baseUrl}/api/applications/generate`, {
-      method: 'POST', headers: { 'X-Resume-Builder-Version': '0.9.1' },
+      method: 'POST', headers: { 'X-Resume-Builder-Version': '0.9.2' },
     });
     expect(oldResponse.status).toBe(426);
     expect(generate).not.toHaveBeenCalled();
     const response = await fetch(`${baseUrl}/api/applications/generate`, {
-      method: 'POST', headers: { 'X-Resume-Builder-Version': '0.9.2' },
+      method: 'POST', headers: { 'X-Resume-Builder-Version': '0.9.3' },
     });
     expect(response.status).toBe(201);
     expect(await response.json()).toEqual({ success: true });

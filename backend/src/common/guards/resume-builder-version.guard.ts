@@ -4,7 +4,7 @@ import type { Request } from 'express';
 import { REQUIRE_RESUME_BUILDER_VERSION } from '../decorators/resume-builder-version.decorator';
 
 export const RESUME_BUILDER_VERSION_HEADER = 'x-resume-builder-version';
-export const DEFAULT_RESUME_BUILDER_MIN_VERSION = '0.9.2';
+export const DEFAULT_RESUME_BUILDER_MIN_VERSION = '0.9.3';
 
 function versionParts(value: unknown): number[] | null {
   if (typeof value !== 'string' || !/^\d+\.\d+\.\d+(?:\.\d+)?$/.test(value)) return null;
@@ -28,7 +28,7 @@ export class ResumeBuilderVersionGuard implements CanActivate {
   constructor(private readonly reflector: Reflector) {
     this.minimumVersion = process.env.RESUME_BUILDER_MIN_VERSION?.trim() || DEFAULT_RESUME_BUILDER_MIN_VERSION;
     const parts = versionParts(this.minimumVersion);
-    if (!parts) throw new Error('RESUME_BUILDER_MIN_VERSION must contain three or four numeric version components (for example 0.9.2).');
+    if (!parts) throw new Error('RESUME_BUILDER_MIN_VERSION must contain three or four numeric version components (for example 0.9.3).');
     this.minimumParts = parts;
   }
 

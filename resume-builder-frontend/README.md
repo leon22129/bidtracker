@@ -19,7 +19,7 @@ Enter or paste application questions one per line, then use **Generate Answers**
 
 ## Required extension version
 
-The backend requires Resume Builder **0.9.2 or newer** by default. Every extension API
+The backend requires Resume Builder **0.9.3 or newer** by default. Every extension API
 request, including login and screenshot uploads, sends `X-Resume-Builder-Version`.
 Older, missing, or invalid versions receive HTTP 426 with an update-required message.
 Resume generation, answers, draft restoration/submission, profile settings, and screenshot

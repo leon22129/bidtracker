@@ -1,6 +1,6 @@
 {
   "name": "Resume-Builder",
-  "version": "0.9.2",
+  "version": "0.9.3",
   "private": true,
   "type": "module",
   "scripts": {
@@ -8,7 +8,8 @@
     "build": "tsc --noEmit && vite build --config vite.web.config.ts",
     "preview": "vite preview --config vite.web.config.ts",
     "start": "vite preview --config vite.web.config.ts",
-    "test:workflow-browser": "node scripts/check-workflow-browser.cjs"
+    "test:workflow-browser": "node scripts/check-workflow-browser.cjs",
+    "test:form-capture": "node --test tests/application-screenshots.test.cjs && node scripts/check-form-capture-browser.cjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.9.1",

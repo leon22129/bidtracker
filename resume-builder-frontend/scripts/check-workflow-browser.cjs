@@ -64,7 +64,9 @@ function fixture(extensionVersion) {
       update: async (id) => { state.browserTabId = id; },
       create: async ({ url }) => { const id = state.nextBrowserTabId++; state.browserTabs[id] = url; state.browserTabId = id; return { id, url }; },
       captureVisibleTab: async () => { state.captures.push(state.browserTabId); return 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII='; },
-      sendMessage: async (id, message) => { const job = jobs.find((job) => job.url === state.browserTabs[id]);
+      sendMessage: async (id, message) => {
+        if (message.type === 'APPLICATION_CAPTURE_START' || message.type === 'APPLICATION_CAPTURE_FLUSH') return { ok: true, captureReady: true };
+        const job = jobs.find((job) => job.url === state.browserTabs[id]);
         return { url: job.url, title: 'Engineer', jobTitle: 'Engineer', jobDescription: jd(job), jobDescriptionSource: 'fixture', questions: message.includeQuestions ? [{ question: 'Why this role?', fieldType: 'text', options: [], sensitive: false }] : [] }; },
     }, webNavigation: { getAllFrames: async () => [{ frameId: 0 }] },
   };
@@ -77,7 +79,7 @@ function fixture(extensionVersion) {
     if (suppliedVersion !== extensionVersion) throw Error('Missing or incorrect extension version on ' + endpoint);
     if (state.requireUpdate) return new Response(JSON.stringify({
       code: 'RESUME_BUILDER_UPDATE_REQUIRED',
-      message: 'Update Resume Builder to version 0.9.3 or newer, then reload the extension in Chrome.',
+      message: 'Update Resume Builder to version 0.9.4 or newer, then reload the extension in Chrome.',
     }), { status: 426, headers: { 'Content-Type': 'application/json' } });
     const json = (body) => new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } });
     if (endpoint === '/auth/me') return json({ id: 'u1', username: 'Bidder', role: 'bidder', is_active: true });
@@ -341,7 +343,7 @@ function fixture(extensionVersion) {
     fs.writeFileSync('.tmp/application-workflow-verified.png', Buffer.from(capture.data, 'base64'));
     await evaluate('workflowTest.requireUpdate = true');
     const updateError = await evaluate('window.aiProfiles.list().then(() => null, error => error.message)');
-    assert.match(updateError, /Update Resume Builder to version 0\.9\.3/);
+    assert.match(updateError, /Update Resume Builder to version 0\.9\.4/);
     await waitFor("document.body.innerText.includes('Resume Builder update required') && !window.activeProfileWorkspace");
     assert.equal(await evaluate(`document.body.innerText.includes('Installed version: v${extensionVersion}')`), true);
     await page.send('Page.reload');

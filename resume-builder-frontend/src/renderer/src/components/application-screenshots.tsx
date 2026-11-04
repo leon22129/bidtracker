@@ -12,6 +12,11 @@ type ScreenshotApplication = {
   createdAt: number;
   submitted?: boolean;
   capturedAt?: number;
+  captureActive?: boolean;
+  capturedAnswerCount?: number;
+  captureError?: string | null;
+  captureSteps?: Array<{ key: string; captured_at: number }>;
+  syncedSteps?: Record<string, number>;
 };
 
 type ScreenshotResult = { ok?: boolean; error?: string; item?: ScreenshotApplication | null };
@@ -121,6 +126,14 @@ export function ApplicationScreenshots({
         </div>
         {selected && (
           <p className="text-xs font-medium">{[companyName, jobTitle].filter(Boolean).join(" · ")}</p>
+        )}
+        {selected?.captureActive && (
+          <p role="status" className={`text-xs ${selected.captureError ? 'text-destructive' : 'text-muted-foreground'}`}>
+            {selected.captureError ? `Form answers are waiting to save: ${selected.captureError}`
+              : selected.capturedAnswerCount
+                ? `${selected.capturedAnswerCount} form answers captured. ${(selected.captureSteps || []).some((step) => step.captured_at > (selected.syncedSteps?.[step.key] || 0)) ? 'Saving…' : 'Saved to database.'}`
+                : 'Recording form answers as you complete each application step.'}
+          </p>
         )}
         {selected && !selected.submitted && (
           <label className="flex items-center gap-2 text-xs">
