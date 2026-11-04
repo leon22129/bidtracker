@@ -38,6 +38,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     { href: '/admin/analytics', label: 'Analytics', show: canViewAnalytics(user) },
     { href: '/admin/users', label: 'Users', show: canManageUsers(user) },
     { href: '/admin/banned-urls', label: 'Banned URLs', show: isAdmin(user) },
+    { href: '/admin/extension', label: 'Extension', show: user.role === 'super_admin' },
   ].filter((n) => n.show);
 
   return (

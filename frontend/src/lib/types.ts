@@ -1,6 +1,12 @@
 // Mirrors the backend's Prisma models and `src/common/constants.ts`.
 // Kept hand-written (rather than generated) so the frontend depends only on the HTTP contract.
 
+export interface ExtensionRelease {
+  latest_version: string;
+  download_url: string | null;
+  updated_at: string | null;
+}
+
 export const ROLES = ['super_admin', 'admin', 'bidder_manager', 'bidder'] as const;
 export type Role = (typeof ROLES)[number];
 

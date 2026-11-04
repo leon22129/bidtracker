@@ -12,6 +12,7 @@ import { ApplicationScreenshotService } from '../../applications/application-scr
 import { BannedUrlService } from '../../applications/banned-url.service';
 import { WorkspacesController } from '../../workspaces/workspaces.controller';
 import { WorkspacesService } from '../../workspaces/workspaces.service';
+import { ExtensionReleaseService } from '../../extension-release/extension-release.service';
 
 @RequireResumeBuilderVersion()
 class VersionedController { handle() {} }
@@ -29,10 +30,13 @@ function context(headers: Record<string, string | string[] | undefined> = {}, re
 describe('ResumeBuilderVersionGuard', () => {
   const previousMinimum = process.env.RESUME_BUILDER_MIN_VERSION;
   let guard: ResumeBuilderVersionGuard;
+  const release = { get: jest.fn() };
 
   beforeEach(() => {
     delete process.env.RESUME_BUILDER_MIN_VERSION;
-    guard = new ResumeBuilderVersionGuard(new Reflector());
+    release.get.mockReset();
+    release.get.mockResolvedValue({ latest_version: '0.9.3', download_url: 'https://downloads.example.com/extension.zip' });
+    guard = new ResumeBuilderVersionGuard(new Reflector(), release as unknown as ExtensionReleaseService);
   });
   afterAll(() => {
     if (previousMinimum === undefined) delete process.env.RESUME_BUILDER_MIN_VERSION;
@@ -40,31 +44,33 @@ describe('ResumeBuilderVersionGuard', () => {
   });
 
   it.each(['0.9.3', '0.9.3.0', '0.9.3.1', '0.9.10', '0.10.0', '1.0.0'])(
-    'accepts supported version %s using numeric comparison', (version) => {
-      expect(guard.canActivate(context({ 'x-resume-builder-version': version }))).toBe(true);
+    'accepts supported version %s using numeric comparison', async (version) => {
+      await expect(guard.canActivate(context({ 'x-resume-builder-version': version }))).resolves.toBe(true);
     },
   );
 
   it.each([undefined, '', '0.9.2', '0.9.2.1', '0.8.99', 'invalid', '0.9', '0.9.3-beta', '0.9.3.0.1',
-    'Infinity.0.0', '65536.0.0', ['0.9.3', '0.9.2']])('rejects missing, old or invalid version %s', (version) => {
+    'Infinity.0.0', '65536.0.0', ['0.9.3', '0.9.2']])('rejects missing, old or invalid version %s', async (version) => {
     const headers = { authorization: 'Bearer existing-session',
       ...(version === undefined ? {} : { 'x-resume-builder-version': version }) };
     try {
-      guard.canActivate(context(headers));
+      await guard.canActivate(context(headers));
       throw new Error('Expected an upgrade rejection');
     } catch (error) {
       expect(error).toBeInstanceOf(HttpException);
       expect((error as HttpException).getStatus()).toBe(426);
       expect((error as HttpException).getResponse()).toMatchObject({
         code: 'RESUME_BUILDER_UPDATE_REQUIRED', minimum_version: '0.9.3',
+        latest_version: '0.9.3', download_url: 'https://downloads.example.com/extension.zip',
       });
     }
   });
 
-  it('allows normal dashboard requests and preflight requests without a version', () => {
-    expect(guard.canActivate(context({}, false))).toBe(true);
-    expect(guard.canActivate(context({ origin: 'https://bids.example.com' }, false))).toBe(true);
-    expect(guard.canActivate(context({ origin: 'chrome-extension://example' }, true, 'OPTIONS'))).toBe(true);
+  it('allows normal dashboard requests and preflight requests without a version', async () => {
+    await expect(guard.canActivate(context({}, false))).resolves.toBe(true);
+    await expect(guard.canActivate(context({ origin: 'https://bids.example.com' }, false))).resolves.toBe(true);
+    await expect(guard.canActivate(context({ origin: 'chrome-extension://example' }, true, 'OPTIONS'))).resolves.toBe(true);
+    expect(release.get).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -72,20 +78,17 @@ describe('ResumeBuilderVersionGuard', () => {
     { referer: 'chrome-extension://example/index.html' },
     { 'x-resume-builder-version': '0.9.2' },
     { 'x-resume-builder-version': '' },
-  ])('rejects legacy extension requests on shared routes: %o', (headers) => {
-    expect(() => guard.canActivate(context(headers, false))).toThrow(HttpException);
+  ])('rejects legacy extension requests on shared routes: %o', async (headers) => {
+    await expect(guard.canActivate(context(headers, false))).rejects.toThrow(HttpException);
   });
 
-  it('honors a higher configured minimum', () => {
-    process.env.RESUME_BUILDER_MIN_VERSION = '0.10.0';
-    guard = new ResumeBuilderVersionGuard(new Reflector());
-    expect(() => guard.canActivate(context({ 'x-resume-builder-version': '0.9.10' }))).toThrow(HttpException);
-    expect(guard.canActivate(context({ 'x-resume-builder-version': '0.10.0' }))).toBe(true);
-  });
-
-  it('refuses an invalid configured minimum', () => {
-    process.env.RESUME_BUILDER_MIN_VERSION = 'latest';
-    expect(() => new ResumeBuilderVersionGuard(new Reflector())).toThrow('RESUME_BUILDER_MIN_VERSION');
+  it('honors a changed release on the next request without a restart', async () => {
+    await expect(guard.canActivate(context({ 'x-resume-builder-version': '0.9.10' }))).resolves.toBe(true);
+    release.get.mockResolvedValue({ latest_version: '0.10.0', download_url: 'https://downloads.example.com/new.zip' });
+    await expect(guard.canActivate(context({ 'x-resume-builder-version': '0.9.10' }))).rejects.toMatchObject({
+      response: { minimum_version: '0.10.0', download_url: 'https://downloads.example.com/new.zip' },
+    });
+    await expect(guard.canActivate(context({ 'x-resume-builder-version': '0.10.0' }))).resolves.toBe(true);
   });
 });
 
@@ -101,6 +104,7 @@ describe('Resume Builder version enforcement over HTTP', () => {
       controllers: [ResumeController, ApplicationsController, WorkspacesController],
       providers: [
         { provide: APP_GUARD, useClass: ResumeBuilderVersionGuard },
+        { provide: ExtensionReleaseService, useValue: { get: async () => ({ latest_version: '0.9.3', download_url: null }) } },
         { provide: ApplicationGenerationService, useValue: { generate } },
         { provide: ApplicationsService, useValue: {} },
         { provide: ApplicationDraftService, useValue: {} },

@@ -80,6 +80,8 @@ function fixture(extensionVersion) {
     if (state.requireUpdate) return new Response(JSON.stringify({
       code: 'RESUME_BUILDER_UPDATE_REQUIRED',
       message: 'Update Resume Builder to version 0.9.4 or newer, then reload the extension in Chrome.',
+      latest_version: '0.9.4',
+      download_url: state.downloadUrl ?? 'https://downloads.example.test/resume-builder.zip',
     }), { status: 426, headers: { 'Content-Type': 'application/json' } });
     const json = (body) => new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } });
     if (endpoint === '/auth/me') return json({ id: 'u1', username: 'Bidder', role: 'bidder', is_active: true });
@@ -346,10 +348,33 @@ function fixture(extensionVersion) {
     assert.match(updateError, /Update Resume Builder to version 0\.9\.4/);
     await waitFor("document.body.innerText.includes('Resume Builder update required') && !window.activeProfileWorkspace");
     assert.equal(await evaluate(`document.body.innerText.includes('Installed version: v${extensionVersion}')`), true);
+    assert.equal(await evaluate("document.body.innerText.includes('Latest version: v0.9.4')"), true);
+    const downloadLink = "[...document.querySelectorAll('a')].find(el => el.textContent.includes('Download latest version'))";
+    assert.equal(await evaluate(`(${downloadLink}).href`), 'https://downloads.example.test/resume-builder.zip');
+    assert.equal(await evaluate(`(${downloadLink}).target`), '_blank');
     await page.send('Page.reload');
     await waitFor("document.body.innerText.includes('Resume Builder update required') && !window.activeProfileWorkspace");
     assert.equal(await evaluate("chrome.storage.local.get('resume_ai_access_token').then(store => store.resume_ai_access_token)"), 'fixture-token');
-    console.log('PASS: every API request and screenshot upload carries the extension version; HTTP 426 blocks the workspace during a session and after reload without deleting the login token');
+    assert.equal(await evaluate(`(${downloadLink}).href`), 'https://downloads.example.test/resume-builder.zip');
+    await evaluate("workflowTest.downloadUrl = 'javascript:alert(1)'; window.aiProfiles.list().catch(() => {})");
+    await waitFor("document.body.innerText.includes('Contact your administrator')");
+    assert.equal(await evaluate(`Boolean(${downloadLink})`), false);
+    await evaluate("workflowTest.downloadUrl = 'https://downloads.example.test/new-release.zip'; window.webAuth.logout()");
+    await page.send('Page.reload');
+    await waitFor("Boolean(document.querySelector('input[type=password]'))");
+    await clickSelector('#web-username');
+    await page.send('Input.insertText', { text: 'bidder@example.test' });
+    await clickSelector('#web-password');
+    await page.send('Input.insertText', { text: 'password' });
+    await click('Sign in');
+    await waitFor("document.body.innerText.includes('Resume Builder update required')");
+    assert.equal(await evaluate('workflowTest.requests.at(-1)'), '/auth/login');
+    assert.equal(await evaluate(`(${downloadLink}).href`), 'https://downloads.example.test/new-release.zip');
+    assert.equal(await evaluate("chrome.storage.local.get('resume_ai_access_token').then(store => store.resume_ai_access_token ?? null)"), null);
+    await page.send('Emulation.setDeviceMetricsOverride', { width: 420, height: 768, deviceScaleFactor: 1, mobile: false });
+    const updateCapture = await page.send('Page.captureScreenshot', { format: 'png' });
+    fs.writeFileSync('.tmp/workflow-browser/extension-update-verified.png', Buffer.from(updateCapture.data, 'base64'));
+    console.log('PASS: HTTP 426 displays the configured download button on login, during a session, and after reload; invalid links are rejected; existing login tokens are preserved');
     console.log('PASS: linked source URL stays with pasted JD across browser-tab switches and reload; changed/closed sources blocked before backend calls; reopened source used for capture; independent profile tabs, draft submission, retries, and success toast');
     console.log('PASS: a pending answer request blocks resume generation, job restoration, relinking, and submission until the answers are saved');
   } finally {

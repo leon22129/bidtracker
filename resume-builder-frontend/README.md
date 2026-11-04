@@ -26,8 +26,19 @@ Resume generation, answers, draft restoration/submission, profile settings, and 
 uploads require this header even when the client sends no extension origin. Shared dashboard
 routes continue to support normal web requests.
 
-Set `RESUME_BUILDER_MIN_VERSION` on the backend and restart it to raise the minimum after
-distributing a new build. To release a version, update `package.json`, the root package entries
+Super admins can open **Extension** in BidTracker to save the latest version and an HTTP(S)
+download URL. That version becomes the minimum immediately, including for existing sessions.
+Outdated clients receive the release version and download URL in the HTTP 426 response. The
+extension shows an update alert with **Download latest version** below it on login or the next
+API request. The button opens the configured link in a new tab and preserves the login token.
+Without a saved release, `RESUME_BUILDER_MIN_VERSION` remains the server's fallback minimum.
+
+Deploy the `20261104000000_extension_release` database migration with the backend. Existing
+extension installations need the build containing the download button installed once; older
+builds can show only their existing text alert. Publish a link users can access before saving
+the release settings.
+
+To release a version, update `package.json`, the root package entries
 in `package-lock.json`, and `src/renderer/public/manifest.json` together; the build checks that
 the package and manifest versions match. Run `npm run build`, distribute `dist-web`, and reload
 the extension in Chrome. Deploying the backend check is required to reject older installations.

@@ -153,6 +153,15 @@ model ResumeConversation {
   draft ApplicationDraft?
 }
 
+model ExtensionRelease {
+  id             String   @id @default("current")
+  latest_version String
+  download_url   String
+  updated_at     DateTime @default(now()) @updatedAt
+
+  @@map("extension_release")
+}
+
 model AiSettings {
   resume_prompt String?
   admin_id String @id

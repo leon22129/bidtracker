@@ -15,10 +15,12 @@ import { ResumeBuilderVersionGuard } from './common/guards/resume-builder-versio
 import { AdminBootstrapService } from './bootstrap/admin-bootstrap.service';
 import { ResumeModule } from './resume/resume.module';
 import { ConversationCleanupModule } from './resume/conversation-cleanup.module';
+import { ExtensionReleaseModule } from './extension-release/extension-release.module';
 
 @Module({
   imports: [
     PrismaModule,
+    ExtensionReleaseModule,
     ScheduleModule.forRoot(),
     ConversationCleanupModule,
     AuthModule,

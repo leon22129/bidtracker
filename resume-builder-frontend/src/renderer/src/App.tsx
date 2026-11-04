@@ -46,6 +46,7 @@ import {
   LogOut,
   User,
   Settings,
+  Download,
 } from "lucide-react";
 import type { AiProfile } from "../../shared/ai-profiles";
 import type { WebAuthStatus } from "../../shared/auth";
@@ -59,6 +60,7 @@ import {
   STORAGE_KEY_ACTIVE_TAB,
 } from "@/lib/profile-utils";
 import { clearProfileTabScreenshot, getApiBaseUrl, getCurrentBrowserTabKey, setApiBaseUrl } from "@/lib/extension-storage";
+import type { ExtensionUpdate } from "@/lib/extension-update";
 
 const STORAGE_KEY_OPEN_TABS = "resume_open_profile_tabs_v2";
 
@@ -107,7 +109,7 @@ export default function Home() {
   const [webUsername, setWebUsername] = useState("");
   const [webPassword, setWebPassword] = useState("");
   const [webAuthMessage, setWebAuthMessage] = useState("");
-  const [updateRequiredMessage, setUpdateRequiredMessage] = useState("");
+  const [requiredUpdate, setRequiredUpdate] = useState<ExtensionUpdate | null>(null);
   const [isWebAuthRunning, setIsWebAuthRunning] = useState(false);
   const [backendUrl, setBackendUrl] = useState("");
   const [backendUrlMessage, setBackendUrlMessage] = useState("");
@@ -205,7 +207,7 @@ export default function Home() {
     };
     window.addEventListener("resume-ai-auth-invalid", handleInvalidAuth);
     const handleUpdateRequired = (event: Event) => {
-      setUpdateRequiredMessage((event as CustomEvent<string>).detail);
+      setRequiredUpdate((event as CustomEvent<ExtensionUpdate>).detail);
     };
     window.addEventListener("resume-ai-update-required", handleUpdateRequired);
     return () => {
@@ -402,20 +404,33 @@ export default function Home() {
 
   // ─── Browser login ──────────────────────────────────────────────────────────
 
-  if (updateRequiredMessage) {
+  if (requiredUpdate) {
     return (
       <main className="min-h-screen bg-background px-5 py-10">
         <div className="mx-auto max-w-lg">
           <Card>
             <CardHeader>
               <CardTitle>Resume Builder update required</CardTitle>
-              <CardDescription>Installed version: v{__APP_VERSION__}</CardDescription>
+              <CardDescription>
+                Installed version: v{__APP_VERSION__}
+                {requiredUpdate.latestVersion && <span className="mt-1 block">Latest version: v{requiredUpdate.latestVersion}</span>}
+              </CardDescription>
             </CardHeader>
-            <CardContent>
+            <CardContent className="space-y-4">
               <Alert>
                 <AlertCircle className="h-4 w-4" />
-                <AlertDescription>{updateRequiredMessage}</AlertDescription>
+                <AlertDescription>{requiredUpdate.message}</AlertDescription>
               </Alert>
+              {requiredUpdate.downloadUrl ? (
+                <Button asChild className="w-full">
+                  <a href={requiredUpdate.downloadUrl} target="_blank" rel="noopener noreferrer">
+                    <Download className="h-4 w-4" />
+                    Download latest version
+                  </a>
+                </Button>
+              ) : (
+                <p className="text-sm text-muted-foreground">Contact your administrator for the latest extension download.</p>
+              )}
             </CardContent>
           </Card>
         </div>
