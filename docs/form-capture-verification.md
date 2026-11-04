@@ -38,7 +38,18 @@ The form-capture suite also loads the real extension into an isolated Chrome
 profile and verifies `pushState`, `replaceState`, final answers, confirmation and
 screenshot submission against local fixtures. The workflow browser test covers
 recovery from an already stored capture error and the missing-answers warning.
-Unsaved recorded answers still have to sync successfully before submission.
+Form answers are optional: the extension attempts to sync each recorded step,
+but validation errors, network failures, or unavailable recorders do not block
+the screenshot and application save. Previously saved answers are retained, and
+one rejected step does not prevent other steps from syncing. Failed steps remain
+available for retry until the application is successfully added.
+
+The ADP-reported `Invalid application form capture` error originates in the API's
+form-step validation. Previously, that failed sync prevented the extension from
+reaching the separate screenshot/submission endpoint. Regression tests now cover
+that exact API error during submission, including a restored pending job, partial
+form data, and no form data. The workflow browser fixture verifies the successful
+save and non-blocking warning; the user's authenticated ADP form was not inspected.
 
 For an application already affected by this error, reload the rebuilt extension,
 keep the confirmation page open, use **Load Last Job**, and retry **Take screenshot

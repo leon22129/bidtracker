@@ -12,6 +12,7 @@ const day = 24 * 60 * 60 * 1000;
 function setup(local = {}, session = {}, frameStates = [{ frameId: 0, helpers: true, recorder: true }]) {
   const listeners = [];
   let uploadStatus = 200;
+  let formResponse;
   const captures = [];
   const uploads = [];
   const injections = [];
@@ -27,7 +28,7 @@ function setup(local = {}, session = {}, frameStates = [{ frameId: 0, helpers: t
     set: async (values) => Object.assign(data, structuredClone(values)),
   });
   const context = vm.createContext({
-    console, Date, URL, Response, FormData, crypto: { randomUUID },
+    console, Date, URL, Response, FormData, AbortSignal, crypto: { randomUUID },
     setTimeout: (callback) => { callback(); return 0; },
     chrome: {
       action: { onClicked: { addListener() {} } },
@@ -72,6 +73,7 @@ function setup(local = {}, session = {}, frameStates = [{ frameId: 0, helpers: t
     fetch: async (url, options) => {
       if (url.startsWith('data:')) return new Response(Buffer.from([0x89, 0x50, 0x4e, 0x47]));
       uploads.push({ url, options });
+      if (url.endsWith('/form-capture') && formResponse) return formResponse(JSON.parse(options.body), options);
       return new Response(JSON.stringify(uploadStatus === 200 ? { saved: true } : { message: 'Upload unavailable' }), {
         status: uploadStatus,
       });
@@ -90,6 +92,7 @@ function setup(local = {}, session = {}, frameStates = [{ frameId: 0, helpers: t
     list: () => send({ type: 'GET_SCREENSHOT_APPLICATIONS' }),
     capture: (applicationId, tabId = 7, confirmed = true) => send({ type: 'CAPTURE_APPLICATION_SCREENSHOT', applicationId, tabId, confirmed }),
     setUploadStatus: (value) => { uploadStatus = value; },
+    setFormResponse: (value) => { formResponse = value; },
     drain: () => vm.runInContext('Promise.allSettled([...captureSyncs.values()])', context),
     retry: () => vm.runInContext('pendingEntries().then(entries => Promise.allSettled(Object.keys(entries).map(syncCapturedSteps)))', context),
   };
@@ -138,11 +141,15 @@ test('initializes missing scripts in each readable frame, including an embedded 
   assert.equal(JSON.parse(app.uploads[0].options.body).fields[0].answer, 'No');
 });
 
-test('reports a startup failure when no frame allows answer capture', async () => {
+test('allows screenshot submission when no frame allows answer capture', async () => {
   const app = setup({}, {}, [{ frameId: 0, restricted: true }]);
   const result = await app.send({ type: 'ARM_APPLICATION_SCREENSHOT', applicationId: 'draft', draftId: 'draft', profileTabId: 'profile', tabId: 7 });
-  assert.equal(result.ok, false);
-  assert.match(result.error, /start.*capture/i);
+  assert.equal(result.ok, true);
+  assert.match(result.captureWarning, /Some form answers/);
+  const captured = await app.send({ type: 'CAPTURE_APPLICATION_SCREENSHOT', applicationId: 'draft', profileTabId: 'profile', tabId: 7, confirmed: true });
+  assert.equal(captured.ok, true);
+  assert.match(captured.captureWarning, /Some form answers/);
+  assert.match(app.uploads[0].url, /drafts\/draft\/submit$/);
 });
 
 test('captures several steps, corrections and cleared answers in the database request', async () => {
@@ -164,19 +171,83 @@ test('captures several steps, corrections and cleared answers in the database re
   assert.equal(JSON.parse(app.uploads[2].options.body).fields[0].answer, '');
 });
 
-test('failed answer sync survives worker restart, retries, and prevents premature submission', async () => {
+test('failed answer sync survives worker restart and retries before submission', async () => {
   const app = setup();
   const token = await armDraft(app);
   app.setUploadStatus(503);
   await record(app, token, formStep('Step 1', 'Keep this answer'));
   await app.drain();
   assert.match((await app.list()).items[0].captureError, /Upload unavailable/);
-  assert.equal((await app.send({ type: 'CAPTURE_APPLICATION_SCREENSHOT', applicationId: 'draft-1', profileTabId: 'profile-1', tabId: 7, confirmed: true })).ok, false);
-  assert.equal(app.captures.length, 0);
   const restarted = setup(app.local, app.session);
   await restarted.retry();
   assert.equal(JSON.parse(restarted.uploads[0].options.body).fields[0].answer, 'Keep this answer');
   assert.equal((await restarted.list()).items[0].captureError, null);
+});
+
+for (const status of [400, 413, 503, 'network', 'timeout']) {
+  test(`form capture failure (${status}) does not block adding the application after a worker restart`, async () => {
+    const rejectForm = () => {
+      if (status === 'network') throw new TypeError('Failed to fetch');
+      if (status === 'timeout') throw new DOMException('Form capture timed out', 'TimeoutError');
+      return new Response(JSON.stringify({ message: 'Invalid application form capture' }), { status });
+    };
+    const app = setup();
+    const token = await armDraft(app);
+    app.setFormResponse(rejectForm);
+    await record(app, token, formStep('ADP Screening', 'Answer'));
+    await app.drain();
+    assert.ok((await app.list()).items[0].captureError);
+
+    const restarted = setup(app.local, app.session);
+    restarted.setFormResponse(rejectForm);
+    const result = await restarted.send({ type: 'CAPTURE_APPLICATION_SCREENSHOT', applicationId: 'draft-1',
+      profileTabId: 'profile-1', tabId: 7, confirmed: true });
+    assert.equal(result.ok, true);
+    assert.match(result.captureWarning, /Some form answers/);
+    assert.equal(restarted.captures.length, 1);
+    const submitted = restarted.uploads.at(-1);
+    assert.match(submitted.url, /drafts\/draft-1\/submit$/);
+    assert.equal(submitted.options.body.get('submitted'), 'true');
+    assert.ok(submitted.options.body.get('screenshot').size);
+    assert.deepEqual((await restarted.list()).items, []);
+  });
+}
+
+test('a rejected form step does not discard saved answers or prevent other steps from syncing', async () => {
+  const app = setup();
+  const token = await armDraft(app);
+  await record(app, token, formStep('Personal details', 'Previously saved answer'));
+  await app.drain();
+  app.setUploadStatus(503);
+  await record(app, token, formStep('ADP Screening', 'Rejected answer'));
+  await app.drain();
+  await record(app, token, formStep('Experience', 'Valid answer'));
+  await app.drain();
+
+  const restarted = setup(app.local, app.session);
+  restarted.setFormResponse((step) => new Response(JSON.stringify(step.step === 'ADP Screening'
+    ? { message: 'Invalid application form capture' } : { saved: true }), {
+    status: step.step === 'ADP Screening' ? 400 : 200,
+  }));
+  const result = await restarted.send({ type: 'CAPTURE_APPLICATION_SCREENSHOT', applicationId: 'draft-1',
+    profileTabId: 'profile-1', tabId: 7, confirmed: true });
+  assert.equal(result.ok, true);
+  assert.match(result.captureWarning, /Some form answers/);
+  assert.deepEqual(restarted.uploads.filter(({ url }) => url.endsWith('/form-capture'))
+    .map(({ options }) => JSON.parse(options.body).step), ['ADP Screening', 'Experience']);
+  assert.match(restarted.uploads.at(-1).url, /submit$/);
+  assert.deepEqual((await restarted.list()).items, []);
+});
+
+test('an old form validation error without pending steps does not block submission', async () => {
+  const app = setup();
+  await armDraft(app);
+  app.local[key]['profile-1:draft-1'].captureError = 'Invalid application form capture';
+  const result = await app.send({ type: 'CAPTURE_APPLICATION_SCREENSHOT', applicationId: 'draft-1',
+    profileTabId: 'profile-1', tabId: 7, confirmed: true });
+  assert.equal(result.ok, true);
+  assert.match(result.captureWarning, /Some form answers/);
+  assert.match(app.uploads[0].url, /submit$/);
 });
 
 test('rejects unarmed tabs, stale profile tokens, and observations after confirmation', async () => {
@@ -278,7 +349,7 @@ test('an already-submitted draft with the old capture error can save its screens
   assert.deepEqual((await restarted.list()).items, []);
 });
 
-test('recovery from a rejected observation still syncs saved steps and blocks on network failure', async () => {
+test('form capture failures allow the screenshot attempt while a failed submit remains retryable', async () => {
   const app = setup();
   const token = await armDraft(app);
   app.setUploadStatus(503);
@@ -288,7 +359,8 @@ test('recovery from a rejected observation still syncs saved steps and blocks on
   const message = { type: 'CAPTURE_APPLICATION_SCREENSHOT', applicationId: 'draft-1',
     profileTabId: 'profile-1', tabId: 7, confirmed: true };
   assert.equal((await app.send(message)).ok, false);
-  assert.equal(app.captures.length, 0);
+  assert.equal(app.captures.length, 1);
+  assert.match(app.uploads.at(-1).url, /submit$/);
   assert.equal((await app.list()).items[0].captureSteps[0].fields[0].answer, 'Keep for retry');
   app.setUploadStatus(200);
   const result = await app.send(message);
@@ -296,6 +368,7 @@ test('recovery from a rejected observation still syncs saved steps and blocks on
   assert.match(result.captureWarning, /Some form answers/);
   assert.match(app.uploads.at(-2).url, /form-capture$/);
   assert.match(app.uploads.at(-1).url, /submit$/);
+  assert.equal(app.captures.length, 2);
 });
 
 test('rejected observations warn about missing answers until those steps are captured successfully', async () => {

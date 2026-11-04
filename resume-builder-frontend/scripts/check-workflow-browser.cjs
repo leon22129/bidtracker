@@ -107,6 +107,11 @@ function fixture(extensionVersion) {
       const job = jobs.find((job) => job.id === state.latestDraft);
       return json({ id: job.id, draft_id: job.id, submitted_at: state.added.includes(job.id) ? new Date().toISOString() : null, url: job.url, company_name: job.company, job_title: 'Engineer', resume: snapshot(job), template: 'classic', job_description: updated(job), conversation_id: job.id + '-conversation', questions: state.answers.map((answer) => ({ question: answer.question, options: [] })), answers: state.answers });
     }
+    if (endpoint === '/applications/drafts/d2/form-capture') {
+      return new Response(JSON.stringify({ message: 'Invalid application form capture' }), {
+        status: 400, headers: { 'Content-Type': 'application/json' },
+      });
+    }
     if (/^\/applications\/drafts\/d[12]\/submit$/.test(endpoint)) {
       const draftId = endpoint.split('/')[3];
       if (!(init.body instanceof FormData) || init.body.get('submitted') !== 'true' || !init.body.get('screenshot')?.size) throw Error('Missing screenshot or submission confirmation');
@@ -335,10 +340,14 @@ function fixture(extensionVersion) {
     await waitFor("activeProfileWorkspace.querySelector('[data-submission-screenshot] input') && activeProfileWorkspace.innerText.includes('Prepared job: Beta')");
     await evaluate(`(async () => {
       const stored = await chrome.storage.local.get('resume_ai_pending_screenshots');
-      Object.values(stored.resume_ai_pending_screenshots).find(entry => entry.applicationId === 'd2').captureError = 'This form step could not be captured.';
+      const entry = Object.values(stored.resume_ai_pending_screenshots).find(entry => entry.applicationId === 'd2');
+      entry.captureError = 'Invalid application form capture';
+      entry.captureSteps = [{ key: 'ADP Screening', step: 'ADP Screening', url: 'https://jobs.example.test/456',
+        captured_at: Date.now(), fields: [{ id: 'question', question: 'Available date', answer: '2026-12-01',
+          section: '', field_type: 'date' }] }];
       await chrome.storage.local.set(stored);
     })()`);
-    await waitFor("activeProfileWorkspace.querySelector('[data-submission-screenshot]').innerText.includes('Some form answers could not be recorded')");
+    await waitFor("activeProfileWorkspace.querySelector('[data-submission-screenshot]').innerText.includes('You can still add the application.')");
     await evaluate("activeProfileWorkspace.querySelector('input[type=checkbox]').click()");
     await click('Take screenshot');
     await waitFor('workflowTest.tableRows === 2 && Object.values(workflowTest.pending).length === 0');
@@ -346,6 +355,7 @@ function fixture(extensionVersion) {
     await waitFor("document.body.innerText.includes('Screenshot saved and application added. Some form answers could not be recorded.')");
     assert.deepEqual(await evaluate('workflowTest.added'), ['d1', 'd2']);
     assert.deepEqual(await evaluate('workflowTest.captures'), [75, 75, 74]);
+    assert.equal(await evaluate("workflowTest.requests.includes('/applications/drafts/d2/form-capture')"), true);
     assert.equal(await evaluate("workflowTest.requests.includes('/applications/generated')"), false);
     assert.deepEqual(await evaluate('workflowTest.errors'), []);
     const capture = await page.send('Page.captureScreenshot', { format: 'png' });

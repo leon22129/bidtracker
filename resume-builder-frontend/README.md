@@ -51,6 +51,10 @@ page is still open. The button is always in the same place and does not depend o
 automatic submission detection. Saved status and upload errors appear in the section; retry with
 the same button. Multiple applications remain selectable when generated in the same browser tab.
 
+Form answers are optional. The extension saves captured answers when possible and continues
+adding the application and screenshot if form capture or answer syncing fails. Saved answers
+are retained, and a successful save shows a brief notice when some answers could not be recorded.
+
 Recent applications and saved status are retained locally for eight days and restored when the
 side panel is reopened. Uploaded images are available in BidTracker for eight days. Refresh the
 workspace table and click **View screenshot** in the pinned **Screenshot** column beside **#**.

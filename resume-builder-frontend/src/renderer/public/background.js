@@ -127,8 +127,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           submitted: previous?.tabId === Number(message.tabId) && previous?.sessionId === sessionId ? previous.submitted : false,
         };
       });
-      if (message.draftId) await startFormCapture(Number(message.tabId));
-      sendResponse({ ok: true });
+      let captureWarning;
+      if (message.draftId) {
+        try { await startFormCapture(Number(message.tabId)); } catch {
+          captureWarning = CAPTURE_WARNING;
+          await updatePending((entries) => {
+            const entry = entries[pendingKey(message.applicationId, message.profileTabId)];
+            if (entry) entry.captureWarning = captureWarning;
+          });
+        }
+      }
+      sendResponse({ ok: true, ...(captureWarning ? { captureWarning } : {}) });
     })().catch((error) => sendResponse({ ok: false, error: error.message }));
     return true;
   }
@@ -202,29 +211,44 @@ const captureSyncs = new Map();
 async function syncCapturedSteps(key) {
   if (captureSyncs.has(key)) return captureSyncs.get(key);
   const task = (async () => {
+    const failedSteps = new Map();
+    let syncError;
     try {
       while (true) {
         const pending = (await pendingEntries())[key];
         if (!pending?.draftId) return;
-        const step = (pending.captureSteps || []).find((item) => item.captured_at > (pending.syncedSteps?.[item.key] || 0));
-        if (!step) return;
+        const step = (pending.captureSteps || []).find((item) => item.captured_at > (pending.syncedSteps?.[item.key] || 0)
+          && failedSteps.get(item.key) !== item.captured_at);
+        if (!step) {
+          if (syncError && hasUnsavedSteps(pending)) throw syncError;
+          return;
+        }
         const settings = await chrome.storage.local.get([TOKEN_KEY, API_URL_KEY]);
         if (!settings[TOKEN_KEY]) throw new Error('Sign in to save captured form answers.');
-        const response = await fetch(`${String(settings[API_URL_KEY] || DEFAULT_API_URL).replace(/\/+$/, '')}/applications/drafts/${encodeURIComponent(pending.draftId)}/form-capture`, {
-          method: 'PATCH',
-          headers: { Authorization: `Bearer ${settings[TOKEN_KEY]}`, 'Content-Type': 'application/json',
-            'X-Resume-Builder-Version': chrome.runtime.getManifest().version },
-          body: JSON.stringify(step),
-        });
-        if (!response.ok) {
-          const payload = await response.json().catch(() => null);
-          throw new Error(payload?.message || `Unable to save form answers (${response.status}).`);
+        try {
+          const response = await fetch(`${String(settings[API_URL_KEY] || DEFAULT_API_URL).replace(/\/+$/, '')}/applications/drafts/${encodeURIComponent(pending.draftId)}/form-capture`, {
+            method: 'PATCH',
+            headers: { Authorization: `Bearer ${settings[TOKEN_KEY]}`, 'Content-Type': 'application/json',
+              'X-Resume-Builder-Version': chrome.runtime.getManifest().version },
+            body: JSON.stringify(step),
+            signal: AbortSignal.timeout(5000),
+          });
+          if (!response.ok) {
+            const payload = await response.json().catch(() => null);
+            throw new Error(payload?.message || `Unable to save form answers (${response.status}).`);
+          }
+        } catch (error) {
+          // A rejected step must not prevent other answers from being saved.
+          // Keep it locally for background retries until the application is added.
+          failedSteps.set(step.key, step.captured_at);
+          syncError = error;
+          continue;
         }
         await updatePending((entries) => {
           const entry = entries[key];
           if (!entry) return;
           entry.syncedSteps = { ...entry.syncedSteps, [step.key]: step.captured_at };
-          entry.captureError = null;
+          if (!hasUnsavedSteps(entry)) entry.captureError = null;
         });
       }
     } catch (error) {
@@ -338,15 +362,21 @@ async function captureAndUpload(tabId, applicationId, confirmed, profileTabId) {
   }
   let captureWarning = pending.captureWarning;
   if (pending.draftId) {
-    await flushFormCapture(tabId);
-    const key = pendingKey(applicationId, profileTabId);
-    for (let attempt = 0; attempt < 5; attempt++) {
-      await syncCapturedSteps(key);
-      const latest = (await pendingEntries())[key];
-      if (latest?.captureError) throw new Error(latest.captureError);
-      captureWarning = latest?.captureWarning;
-      if (!latest || !hasUnsavedSteps(latest)) break;
-      if (attempt === 4) throw new Error('Form answers are still saving. Try adding the application again.');
+    try {
+      await flushFormCapture(tabId);
+      const key = pendingKey(applicationId, profileTabId);
+      for (let attempt = 0; attempt < 5; attempt++) {
+        await syncCapturedSteps(key);
+        const latest = (await pendingEntries())[key];
+        captureWarning = latest?.captureWarning || captureWarning;
+        if (latest?.captureError) captureWarning = CAPTURE_WARNING;
+        if (!latest || !hasUnsavedSteps(latest)) break;
+        if (attempt === 4) captureWarning = CAPTURE_WARNING;
+      }
+    } catch {
+      // Form answers are optional. The submit endpoint retains any steps that
+      // reached the database and can also save an application without form data.
+      captureWarning = CAPTURE_WARNING;
     }
   }
   const tab = await chrome.tabs.get(tabId).catch(() => null);

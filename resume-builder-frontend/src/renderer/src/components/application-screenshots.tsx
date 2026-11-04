@@ -131,15 +131,15 @@ export function ApplicationScreenshots({
           <p className="text-xs font-medium">{[companyName, jobTitle].filter(Boolean).join(" · ")}</p>
         )}
         {selected?.captureActive && (
-          <p role="status" className={`text-xs ${selected.captureError ? 'text-destructive' : 'text-muted-foreground'}`}>
-            {selected.captureError ? `Form answers are waiting to save: ${selected.captureError}`
+          <p role="status" className="text-xs text-muted-foreground">
+            {selected.captureError ? 'Some form answers could not be saved. You can still add the application.'
               : selected.capturedAnswerCount
                 ? `${selected.capturedAnswerCount} form answers captured. ${(selected.captureSteps || []).some((step) => step.captured_at > (selected.syncedSteps?.[step.key] || 0)) ? 'Saving…' : 'Saved to database.'}`
                 : 'Recording form answers as you complete each application step.'}
           </p>
         )}
         {selected?.captureWarning && (
-          <p role="status" className="text-xs text-destructive">{selected.captureWarning}</p>
+          <p role="status" className="text-xs text-muted-foreground">{selected.captureWarning}</p>
         )}
         {selected && !selected.submitted && (
           <label className="flex items-center gap-2 text-xs">
