@@ -333,10 +333,17 @@ function fixture(extensionVersion) {
     assert.equal(await evaluate("activeProfileWorkspace.querySelector('[data-submission-screenshot] input')"), null);
     await click('Candidate - 2');
     await waitFor("activeProfileWorkspace.querySelector('[data-submission-screenshot] input') && activeProfileWorkspace.innerText.includes('Prepared job: Beta')");
+    await evaluate(`(async () => {
+      const stored = await chrome.storage.local.get('resume_ai_pending_screenshots');
+      Object.values(stored.resume_ai_pending_screenshots).find(entry => entry.applicationId === 'd2').captureError = 'This form step could not be captured.';
+      await chrome.storage.local.set(stored);
+    })()`);
+    await waitFor("activeProfileWorkspace.querySelector('[data-submission-screenshot]').innerText.includes('Some form answers could not be recorded')");
     await evaluate("activeProfileWorkspace.querySelector('input[type=checkbox]').click()");
     await click('Take screenshot');
     await waitFor('workflowTest.tableRows === 2 && Object.values(workflowTest.pending).length === 0');
     await waitFor("activeProfileWorkspace.querySelector('[data-submission-screenshot] button').disabled");
+    await waitFor("document.body.innerText.includes('Screenshot saved and application added. Some form answers could not be recorded.')");
     assert.deepEqual(await evaluate('workflowTest.added'), ['d1', 'd2']);
     assert.deepEqual(await evaluate('workflowTest.captures'), [75, 75, 74]);
     assert.equal(await evaluate("workflowTest.requests.includes('/applications/generated')"), false);

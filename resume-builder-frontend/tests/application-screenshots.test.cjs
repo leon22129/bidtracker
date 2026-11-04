@@ -205,6 +205,113 @@ test('persists a final observation queued before confirmation and syncs before a
   assert.match(app.uploads.at(-1).url, /drafts\/draft-1\/submit$/);
 });
 
+test('captures same-document Ashby routes when Chrome reports the original sender URL', async () => {
+  const app = setup();
+  const token = await armDraft(app);
+  const posting = 'https://jobs.ashbyhq.com/spruceid/c06e4344-c7b0-4c1b-beb8-a9646594ff7c';
+  const sender = { tab: { id: 7 }, frameId: 0, url: posting };
+  const step = { ...formStep('Application', 'Final answer'), url: `${posting}/application` };
+  assert.equal((await app.send({ type: 'APPLICATION_FORM_CAPTURE', token, step }, sender)).ok, true);
+  await app.drain();
+  assert.equal(JSON.parse(app.uploads[0].options.body).url, step.url);
+  assert.equal((await app.list()).items[0].captureError, null);
+  await app.send({ type: 'APPLICATION_FORM_SUBMITTED' }, sender);
+  const result = await app.send({ type: 'CAPTURE_APPLICATION_SCREENSHOT', applicationId: 'draft-1',
+    profileTabId: 'profile-1', tabId: 7, confirmed: true });
+  assert.equal(result.ok, true);
+  assert.match(app.uploads.at(-1).url, /drafts\/draft-1\/submit$/);
+});
+
+test('retains the form URL on an observation queued before the confirmation route', async () => {
+  const app = setup();
+  const token = await armDraft(app);
+  const step = formStep('Application', 'Last edit', Date.now() - 1);
+  const sender = { ...formSender, url: `${formSender.url}/confirmation` };
+  await app.send({ type: 'APPLICATION_FORM_SUBMITTED' }, sender);
+  assert.equal((await app.send({ type: 'APPLICATION_FORM_CAPTURE', token, step }, sender)).ok, true);
+  await app.drain();
+  assert.equal(JSON.parse(app.uploads[0].options.body).url, formSender.url);
+  assert.equal(JSON.parse(app.uploads[0].options.body).fields[0].answer, 'Last edit');
+});
+
+test('route tolerance still rejects other origins, non-HTTP senders and unsanitized URLs', async () => {
+  const app = setup();
+  const token = await armDraft(app);
+  for (const [url, senderUrl] of [
+    ['https://other.example.test/apply', formSender.url],
+    ['http://jobs.example.test/apply', formSender.url],
+    ['https://jobs.example.test:444/apply', formSender.url],
+    [`${formSender.url}?token=secret`, formSender.url],
+    [`${formSender.url}#private`, formSender.url],
+    ['https://name:secret@jobs.example.test/apply', formSender.url],
+    ['data:text/html,form', 'data:text/html,form'],
+    ['file:///application.html', 'file:///application.html'],
+    ['/apply', formSender.url],
+    [formSender.url, 'invalid'],
+  ]) {
+    const result = await app.send({ type: 'APPLICATION_FORM_CAPTURE', token,
+      step: { ...formStep('Application', 'Do not save'), url } }, { ...formSender, url: senderUrl });
+    assert.equal(result.ok, false, `${url} from ${senderUrl}`);
+  }
+  assert.equal(app.uploads.length, 0);
+  assert.equal((await app.list()).items[0].captureSteps, undefined);
+});
+
+test('an already-submitted draft with the old capture error can save its screenshot and recorded answers', async () => {
+  const app = setup();
+  const token = await armDraft(app);
+  await record(app, token, formStep('Application', 'Previously saved answer'));
+  await app.drain();
+  await app.send({ type: 'APPLICATION_FORM_SUBMITTED' }, formSender);
+  app.local[key]['profile-1:draft-1'].captureError = 'This form step could not be captured.';
+  const restarted = setup(app.local, {});
+  await armDraft(restarted); // Load Last Job rebinds the page after an extension reload.
+  const entry = (await restarted.list()).items[0];
+  assert.equal(entry.captureError, null);
+  assert.match(entry.captureWarning, /Some form answers could not be recorded/);
+  assert.equal(entry.captureSteps[0].fields[0].answer, 'Previously saved answer');
+  const result = await restarted.send({ type: 'CAPTURE_APPLICATION_SCREENSHOT', applicationId: 'draft-1',
+    profileTabId: 'profile-1', tabId: 7, confirmed: true });
+  assert.equal(result.ok, true);
+  assert.equal(result.captureWarning, entry.captureWarning);
+  assert.match(restarted.uploads[0].url, /drafts\/draft-1\/submit$/);
+  assert.deepEqual((await restarted.list()).items, []);
+});
+
+test('recovery from a rejected observation still syncs saved steps and blocks on network failure', async () => {
+  const app = setup();
+  const token = await armDraft(app);
+  app.setUploadStatus(503);
+  await record(app, token, formStep('Application', 'Keep for retry'));
+  await app.drain();
+  app.local[key]['profile-1:draft-1'].captureError = 'This form step could not be captured.';
+  const message = { type: 'CAPTURE_APPLICATION_SCREENSHOT', applicationId: 'draft-1',
+    profileTabId: 'profile-1', tabId: 7, confirmed: true };
+  assert.equal((await app.send(message)).ok, false);
+  assert.equal(app.captures.length, 0);
+  assert.equal((await app.list()).items[0].captureSteps[0].fields[0].answer, 'Keep for retry');
+  app.setUploadStatus(200);
+  const result = await app.send(message);
+  assert.equal(result.ok, true);
+  assert.match(result.captureWarning, /Some form answers/);
+  assert.match(app.uploads.at(-2).url, /form-capture$/);
+  assert.match(app.uploads.at(-1).url, /submit$/);
+});
+
+test('rejected observations warn about missing answers until those steps are captured successfully', async () => {
+  const app = setup();
+  const token = await armDraft(app);
+  for (const name of ['First', 'Second']) {
+    assert.equal((await record(app, token, { ...formStep(name, 'Answer'), url: 'https://other.example.test' })).ok, false);
+  }
+  await record(app, token, formStep('First', 'First answer'));
+  await app.drain();
+  assert.match((await app.list()).items[0].captureWarning, /Some form answers/);
+  await record(app, token, formStep('Second', 'Second answer'));
+  await app.drain();
+  assert.equal((await app.list()).items[0].captureWarning, null);
+});
+
 test('starting a different job retains unsaved steps for retry without capturing into the old job', async () => {
   const app = setup();
   const token = await armDraft(app);

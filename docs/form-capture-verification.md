@@ -25,3 +25,23 @@ capture-storage regressions. Reduced portal markup lives in
 After rebuilding, reload the extension, refresh the application page, and use
 **Load Last Job** to arm the intended draft. Previously missing answers need a new
 observation of the application form; the reader does not reconstruct past answers.
+
+Ashby submission capture was checked on 2026-11-04 against the public Spruce
+posting `c06e4344-c7b0-4c1b-beb8-a9646594ff7c`. The application form loaded and its
+visible fields were captured. No real application was submitted. Simulating a
+same-document route change reproduced `This form step could not be captured.`:
+Chrome retained the sending document's earlier URL while the form reader reported
+the updated path. URL validation now accepts sanitized paths on the sending
+frame's origin while retaining the tab, session and token checks.
+
+The form-capture suite also loads the real extension into an isolated Chrome
+profile and verifies `pushState`, `replaceState`, final answers, confirmation and
+screenshot submission against local fixtures. The workflow browser test covers
+recovery from an already stored capture error and the missing-answers warning.
+Unsaved recorded answers still have to sync successfully before submission.
+
+For an application already affected by this error, reload the rebuilt extension,
+keep the confirmation page open, use **Load Last Job**, and retry **Take screenshot
+& add application**. The old capture error becomes a warning instead of blocking
+the screenshot. Answers rejected before the update cannot be reconstructed once
+the form is gone; previously recorded answers are retained.

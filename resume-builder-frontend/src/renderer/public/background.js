@@ -4,6 +4,8 @@ const API_URL_KEY = "resume_ai_api_url";
 const DEFAULT_API_URL = "http://api.yourdomain.com/api";
 const MAX_PENDING_AGE_MS = 8 * 24 * 60 * 60 * 1000;
 const BROWSER_SESSION_KEY = "resume_ai_screenshot_browser_session";
+const CAPTURE_WARNING = 'Some form answers could not be recorded. The screenshot and any saved answers can still be added.';
+const isObservationError = (error) => ['This form step could not be captured.', 'Application form capture is too large to save.'].includes(error);
 
 const pendingKey = (applicationId, profileTabId) => profileTabId ? `${profileTabId}:${applicationId}` : applicationId;
 const hasUnsavedSteps = (entry) => (entry.captureSteps || []).some((step) => step.captured_at > (entry.syncedSteps?.[step.key] || 0));
@@ -27,6 +29,11 @@ async function pendingEntries() {
     .map(([key, value]) => [pendingKey(value.applicationId, value.profileTabId), {
       ...value,
       tabId: Number(value.tabId ?? key),
+      // Older recorders saved rejected observations as blocking sync errors,
+      // even though there is no rejected step in storage that can be retried.
+      captureError: isObservationError(value.captureError) ? null : value.captureError,
+      captureWarning: isObservationError(value.captureError) ? CAPTURE_WARNING : value.captureWarning,
+      captureWarningKeys: isObservationError(value.captureError) ? [null] : value.captureWarningKeys,
     }]));
 }
 
@@ -164,7 +171,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message?.type === "CAPTURE_APPLICATION_SCREENSHOT") {
     captureAndUpload(Number(message.tabId), message.applicationId, message.confirmed === true, message.profileTabId)
-      .then(() => sendResponse({ ok: true }))
+      .then((result) => sendResponse({ ok: true, ...result }))
       .catch((error) => sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error) }));
     return true;
   }
@@ -240,6 +247,19 @@ async function captureContext(sender, includeSubmitted = false) {
     && (includeSubmitted || !entry.submitted)) || null;
 }
 
+function isCaptureUrl(url, senderUrl) {
+  try {
+    const source = new URL(senderUrl);
+    const observed = new URL(url);
+    // Chrome can retain the document's original sender URL after pushState or
+    // replaceState. A queued observation can also precede the current route.
+    // Bind captures to the sending frame's origin, retaining the observed path
+    // and the existing tab/session/token checks. Queries and fragments are never saved.
+    return ['http:', 'https:'].includes(source.protocol) && observed.origin === source.origin
+      && url === observed.origin + observed.pathname;
+  } catch { return false; }
+}
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === 'GET_FORM_CAPTURE_CONTEXT') {
     captureContext(sender).then((match) => sendResponse({ ok: true, token: match?.[1].captureToken || null }))
@@ -254,9 +274,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     const step = message.step;
     // An observation made before confirmation may still be queued in its frame.
     if (match[1].submitted && !(step?.captured_at <= match[1].submittedAt)) return sendResponse({ ok: false });
-    const sourceUrl = new URL(sender.url);
-    const url = sourceUrl.origin + sourceUrl.pathname;
-    if (!['http:', 'https:'].includes(sourceUrl.protocol) || !step || step.url !== url
+    if (!step || !isCaptureUrl(step.url, sender.url)
       || typeof step.key !== 'string' || step.key.length > 2000 || typeof step.step !== 'string'
       || !Array.isArray(step.fields) || step.fields.length > 500
       || !Number.isSafeInteger(step.captured_at) || step.captured_at > Date.now() + 300000
@@ -274,12 +292,23 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       }
       entry.capturedAnswerCount = entry.captureSteps.reduce((count, item) => count + item.fields.length, 0);
       entry.captureError = null;
+      if (entry.captureWarningKeys?.includes(step.key)) {
+        entry.captureWarningKeys = entry.captureWarningKeys.filter((key) => key !== step.key);
+        if (!entry.captureWarningKeys.length) entry.captureWarning = null;
+      }
     });
     sendResponse({ ok: true });
     void syncCapturedSteps(key).catch(() => undefined);
   })().catch(async (error) => {
-    const match = await captureContext(sender);
-    if (match) await updatePending((entries) => { if (entries[match[0]]) entries[match[0]].captureError = error.message; });
+    const match = await captureContext(sender, true);
+    if (match) await updatePending((entries) => {
+      const entry = entries[match[0]];
+      if (!entry || entry.captureToken !== message.token) return;
+      if (isObservationError(error.message)) {
+        entry.captureWarning = CAPTURE_WARNING;
+        entry.captureWarningKeys = [...new Set([...(entry.captureWarningKeys || []), message.step?.key || null])];
+      } else entry.captureError = error.message;
+    });
     sendResponse({ ok: false, error: error.message });
   });
   return true;
@@ -307,6 +336,7 @@ async function captureAndUpload(tabId, applicationId, confirmed, profileTabId) {
   if (pending.sessionId !== await currentBrowserSession()) {
     throw new Error('Reopen the confirmation page and use Load Last Job to select it again after restarting or reloading the extension.');
   }
+  let captureWarning = pending.captureWarning;
   if (pending.draftId) {
     await flushFormCapture(tabId);
     const key = pendingKey(applicationId, profileTabId);
@@ -314,6 +344,7 @@ async function captureAndUpload(tabId, applicationId, confirmed, profileTabId) {
       await syncCapturedSteps(key);
       const latest = (await pendingEntries())[key];
       if (latest?.captureError) throw new Error(latest.captureError);
+      captureWarning = latest?.captureWarning;
       if (!latest || !hasUnsavedSteps(latest)) break;
       if (attempt === 4) throw new Error('Form answers are still saving. Try adding the application again.');
     }
@@ -355,4 +386,5 @@ async function captureAndUpload(tabId, applicationId, confirmed, profileTabId) {
       if (entry.applicationId === applicationId) delete current[key];
     }
   });
+  return captureWarning ? { captureWarning } : {};
 }
