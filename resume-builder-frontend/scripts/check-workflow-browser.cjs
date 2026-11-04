@@ -64,7 +64,9 @@ function fixture(extensionVersion) {
       update: async (id) => { state.browserTabId = id; },
       create: async ({ url }) => { const id = state.nextBrowserTabId++; state.browserTabs[id] = url; state.browserTabId = id; return { id, url }; },
       captureVisibleTab: async () => { state.captures.push(state.browserTabId); return 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII='; },
-      sendMessage: async (id, message) => { const job = jobs.find((job) => job.url === state.browserTabs[id]);
+      sendMessage: async (id, message) => {
+        if (message.type === 'APPLICATION_CAPTURE_START' || message.type === 'APPLICATION_CAPTURE_FLUSH') return { ok: true, captureReady: true };
+        const job = jobs.find((job) => job.url === state.browserTabs[id]);
         return { url: job.url, title: 'Engineer', jobTitle: 'Engineer', jobDescription: jd(job), jobDescriptionSource: 'fixture', questions: message.includeQuestions ? [{ question: 'Why this role?', fieldType: 'text', options: [], sensitive: false }] : [] }; },
     }, webNavigation: { getAllFrames: async () => [{ frameId: 0 }] },
   };

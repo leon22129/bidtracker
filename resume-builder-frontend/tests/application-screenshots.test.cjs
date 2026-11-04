@@ -9,11 +9,13 @@ const source = fs.readFileSync(path.join(__dirname, '../src/renderer/public/back
 const key = 'resume_ai_pending_screenshots';
 const day = 24 * 60 * 60 * 1000;
 
-function setup(local = {}, session = {}) {
+function setup(local = {}, session = {}, frameStates = [{ frameId: 0, helpers: true, recorder: true }]) {
   const listeners = [];
   let uploadStatus = 200;
   const captures = [];
   const uploads = [];
+  const injections = [];
+  const frames = structuredClone(frameStates);
   const tabs = new Map([[7, { id: 7, windowId: 1 }], [8, { id: 8, windowId: 1 }]]);
   let activeTabId = 7;
   local.resume_ai_access_token ??= 'test-token';
@@ -36,7 +38,25 @@ function setup(local = {}, session = {}) {
         onMessage: { addListener(callback) { listeners.push(callback); } },
       },
       storage: { local: storage(local), session: storage(session) },
+      webNavigation: { getAllFrames: async () => frames.map(({ frameId }) => ({ frameId })) },
+      scripting: { executeScript: async ({ target, files }) => {
+        const frame = frames.find((item) => item.frameId === target.frameIds[0]);
+        if (!frame || frame.restricted) throw Error('Cannot access this frame');
+        if (!files) return [{ frameId: frame.frameId, result: frame.helpers }];
+        injections.push({ tabId: target.tabId, frameId: frame.frameId, files: Array.from(files) });
+        if (files.includes('content-script.js')) frame.helpers = true;
+        if (files.includes('application-capture.js')) {
+          assert.equal(frame.helpers, true, 'capture needs the page helpers first');
+          frame.recorder = true;
+        }
+        return [{ frameId: frame.frameId }];
+      } },
       tabs: {
+        sendMessage: async (_tabId, message, { frameId = 0 } = {}) => {
+          const frame = frames.find((item) => item.frameId === frameId);
+          if (!frame || frame.restricted || !frame.recorder) throw Error('Receiving end does not exist');
+          return { ok: true, captureReady: message.type === 'APPLICATION_CAPTURE_START' };
+        },
         get: async (id) => {
           if (!tabs.has(id)) throw new Error('No tab with this ID');
           return tabs.get(id);
@@ -66,7 +86,7 @@ function setup(local = {}, session = {}) {
     companyName: `Company ${applicationId}`, jobTitle: 'Engineer',
   });
   return {
-    local, session, tabs, captures, uploads, send, arm,
+    local, session, tabs, captures, uploads, injections, send, arm,
     list: () => send({ type: 'GET_SCREENSHOT_APPLICATIONS' }),
     capture: (applicationId, tabId = 7, confirmed = true) => send({ type: 'CAPTURE_APPLICATION_SCREENSHOT', applicationId, tabId, confirmed }),
     setUploadStatus: (value) => { uploadStatus = value; },
@@ -94,6 +114,36 @@ async function armDraft(app, id = 'draft-1') {
   return (await app.send({ type: 'GET_FORM_CAPTURE_CONTEXT' }, formSender)).token;
 }
 const record = (app, token, step) => app.send({ type: 'APPLICATION_FORM_CAPTURE', token, step }, formSender);
+
+test('starts the recorder on an already-open Ashby page where only the job scanner was injected', async () => {
+  const app = setup({}, {}, [{ frameId: 0, helpers: true, recorder: false }]);
+  await armDraft(app);
+  assert.deepEqual(app.injections, [{ tabId: 7, frameId: 0, files: ['application-capture.js'] }]);
+  await armDraft(app);
+  assert.equal(app.injections.length, 1, 'a running recorder is reused');
+});
+
+test('initializes missing scripts in each readable frame, including an embedded Greenhouse form', async () => {
+  const app = setup({}, {}, [
+    { frameId: 0, helpers: false, recorder: false },
+    { frameId: 12, helpers: false, recorder: false },
+    { frameId: 13, restricted: true },
+  ]);
+  const token = await armDraft(app);
+  assert.deepEqual(app.injections, [0, 12].map((frameId) => ({ tabId: 7, frameId, files: ['content-script.js', 'application-capture.js'] })));
+  const url = 'https://job-boards.greenhouse.io/embed/job_app';
+  assert.equal((await app.send({ type: 'APPLICATION_FORM_CAPTURE', token, step: { ...formStep('Application', 'No'), url } },
+    { tab: { id: 7 }, frameId: 12, url })).ok, true);
+  await app.drain();
+  assert.equal(JSON.parse(app.uploads[0].options.body).fields[0].answer, 'No');
+});
+
+test('reports a startup failure when no frame allows answer capture', async () => {
+  const app = setup({}, {}, [{ frameId: 0, restricted: true }]);
+  const result = await app.send({ type: 'ARM_APPLICATION_SCREENSHOT', applicationId: 'draft', draftId: 'draft', profileTabId: 'profile', tabId: 7 });
+  assert.equal(result.ok, false);
+  assert.match(result.error, /start.*capture/i);
+});
 
 test('captures several steps, corrections and cleared answers in the database request', async () => {
   const app = setup();

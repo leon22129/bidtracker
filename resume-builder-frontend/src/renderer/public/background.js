@@ -57,6 +57,34 @@ function currentBrowserSession() {
   return browserSession;
 }
 
+const captureStarts = new Map();
+async function startFormCapture(tabId) {
+  if (captureStarts.has(tabId)) return captureStarts.get(tabId);
+  const task = (async () => {
+    const frames = await chrome.webNavigation?.getAllFrames({ tabId }).catch(() => []) || [];
+    const frameIds = [...new Set(frames.length ? frames.map(({ frameId }) => frameId) : [0])];
+    const results = await Promise.allSettled(frameIds.map(async (frameId) => {
+      const start = () => chrome.tabs.sendMessage(tabId, { type: 'APPLICATION_CAPTURE_START' }, { frameId });
+      if ((await start().catch(() => null))?.captureReady) return;
+      // Open tabs may have only the scanner (or no scripts after installation).
+      // Probe the helpers without scanning or changing any application fields.
+      const target = { tabId, frameIds: [frameId] };
+      const [probe] = await chrome.scripting.executeScript({ target, func: () =>
+        typeof cleanLabel === 'function' && typeof fieldLabel === 'function' && typeof isVisible === 'function' });
+      await chrome.scripting.executeScript({ target,
+        files: probe?.result ? ['application-capture.js'] : ['content-script.js', 'application-capture.js'] });
+      if (!(await start())?.captureReady) throw new Error('Recorder did not respond');
+    }));
+    // Restricted advertising/authentication frames must not prevent a readable
+    // application frame from starting. Report failure if none can be reached.
+    if (!results.some((result) => result.status === 'fulfilled')) {
+      throw new Error('Unable to start answer capture on the linked job page. Refresh the page and load the job again.');
+    }
+  })();
+  captureStarts.set(tabId, task);
+  try { await task; } finally { captureStarts.delete(tabId); }
+}
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === "ARM_APPLICATION_SCREENSHOT") {
     (async () => {
@@ -92,7 +120,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           submitted: previous?.tabId === Number(message.tabId) && previous?.sessionId === sessionId ? previous.submitted : false,
         };
       });
-      chrome.tabs.sendMessage?.(Number(message.tabId), { type: 'APPLICATION_CAPTURE_START' }).catch(() => undefined);
+      if (message.draftId) await startFormCapture(Number(message.tabId));
       sendResponse({ ok: true });
     })().catch((error) => sendResponse({ ok: false, error: error.message }));
     return true;

@@ -243,7 +243,7 @@ async function sendToCurrentPageFrames<T>(message: unknown): Promise<{
       try {
         await scriptingApi.executeScript({
           target: { tabId: tab.id as number, frameIds: [frameId] },
-          files: ["content-script.js"],
+          files: ["content-script.js", "application-capture.js"],
         });
         return await sendToFrame(frameId);
       } catch {
