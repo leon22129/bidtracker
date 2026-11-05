@@ -1,4 +1,4 @@
-const DEFAULT_API_URL = "http://api.yourdomain.com/api";
+const DEFAULT_API_URL = "https://bidtracker365.com/api";
 const API_URL_KEY = "resume_ai_api_url";
 const TOKEN_KEY = "resume_ai_access_token";
 const PROFILE_DOWNLOAD_PATHS_KEY = "resume_ai_profile_download_paths";
@@ -311,31 +311,56 @@ export async function getProfileDirectoryHandle(profileId: string): Promise<File
   if (!("indexedDB" in window)) return null;
   try {
     const db = await openDirectoryHandleDb();
-    return await new Promise((resolve) => {
-      const request = db.transaction(PROFILE_DIRECTORY_HANDLES_STORE, "readonly")
-        .objectStore(PROFILE_DIRECTORY_HANDLES_STORE).get(`resumeDirHandle:${profileId}`);
-      request.onsuccess = () => resolve(request.result ?? null);
-      request.onerror = () => resolve(null);
-    });
-  } catch {
-    return null;
+    try {
+      return await new Promise((resolve, reject) => {
+        const request = db.transaction(PROFILE_DIRECTORY_HANDLES_STORE, "readonly")
+          .objectStore(PROFILE_DIRECTORY_HANDLES_STORE).get(`resumeDirHandle:${profileId}`);
+        request.onsuccess = () => resolve(request.result ?? null);
+        request.onerror = () => reject(request.error);
+      });
+    } finally {
+      db.close();
+    }
+  } catch (cause) {
+    throw new Error("Unable to read the saved download folder. Check the location in profile settings.", { cause });
   }
 }
 
 export async function setProfileDirectoryHandle(profileId: string, handle: FileSystemDirectoryHandle): Promise<void> {
   const db = await openDirectoryHandleDb();
-  await new Promise<void>((resolve, reject) => {
-    const request = db.transaction(PROFILE_DIRECTORY_HANDLES_STORE, "readwrite")
-      .objectStore(PROFILE_DIRECTORY_HANDLES_STORE).put(handle, `resumeDirHandle:${profileId}`);
-    request.onsuccess = () => resolve();
-    request.onerror = () => reject(request.error);
-  });
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const transaction = db.transaction(PROFILE_DIRECTORY_HANDLES_STORE, "readwrite");
+      transaction.objectStore(PROFILE_DIRECTORY_HANDLES_STORE).put(handle, `resumeDirHandle:${profileId}`);
+      transaction.oncomplete = () => resolve();
+      transaction.onabort = () => reject(transaction.error);
+      transaction.onerror = () => reject(transaction.error);
+    });
+  } finally {
+    db.close();
+  }
+}
+
+export async function clearProfileDirectoryHandle(profileId: string): Promise<void> {
+  if (!("indexedDB" in window)) return;
+  const db = await openDirectoryHandleDb();
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const transaction = db.transaction(PROFILE_DIRECTORY_HANDLES_STORE, "readwrite");
+      transaction.objectStore(PROFILE_DIRECTORY_HANDLES_STORE).delete(`resumeDirHandle:${profileId}`);
+      transaction.oncomplete = () => resolve();
+      transaction.onabort = () => reject(transaction.error);
+      transaction.onerror = () => reject(transaction.error);
+    });
+  } finally {
+    db.close();
+  }
 }
 
 export async function chooseProfileDirectory(profileId: string): Promise<string | null> {
-  const picker = (window as Window & { showDirectoryPicker?: () => Promise<FileSystemDirectoryHandle> }).showDirectoryPicker;
+  const picker = (window as Window & { showDirectoryPicker?: (options: { mode: "readwrite" }) => Promise<FileSystemDirectoryHandle> }).showDirectoryPicker;
   if (!picker) throw new Error("Your browser does not support directory selection.");
-  const handle = await picker();
+  const handle = await picker.call(window, { mode: "readwrite" });
   await setProfileDirectoryHandle(profileId, handle);
   await setProfileDownloadPath(profileId, handle.name);
   return handle.name;

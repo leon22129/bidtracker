@@ -19,7 +19,14 @@ export default defineConfig({
       "@": resolve("src/renderer/src"),
     },
   },
-  plugins: [react(), tailwindcss()],
+  plugins: [
+    react(),
+    tailwindcss(),
+    {
+      name: "app-version",
+      transformIndexHtml: (html) => html.replaceAll("%APP_VERSION%", version),
+    },
+  ],
   build: {
     outDir: resolve("dist-web"),
     emptyOutDir: true,

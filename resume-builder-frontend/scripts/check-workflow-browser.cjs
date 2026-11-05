@@ -3,7 +3,9 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
 process.chdir(path.resolve(__dirname, '../..'));
-const profilePath = path.resolve('.tmp/workflow-browser');
+const profileRoot = path.resolve('.tmp');
+fs.mkdirSync(profileRoot, { recursive: true });
+const profilePath = fs.mkdtempSync(path.join(profileRoot, 'workflow-browser-'));
 const browserPath = process.env.CHROME_BIN || (process.platform === 'win32'
   ? 'C:/Program Files/Google/Chrome/Application/chrome.exe' : 'google-chrome');
 const chrome = spawn(browserPath, [
@@ -18,10 +20,10 @@ async function connect(url) {
   const pending = new Map();
   socket.onmessage = ({ data }) => { const message = JSON.parse(data); if (message.id) {
     const promise = pending.get(message.id); pending.delete(message.id);
-    if (message.error) promise.reject(Error(message.error.message)); else promise.resolve(message.result);
+    if (message.error) promise.reject(Error(promise.method + ': ' + message.error.message)); else promise.resolve(message.result);
   } };
   return { send: (method, params = {}) => new Promise((resolve, reject) => {
-    const id = ++next; pending.set(id, { resolve, reject }); socket.send(JSON.stringify({ id, method, params }));
+    const id = ++next; pending.set(id, { resolve, reject, method }); socket.send(JSON.stringify({ id, method, params }));
   }), close: () => socket.close() };
 }
 function fixture(extensionVersion) {
@@ -36,7 +38,12 @@ function fixture(extensionVersion) {
   state.nextBrowserTabId ||= 75;
   const jd = (job) => `Job Information\nTitle: Engineer\nCompany: ${job.company}\n\nJob Description\nRemote US role for an engineer.`;
   const personal = { fullName: 'Test Candidate', title: 'Engineer', email: 'candidate@example.test', location: 'Chicago, IL' };
-  const rawResume = (job) => ({ summary: `${job.company} summary`, skills: ['TypeScript'], workexperience: [], annual_salary: job.salary, hourly_rate: '$72.12', rate_in_jd: false });
+  state.profile ||= { id: 'p1', workspace_id: 'w1', name: 'Candidate', personal_info: personal, education: [], certifications: [],
+    auto_download: false, generate_cover_letter: false, save_in_folder: false, use_company_name: false, template: 'classic', cover_letter_template: 'classic' };
+  state.downloads ||= [];
+  state.profileUpdates ||= [];
+  const rawResume = (job) => ({ summary: `${job.company} summary`, skills: ['TypeScript'], workexperience: [], annual_salary: job.salary, hourly_rate: '$72.12', rate_in_jd: false,
+    coverletter: `Dear Hiring Team,\n\nI would like to join ${job.company}. My engineering experience fits this role.\n\nSincerely,` });
   const snapshot = (job) => ({ personalInfo: personal, education: [], certifications: [], summary: rawResume(job).summary, skills: [{ category: 'Technical Skills', items: ['TypeScript'] }], workexperience: [], annualSalary: job.salary, hourlyRate: '$72.12', rateInJd: false });
   const updated = (job) => jd(job) + `\n\nExpected Rate (estimated)\nAnnual: ${job.salary}\nHourly: $72.12`;
   const store = previous?.store || { resume_ai_access_token: 'fixture-token', resume_ai_api_url: 'https://workflow.test/api',
@@ -49,6 +56,17 @@ function fixture(extensionVersion) {
   const storageListeners = [];
   const messageListeners = [];
   window.chrome = {
+    downloads: { download: (options, callback) => {
+      if (state.failDownload) {
+        chrome.runtime.lastError = { message: 'Fixture download failure' };
+        callback(-1);
+        delete chrome.runtime.lastError;
+        return;
+      }
+      const content = atob(options.url.split(',')[1]);
+      state.downloads.push({ filename: options.filename, bytes: content.length, header: content.slice(0, 5) });
+      callback(state.downloads.length);
+    } },
     sidePanel: { setPanelBehavior: async () => {} }, action: { onClicked: { addListener() {} } },
     storage: { local: {
       get: async () => store,
@@ -79,15 +97,22 @@ function fixture(extensionVersion) {
     if (suppliedVersion !== extensionVersion) throw Error('Missing or incorrect extension version on ' + endpoint);
     if (state.requireUpdate) return new Response(JSON.stringify({
       code: 'RESUME_BUILDER_UPDATE_REQUIRED',
-      message: 'Update Resume Builder to version 0.9.4 or newer, then reload the extension in Chrome.',
-      latest_version: '0.9.4',
+      message: 'Update Resume Builder to version 0.9.5 or newer, then reload the extension in Chrome.',
+      latest_version: '0.9.5',
       download_url: state.downloadUrl ?? 'https://downloads.example.test/resume-builder.zip',
     }), { status: 426, headers: { 'Content-Type': 'application/json' } });
     const json = (body) => new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } });
     if (endpoint === '/auth/me') return json({ id: 'u1', username: 'Bidder', role: 'bidder', is_active: true });
-    if (endpoint === '/workspaces/profiles/assigned') return json([{ id: 'p1', workspace_id: 'w1', name: 'Candidate', personal_info: personal, education: [], certifications: [], auto_download: false }]);
+    if (endpoint === '/workspaces/profiles/assigned') return json([state.profile]);
+    if (endpoint === '/workspaces/profiles/p1' && init?.method === 'PATCH') {
+      const input = JSON.parse(init.body);
+      state.profileUpdates.push(input);
+      Object.assign(state.profile, input);
+      return json(state.profile);
+    }
     if (endpoint === '/applications/generate') {
       const input = JSON.parse(init.body);
+      if (input.workspace_id !== 'w1') throw Error('Profile settings lost the assigned workspace');
       const job = jobs.find((job) => job.url === input.url);
       if (!job || input.job_description !== jd(job)) throw Error('Wrong JD was sent');
       (state.generationUrls ||= []).push(input.url);
@@ -161,6 +186,8 @@ function fixture(extensionVersion) {
         try { if (await evaluate(expression)) return; } catch {}
         await pause(100);
       }
+      const failedCapture = await page.send('Page.captureScreenshot', { format: 'png' });
+      fs.writeFileSync(path.join(profilePath, 'failed-check.png'), Buffer.from(failedCapture.data, 'base64'));
       throw Error('Timed out: ' + expression + '\n' + await evaluate('document.body.innerText') + '\n' + JSON.stringify(await evaluate('workflowTest')));
     };
     const reloadPage = async () => {
@@ -168,18 +195,59 @@ function fixture(extensionVersion) {
       await page.send('Page.reload');
       await waitFor('window.workflowReloadMarker !== true && Boolean(window.activeProfileWorkspace)');
     };
-    const clickSelector = async (selector) => {
-      const box = await evaluate(`(()=>{const el=[...document.querySelectorAll(${JSON.stringify(selector)})].find(el=>el.getClientRects().length);if(!el)throw Error('Missing control '+${JSON.stringify(selector)});el.scrollIntoView({block:'center'});const r=el.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2};})()`);
+    const clickElement = async (expression) => {
+      const point = `(() => {
+        const el = ${expression};
+        if (!el || el.disabled) return null;
+        el.scrollIntoView({ block: 'center' });
+        for (let ancestor = el; ancestor; ancestor = ancestor.parentElement) {
+          if (ancestor.getAnimations().some(animation => animation.playState === 'running')) return null;
+        }
+        const rect = el.getBoundingClientRect();
+        const x = rect.x + rect.width / 2, y = rect.y + rect.height / 2;
+        if (!el.contains(document.elementFromPoint(x, y))) return null;
+        return { x, y };
+      })()`;
+      await waitFor(`Boolean(window.workflowClickPoint = ${point})`);
+      const box = await evaluate('window.workflowClickPoint');
       await page.send('Input.dispatchMouseEvent', { type: 'mousePressed', button: 'left', clickCount: 1, ...box });
       await page.send('Input.dispatchMouseEvent', { type: 'mouseReleased', button: 'left', clickCount: 1, ...box });
     };
+    const clickSelector = (selector) => clickElement(`[...document.querySelectorAll(${JSON.stringify(selector)})].find(el => el.getClientRects().length)`);
     const click = async (text) => {
+      if (text === 'Download PDF') {
+        await evaluate("document.querySelectorAll('[toast-close]').forEach(button => button.click())");
+        await waitFor("!document.querySelector('[data-slot=toast][data-state=open]')");
+      }
       const selector = ['Resume', 'Questions'].includes(text) ? '[role="tab"]' : 'button';
-      const box = await evaluate(`(()=>{const el=[...document.querySelectorAll(${JSON.stringify(selector)})].find(el=>el.getClientRects().length&&el.textContent.includes(${JSON.stringify(text)}));if(!el)throw Error('Missing control '+${JSON.stringify(text)});el.scrollIntoView({block:'center'});const r=el.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2};})()`);
-      await page.send('Input.dispatchMouseEvent', { type: 'mousePressed', button: 'left', clickCount: 1, ...box });
-      await page.send('Input.dispatchMouseEvent', { type: 'mouseReleased', button: 'left', clickCount: 1, ...box });
+      await clickElement(`[...document.querySelectorAll(${JSON.stringify(selector)})].find(el => el.getClientRects().length && el.textContent.includes(${JSON.stringify(text)}))`);
     };
     await waitFor("[...document.querySelectorAll('button')].some(el=>el.textContent.includes('Generate Resume'))");
+    const openProfileSettings = async () => {
+      await click('Profiles');
+      await clickSelector('[role="menuitem"]');
+      await waitFor("document.querySelector('[role=dialog]')?.textContent.includes('Profile settings: Candidate')");
+    };
+    await openProfileSettings();
+    await clickSelector('#profile-cover-letter');
+    await clickSelector('#profile-save-in-folder');
+    await clickSelector('#profile-company-name');
+    await clickSelector('#profile-download-jd');
+    await click('Save');
+    await waitFor('workflowTest.profile.generate_cover_letter && workflowTest.profile.save_in_folder && workflowTest.profile.use_company_name');
+    assert.equal(await evaluate("Object.hasOwn(workflowTest.profileUpdates.at(-1), 'auto_download')"), false, 'Saving other options must not reset automatic downloads');
+    await page.send('Emulation.setDeviceMetricsOverride', { width: 420, height: 768, deviceScaleFactor: 1, mobile: false });
+    assert.equal(await evaluate("document.querySelector('[role=dialog]').scrollWidth <= document.querySelector('[role=dialog]').clientWidth + 1"), true, 'Profile settings fit the narrow extension panel');
+    const settingsCapture = await page.send('Page.captureScreenshot', { format: 'png' });
+    fs.writeFileSync(path.join(profilePath, 'profile-settings-verified.png'), Buffer.from(settingsCapture.data, 'base64'));
+    await page.send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false });
+    await click('Close');
+    await reloadPage();
+    await openProfileSettings();
+    for (const id of ['profile-cover-letter', 'profile-save-in-folder', 'profile-company-name', 'profile-download-jd']) {
+      assert.equal(await evaluate(`document.getElementById('${id}').getAttribute('aria-checked')`), 'true', `${id} persists after reload`);
+    }
+    await click('Close');
     assert.deepEqual(await evaluate("chrome.runtime.sendMessage({ type: 'GET_SCREENSHOT_APPLICATIONS' }).then(result => result.items)"), []);
     assert.equal(await evaluate("document.querySelector('select[aria-label=\"Application to screenshot\"]')"), null);
     const firstTabId = await evaluate("activeProfileWorkspace.dataset.profileTabId");
@@ -216,6 +284,90 @@ function fixture(extensionVersion) {
     assert.equal(await evaluate("Object.values(workflowTest.pending).find(entry => entry.applicationId === 'd1').tabId"), 75);
     assert.equal(await evaluate("activeProfileWorkspace.querySelector('pre').textContent.includes('Expected Rate')"), true);
     assert.equal(await evaluate("activeProfileWorkspace.querySelector('[data-submission-screenshot] button').disabled"), true);
+    // Updating options must preserve the prepared company's name and workspace.
+    await openProfileSettings();
+    await click('Save');
+    await waitFor('workflowTest.profileUpdates.length === 2');
+    await click('Close');
+    await click('Preview');
+    await waitFor("document.querySelector('[role=dialog]')?.textContent.includes('Cover Letter')");
+    await click('Download PDF');
+    await waitFor('workflowTest.downloads.length === 3');
+    const folderDownloads = await evaluate('workflowTest.downloads');
+    assert.match(folderDownloads[0].filename, /^Resumes\/\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2} - Acme\/Resume - Acme\.pdf$/);
+    assert.equal(folderDownloads[1].filename.split('/').at(-1), 'job-description.txt');
+    assert.equal(folderDownloads[2].filename.split('/').at(-1), 'Cover Letter - Acme.pdf');
+    assert.equal(folderDownloads[0].filename.slice(0, folderDownloads[0].filename.lastIndexOf('/')), folderDownloads[2].filename.slice(0, folderDownloads[2].filename.lastIndexOf('/')));
+    for (const file of [folderDownloads[0], folderDownloads[2]]) {
+      assert.equal(file.header, '%PDF-');
+      assert.ok(file.bytes > 1000);
+    }
+    await click('Close');
+
+    // Native directory handles are real OPFS handles in this isolated browser.
+    await evaluate(`window.showDirectoryPicker = async options => {
+      workflowTest.pickerMode = options.mode;
+      return (await navigator.storage.getDirectory()).getDirectoryHandle('fixture-resumes', { create: true });
+    }`);
+    await openProfileSettings();
+    await click('Choose folder');
+    await waitFor("document.querySelector('[role=dialog]').textContent.includes('fixture-resumes')");
+    assert.equal(await evaluate('workflowTest.pickerMode'), 'readwrite');
+    await click('Close');
+    await click('Preview');
+    await click('Download PDF');
+    await waitFor("document.body.innerText.includes('Saved under fixture-resumes')");
+    const nativeFiles = await evaluate(`(async () => {
+      const parent = await (await navigator.storage.getDirectory()).getDirectoryHandle('fixture-resumes');
+      const files = [];
+      for await (const directory of parent.values()) for await (const handle of directory.values()) {
+        const file = await handle.getFile();
+        files.push({ name: handle.name, header: (await file.text()).slice(0, 5), size: file.size });
+      }
+      return files;
+    })()`);
+    assert.deepEqual(nativeFiles.map(file => file.name).sort(), ['Cover Letter - Acme.pdf', 'Resume - Acme.pdf', 'job-description.txt']);
+    assert.ok(nativeFiles.filter(file => file.name.endsWith('.pdf')).every(file => file.header === '%PDF-' && file.size > 1000));
+    await evaluate(`window.originalGetDirectory = FileSystemDirectoryHandle.prototype.getDirectoryHandle;
+      FileSystemDirectoryHandle.prototype.getDirectoryHandle = async () => { throw new DOMException('Folder unavailable', 'NotAllowedError'); }`);
+    await click('Download PDF');
+    await waitFor("activeProfileWorkspace.textContent.includes('Could not access the selected folder')");
+    assert.equal(await evaluate('workflowTest.downloads.length'), 3, 'Folder errors must not silently fall back to another destination');
+    await evaluate('FileSystemDirectoryHandle.prototype.getDirectoryHandle = window.originalGetDirectory');
+    await click('Close');
+
+    await openProfileSettings();
+    await waitFor("document.querySelector('[role=dialog]').textContent.includes('fixture-resumes')");
+    await click('Use Downloads folder');
+    await waitFor("document.querySelector('[role=dialog]').textContent.includes('Current folder: Chrome Downloads/Resumes')");
+    await clickSelector('#profile-save-in-folder');
+    await clickSelector('#profile-cover-letter');
+    await clickSelector('#profile-company-name');
+    await click('Save');
+    await waitFor('!workflowTest.profile.generate_cover_letter && !workflowTest.profile.use_company_name && !workflowTest.profile.save_in_folder');
+    await click('Close');
+    await click('Preview');
+    await click('Download PDF');
+    await waitFor('workflowTest.downloads.length === 4');
+    assert.equal(await evaluate('workflowTest.downloads.at(-1).filename'), 'Resume.pdf', 'Turning options off removes both company name and cover letter');
+    await click('Close');
+    await openProfileSettings();
+    await clickSelector('#profile-cover-letter');
+    await clickSelector('#profile-company-name');
+    await click('Save');
+    await waitFor('workflowTest.profile.generate_cover_letter && workflowTest.profile.use_company_name');
+    await click('Close');
+    await click('Preview');
+    await click('Download PDF');
+    await waitFor('workflowTest.downloads.length === 6');
+    assert.deepEqual(await evaluate('workflowTest.downloads.slice(-2).map(file => file.filename)'), ['Resume - Acme.pdf', 'Cover Letter - Acme.pdf']);
+    await evaluate('workflowTest.failDownload = true');
+    await click('Download PDF');
+    await waitFor("activeProfileWorkspace.textContent.includes('Chrome could not start the download')");
+    assert.equal(await evaluate('workflowTest.downloads.length'), 6);
+    await evaluate('workflowTest.failDownload = false');
+    await click('Close');
+    console.log('PASS: profile options persist; generation keeps its workspace; company names and cover-letter switches affect files; Chrome and native-folder PDF downloads work; failures propagate');
     await evaluate("document.querySelector('[toast-close]')?.click()");
     await click('Questions');
     await waitFor("[...document.querySelectorAll('button')].some(el=>el.textContent.includes('Generate Answers'))");
@@ -359,13 +511,13 @@ function fixture(extensionVersion) {
     assert.equal(await evaluate("workflowTest.requests.includes('/applications/generated')"), false);
     assert.deepEqual(await evaluate('workflowTest.errors'), []);
     const capture = await page.send('Page.captureScreenshot', { format: 'png' });
-    fs.writeFileSync('.tmp/application-workflow-verified.png', Buffer.from(capture.data, 'base64'));
+    fs.writeFileSync(path.join(profilePath, 'application-workflow-verified.png'), Buffer.from(capture.data, 'base64'));
     await evaluate('workflowTest.requireUpdate = true');
     const updateError = await evaluate('window.aiProfiles.list().then(() => null, error => error.message)');
-    assert.match(updateError, /Update Resume Builder to version 0\.9\.4/);
+    assert.match(updateError, /Update Resume Builder to version 0\.9\.5/);
     await waitFor("document.body.innerText.includes('Resume Builder update required') && !window.activeProfileWorkspace");
     assert.equal(await evaluate(`document.body.innerText.includes('Installed version: v${extensionVersion}')`), true);
-    assert.equal(await evaluate("document.body.innerText.includes('Latest version: v0.9.4')"), true);
+    assert.equal(await evaluate("document.body.innerText.includes('Latest version: v0.9.5')"), true);
     const downloadLink = "[...document.querySelectorAll('a')].find(el => el.textContent.includes('Download latest version'))";
     assert.equal(await evaluate(`(${downloadLink}).href`), 'https://downloads.example.test/resume-builder.zip');
     assert.equal(await evaluate(`(${downloadLink}).target`), '_blank');
@@ -390,7 +542,7 @@ function fixture(extensionVersion) {
     assert.equal(await evaluate("chrome.storage.local.get('resume_ai_access_token').then(store => store.resume_ai_access_token ?? null)"), null);
     await page.send('Emulation.setDeviceMetricsOverride', { width: 420, height: 768, deviceScaleFactor: 1, mobile: false });
     const updateCapture = await page.send('Page.captureScreenshot', { format: 'png' });
-    fs.writeFileSync('.tmp/workflow-browser/extension-update-verified.png', Buffer.from(updateCapture.data, 'base64'));
+    fs.writeFileSync(path.join(profilePath, 'extension-update-verified.png'), Buffer.from(updateCapture.data, 'base64'));
     console.log('PASS: HTTP 426 displays the configured download button on login, during a session, and after reload; invalid links are rejected; existing login tokens are preserved');
     console.log('PASS: linked source URL stays with pasted JD across browser-tab switches and reload; changed/closed sources blocked before backend calls; reopened source used for capture; independent profile tabs, draft submission, retries, and success toast');
     console.log('PASS: a pending answer request blocks resume generation, job restoration, relinking, and submission until the answers are saved');

@@ -30,7 +30,7 @@ export async function downloadBlob(blob: Blob, filename: string): Promise<void> 
                 finish(new Error(runtimeError.message || "Chrome could not start the download."))
                 return
               }
-              if (downloadId < 0) {
+              if (typeof downloadId !== "number" || downloadId < 0) {
                 finish(new Error("Chrome could not start the download."))
                 return
               }
@@ -39,7 +39,7 @@ export async function downloadBlob(blob: Blob, filename: string): Promise<void> 
           )
           if (result && typeof result.then === "function") {
             result.then((downloadId) => {
-              if (downloadId < 0) {
+              if (typeof downloadId !== "number" || downloadId < 0) {
                 finish(new Error("Chrome could not start the download."))
                 return
               }
@@ -49,7 +49,7 @@ export async function downloadBlob(blob: Blob, filename: string): Promise<void> 
         })
         return
       } catch (error) {
-        console.warn("Chrome Downloads API failed; using browser download fallback.", error)
+        throw new Error("Chrome could not start the download. Check its download permissions and the selected folder.", { cause: error })
       }
     }
     const link = document.createElement("a");
