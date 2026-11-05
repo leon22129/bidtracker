@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth-context';
 import { BrandIcon } from '@/components/brand-icon';
+import { ThemeToggle } from '@/components/theme-toggle';
 import { canManageUsers, canViewAnalytics, isAdmin, roleLabel } from '@/lib/permissions';
 
 /**
@@ -27,7 +28,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   if (loading) {
     return (
       <div className="flex h-full items-center justify-center">
-        <p className="text-sm text-gray-500">Loading…</p>
+        <p className="text-sm text-gray-500 dark:text-gray-400">Loading…</p>
       </div>
     );
   }
@@ -44,13 +45,13 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="flex h-full flex-col">
-      <header className="z-20 flex h-12 shrink-0 items-center gap-6 border-b border-gray-800 bg-gray-900 px-4 text-white">
-        <Link href="/workspaces" className="flex shrink-0 items-center gap-2 text-sm font-semibold tracking-tight text-white">
+      <header className="z-20 flex min-h-12 shrink-0 flex-wrap items-center gap-x-6 gap-y-2 border-b border-gray-200 bg-white px-4 py-2 text-gray-900 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100">
+        <Link href="/workspaces" className="flex shrink-0 items-center gap-2 text-sm font-semibold tracking-tight">
           <BrandIcon size={28} />
           BidTracker
         </Link>
 
-        <nav className="flex items-center gap-1">
+        <nav className="flex flex-wrap items-center gap-1">
           {nav.map((item) => {
             const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
             return (
@@ -58,7 +59,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                 key={item.href}
                 href={item.href}
                 className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
-                  active ? 'bg-white text-gray-900' : 'text-gray-300 hover:text-white'
+                  active ? 'bg-gray-900 text-white dark:bg-gray-100 dark:text-gray-900' : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900 dark:text-gray-300 dark:hover:bg-gray-800 dark:hover:text-white'
                 }`}
               >
                 {item.label}
@@ -68,9 +69,12 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         </nav>
 
         <div className="ml-auto flex items-center gap-3">
-          <div className="text-right leading-tight">
-            <div className="text-xs font-medium">{user.username}</div>
-            <div className="text-2xs text-gray-400">{roleLabel(user.role)}</div>
+          <div className="flex items-center gap-2">
+            <div className="text-right leading-tight">
+              <div className="text-xs font-medium">{user.username}</div>
+              <div className="text-2xs text-gray-400">{roleLabel(user.role)}</div>
+            </div>
+            <ThemeToggle />
           </div>
           <Link href="/account" className="btn-secondary btn-xs">
             Account

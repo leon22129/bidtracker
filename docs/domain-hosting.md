@@ -159,7 +159,7 @@ If HTTP shows GoDaddy parking while HTTPS returns 525, check that the root DNS
 record points to the tunnel instead of the imported GoDaddy A records.
 
 Reload the unpacked extension from `resume-builder-frontend/dist-web` in
-`chrome://extensions` and confirm it shows **0.9.4**. In its settings, set **Backend API URL** to
+`chrome://extensions` and confirm it shows **0.9.5**. In its settings, set **Backend API URL** to
 `https://bidtracker365.com/api` and sign in. Existing saved URLs are retained
 until changed; the defaults already use this domain.
 

@@ -56,7 +56,7 @@ export function Cell({
         {available ? (
           <button
             type="button"
-            className="rounded border border-blue-300 bg-blue-50 px-2 py-0.5 text-2xs font-semibold text-blue-800 hover:bg-blue-100"
+            className="rounded border border-blue-300 dark:border-blue-700 bg-blue-50 dark:bg-blue-950 px-2 py-0.5 text-2xs font-semibold text-blue-800 dark:text-blue-200 hover:bg-blue-100 dark:hover:bg-blue-900"
             title="View submission screenshot"
             aria-label={`View screenshot for application ${row.number}`}
             onClick={() => onViewScreenshot?.(row)}
@@ -78,7 +78,7 @@ export function Cell({
       <div className="cell justify-center gap-1">
         <button
           type="button"
-          className="rounded border border-gray-400 bg-white px-1.5 py-0.5 text-2xs font-semibold text-gray-800 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-40"
+          className="rounded border border-gray-400 dark:border-gray-500 bg-white dark:bg-gray-900 px-1.5 py-0.5 text-2xs font-semibold text-gray-800 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-40"
           disabled={!hasResume}
           title={hasResume ? 'Download saved resume PDF' : 'No resume was saved for this application'}
           onClick={() => onDownloadResume?.(row)}
@@ -87,7 +87,7 @@ export function Cell({
         </button>
         <button
           type="button"
-          className="rounded border border-gray-400 bg-white px-1.5 py-0.5 text-2xs font-semibold text-gray-800 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-40"
+          className="rounded border border-gray-400 dark:border-gray-500 bg-white dark:bg-gray-900 px-1.5 py-0.5 text-2xs font-semibold text-gray-800 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-40"
           disabled={!hasResume}
           title={hasResume ? 'Download the saved job description as jd.txt' : 'No job description was saved'}
           onClick={() => onDownloadJobDescription?.(row)}
@@ -96,7 +96,7 @@ export function Cell({
         </button>
         <button
           type="button"
-          className="rounded border border-gray-400 bg-white px-1.5 py-0.5 text-2xs font-semibold text-gray-800 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-40"
+          className="rounded border border-gray-400 dark:border-gray-500 bg-white dark:bg-gray-900 px-1.5 py-0.5 text-2xs font-semibold text-gray-800 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-40"
           disabled={!row.cover_letter_template}
           title={row.cover_letter_template ? 'Download cover letter.pdf' : 'No cover letter was generated'}
           onClick={() => onDownloadCoverLetter?.(row)}
@@ -105,7 +105,7 @@ export function Cell({
         </button>
         <button
           type="button"
-          className="rounded border border-gray-400 bg-white px-1.5 py-0.5 text-2xs font-semibold text-gray-800 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-40"
+          className="rounded border border-gray-400 dark:border-gray-500 bg-white dark:bg-gray-900 px-1.5 py-0.5 text-2xs font-semibold text-gray-800 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-40"
           disabled={!hasResume}
           title={hasResume ? 'View saved application questions and answers' : 'No generated application was saved'}
           onClick={() => onViewApplicationAnswers?.(row)}
@@ -125,7 +125,7 @@ export function Cell({
       >
         <input
           type="checkbox"
-          className="h-3.5 w-3.5 accent-gray-900 disabled:opacity-60"
+          className="h-3.5 w-3.5 accent-gray-900 dark:accent-gray-200 disabled:opacity-60"
           checked={Boolean(row[column.key])}
           disabled={!editable}
           onChange={(e) => onCommit(column.key, e.target.checked)}
@@ -171,7 +171,7 @@ export function Cell({
             type="text"
             aria-label="Custom job source"
             placeholder="Enter job source"
-            className="h-6 w-full rounded border border-blue-400 px-1 text-xs text-gray-900 outline-none"
+            className="h-6 w-full rounded border border-blue-400 dark:border-blue-700 px-1 text-xs text-gray-900 dark:text-gray-100 outline-none"
             defaultValue={String(row[column.key] ?? '')}
             onFocus={(e) => e.currentTarget.select()}
             onBlur={(e) => commit(e.target.value.trim())}
@@ -191,7 +191,7 @@ export function Cell({
       <div className="cell">
         <select
           autoFocus
-          className="h-6 w-full rounded border border-blue-400 bg-white px-1 text-xs text-gray-900 outline-none"
+          className="h-6 w-full rounded border border-blue-400 dark:border-blue-700 bg-white dark:bg-gray-900 px-1 text-xs text-gray-900 dark:text-gray-100 outline-none"
           defaultValue={String(row[column.key] ?? '')}
           onBlur={() => setEditing(false)}
           onChange={(e) => {
@@ -232,7 +232,7 @@ export function Cell({
         <input
           autoFocus
           type={column.editor === 'date' ? 'date' : 'datetime-local'}
-          className="h-6 w-full rounded border border-blue-400 px-1 text-xs text-gray-900 outline-none"
+          className="h-6 w-full rounded border border-blue-400 dark:border-blue-700 px-1 text-xs text-gray-900 dark:text-gray-100 outline-none"
           defaultValue={value}
           onBlur={(e) => commit(e.target.value || null)}
           onKeyDown={(e) => {
@@ -253,7 +253,7 @@ export function Cell({
       <input
         autoFocus
         type="text"
-        className="h-6 w-full rounded border border-blue-400 px-1 text-xs text-gray-900 outline-none"
+        className="h-6 w-full rounded border border-blue-400 dark:border-blue-700 px-1 text-xs text-gray-900 dark:text-gray-100 outline-none"
         defaultValue={String(row[column.key] ?? '')}
         onFocus={(e) => e.currentTarget.select()}
         onBlur={(e) => commit(e.target.value)}
@@ -292,7 +292,7 @@ function LongTextEditor({
       <textarea
         ref={ref}
         className="absolute left-0 top-0 z-20 min-h-[80px] w-[320px] max-w-[420px] resize rounded border
-          border-blue-400 bg-white p-1.5 text-xs text-gray-900 shadow-lg outline-none"
+          border-blue-400 dark:border-blue-700 bg-white dark:bg-gray-900 p-1.5 text-xs text-gray-900 dark:text-gray-100 shadow-lg outline-none"
         defaultValue={String(row[column.key] ?? '')}
         onBlur={(e) => onCommit(e.target.value)}
         onKeyDown={(e) => {
@@ -324,7 +324,7 @@ function Display({
   }
   if (column.key === 'date') {
     const date = String(value ?? '').slice(0, 10);
-    const dateTextClass = row.application_status === 'Rejected' ? 'text-white' : 'text-gray-700';
+    const dateTextClass = row.application_status === 'Rejected' ? 'text-white' : 'text-gray-700 dark:text-gray-300';
     const label = date
       ? new Date(`${date}T00:00:00Z`).toLocaleDateString('en-US', {
           weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC',
@@ -332,7 +332,7 @@ function Display({
       : '';
     return boundary ? (
       <span className="flex min-w-0 flex-col leading-tight">
-        <span className={`text-[9px] font-bold uppercase tracking-wide ${boundary === 'week' ? 'text-green-700' : 'text-red-700'}`}>
+        <span className={`text-[9px] font-bold uppercase tracking-wide ${boundary === 'week' ? 'text-green-700 dark:text-green-300' : 'text-red-700 dark:text-red-300'}`}>
           {boundary === 'week' ? 'Week boundary' : 'Day start'}
         </span>
         <span className={`tabular-nums font-semibold ${dateTextClass}`}>{label}</span>
@@ -343,20 +343,20 @@ function Display({
   }
   if (column.key === 'number') {
     return (
-      <span className={`tabular-nums ${row.application_status === 'Rejected' ? 'text-white' : 'text-gray-500'}`}>
+      <span className={`tabular-nums ${row.application_status === 'Rejected' ? 'text-white' : 'text-gray-500 dark:text-gray-400'}`}>
         {String(value ?? '')}
       </span>
     );
   }
   if (column.editor === 'url') {
-    if (!value) return <span className="text-gray-300">—</span>;
+    if (!value) return <span className="text-gray-300 dark:text-gray-500">—</span>;
     const compactUrl = String(value).replace(/^https?:\/\/(www\.)?/, '');
     return (
       <a
         href={String(value)}
         target="_blank"
         rel="noopener noreferrer"
-        className={`truncate hover:underline ${row.application_status === 'Rejected' ? 'text-white hover:text-gray-100' : 'text-blue-600'}`}
+        className={`truncate hover:underline ${row.application_status === 'Rejected' ? 'text-white hover:text-gray-100' : 'text-blue-600 dark:text-blue-300'}`}
         title={String(value)}
         // Opening the link must not also start an edit on the cell behind it.
         onClick={(e) => e.stopPropagation()}
@@ -366,7 +366,7 @@ function Display({
     );
   }
   if (value === null || value === undefined || value === '') {
-    return <span className="text-gray-300">—</span>;
+    return <span className="text-gray-300 dark:text-gray-500">—</span>;
   }
   return <span className="truncate">{String(value)}</span>;
 }

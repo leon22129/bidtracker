@@ -59,7 +59,7 @@ export default function AnalyticsPage() {
   if (!canViewAnalytics(user)) {
     return (
       <main className="mx-auto max-w-lg px-4 py-16 text-center">
-        <p className="text-sm text-gray-600">Analytics are restricted to administrators.</p>
+        <p className="text-sm text-gray-600 dark:text-gray-400">Analytics are restricted to administrators.</p>
       </main>
     );
   }
@@ -71,7 +71,7 @@ export default function AnalyticsPage() {
       <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-lg font-semibold">Analytics</h1>
-          <p className="mt-0.5 text-xs text-gray-500">
+          <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
             Interview performance and conversion across every workspace.
           </p>
         </div>
@@ -110,9 +110,9 @@ export default function AnalyticsPage() {
       </div>
 
       {loading && !data ? (
-        <p className="text-sm text-gray-500">Loading…</p>
+        <p className="text-sm text-gray-500 dark:text-gray-400">Loading…</p>
       ) : !data || !c ? (
-        <p className="text-sm text-gray-500">No data.</p>
+        <p className="text-sm text-gray-500 dark:text-gray-400">No data.</p>
       ) : (
         <>
           {/* ---- conversion funnel ---- */}
@@ -136,13 +136,13 @@ export default function AnalyticsPage() {
               <div className="mt-3 space-y-2">
                 <Bar label="Pending" value={c.pending_count} max={c.total_applications} colour="bg-gray-400" />
                 <Bar label="Applied" value={c.applied_count} max={c.total_applications} colour="bg-green-500" />
-                <Bar label="Rejected" value={c.rejected_count} max={c.total_applications} colour="bg-gray-900" />
+                <Bar label="Rejected" value={c.rejected_count} max={c.total_applications} colour="bg-gray-900 dark:bg-gray-400" />
                 <Bar label="Cancelled" value={c.cancelled_count} max={c.total_applications} colour="bg-slate-400" />
                 <Bar label="Banned" value={c.banned_count} max={c.total_applications} colour="bg-orange-500" />
                 <Bar label="Duplicated" value={c.duplicated_count} max={c.total_applications} colour="bg-red-500" />
               </div>
               {c.duplicate_rate !== null && (
-                <p className="mt-3 text-2xs text-gray-500">
+                <p className="mt-3 text-2xs text-gray-500 dark:text-gray-400">
                   Duplicate rate {(c.duplicate_rate * 100).toFixed(1)}% — duplicates are excluded from
                   weekly payment, so a rising number here is worth a conversation with the bidder.
                 </p>
@@ -153,18 +153,18 @@ export default function AnalyticsPage() {
               <h2 className="text-sm font-semibold">Pipeline breakdown</h2>
               <div className="mt-3 space-y-1.5">
                 {data.pipeline_breakdown.length === 0 ? (
-                  <p className="text-xs text-gray-500">Nothing has entered the pipeline yet.</p>
+                  <p className="text-xs text-gray-500 dark:text-gray-400">Nothing has entered the pipeline yet.</p>
                 ) : (
                   data.pipeline_breakdown.map((p) => (
                     <div key={p.pipeline_status} className="flex items-center justify-between gap-2">
                       <PipelinePill status={p.pipeline_status} />
-                      <span className="text-xs tabular-nums text-gray-700">{p.count.toLocaleString()}</span>
+                      <span className="text-xs tabular-nums text-gray-700 dark:text-gray-300">{p.count.toLocaleString()}</span>
                     </div>
                   ))
                 )}
               </div>
               {c.offer_per_interview_rate !== null && (
-                <p className="mt-3 border-t border-gray-100 pt-3 text-2xs text-gray-500">
+                <p className="mt-3 border-t border-gray-100 dark:border-gray-800 pt-3 text-2xs text-gray-500 dark:text-gray-400">
                   {(c.offer_per_interview_rate * 100).toFixed(1)}% of interviews reach an offer.
                 </p>
               )}
@@ -175,10 +175,10 @@ export default function AnalyticsPage() {
           <section className="mb-6 grid gap-3 lg:grid-cols-2">
             <div className="card p-4">
               <h2 className="text-sm font-semibold">Interviews by workspace</h2>
-              <p className="mt-0.5 text-2xs text-gray-500">Which bidder&apos;s applications convert.</p>
+              <p className="mt-0.5 text-2xs text-gray-500 dark:text-gray-400">Which bidder&apos;s applications convert.</p>
               <div className="mt-3 space-y-2">
                 {data.interviews_by_workspace.length === 0 ? (
-                  <p className="text-xs text-gray-500">No interviews recorded.</p>
+                  <p className="text-xs text-gray-500 dark:text-gray-400">No interviews recorded.</p>
                 ) : (
                   data.interviews_by_workspace.map((w) => (
                     <Bar
@@ -196,12 +196,12 @@ export default function AnalyticsPage() {
 
             <div className="card p-4">
               <h2 className="text-sm font-semibold">Interviews by job source</h2>
-              <p className="mt-0.5 text-2xs text-gray-500">
+              <p className="mt-0.5 text-2xs text-gray-500 dark:text-gray-400">
                 Where the effort actually pays off — rate matters more than volume.
               </p>
-              <div className="mt-3 overflow-hidden rounded border border-gray-200">
+              <div className="mt-3 overflow-hidden rounded border border-gray-200 dark:border-gray-700">
                 <table className="w-full text-xs">
-                  <thead className="bg-gray-50 text-left text-2xs uppercase tracking-wide text-gray-500">
+                  <thead className="bg-gray-50 dark:bg-gray-800 text-left text-2xs uppercase tracking-wide text-gray-500 dark:text-gray-400">
                     <tr>
                       <th className="px-2 py-1.5 font-medium">Source</th>
                       <th className="w-20 px-2 py-1.5 text-right font-medium">Applied</th>
@@ -212,13 +212,13 @@ export default function AnalyticsPage() {
                   <tbody>
                     {data.interviews_by_source.length === 0 ? (
                       <tr>
-                        <td colSpan={4} className="px-2 py-3 text-center text-gray-500">No data.</td>
+                        <td colSpan={4} className="px-2 py-3 text-center text-gray-500 dark:text-gray-400">No data.</td>
                       </tr>
                     ) : (
                       data.interviews_by_source.map((s) => (
-                        <tr key={s.job_source} className="border-t border-gray-100">
+                        <tr key={s.job_source} className="border-t border-gray-100 dark:border-gray-800">
                           <td className="px-2 py-1.5">{s.job_source}</td>
-                          <td className="px-2 py-1.5 text-right tabular-nums text-gray-600">
+                          <td className="px-2 py-1.5 text-right tabular-nums text-gray-600 dark:text-gray-400">
                             {s.applied.toLocaleString()}
                           </td>
                           <td className="px-2 py-1.5 text-right tabular-nums font-medium">
@@ -226,7 +226,7 @@ export default function AnalyticsPage() {
                           </td>
                           <td className="px-2 py-1.5 text-right tabular-nums">
                             {s.interview_rate === null ? (
-                              <span className="text-gray-300">—</span>
+                              <span className="text-gray-300 dark:text-gray-500">—</span>
                             ) : (
                               `${(s.interview_rate * 100).toFixed(1)}%`
                             )}
@@ -260,20 +260,20 @@ function Tile({
   hint?: string;
 }) {
   const toneClass =
-    tone === 'green' ? 'text-green-700' : tone === 'indigo' ? 'text-indigo-700' : tone === 'amber' ? 'text-amber-700' : '';
+    tone === 'green' ? 'text-green-700 dark:text-green-300' : tone === 'indigo' ? 'text-indigo-700 dark:text-indigo-300' : tone === 'amber' ? 'text-amber-700 dark:text-amber-300' : '';
   return (
     <div className="card px-3 py-2.5" title={hint}>
       <p className={`text-2xl font-semibold tabular-nums ${toneClass}`}>
         {value === null ? (
           // A rate with a zero denominator is genuinely undefined; showing "0%" would read as failure.
-          <span className="text-gray-300">—</span>
+          <span className="text-gray-300 dark:text-gray-500">—</span>
         ) : percent ? (
           `${(value * 100).toFixed(1)}%`
         ) : (
           value.toLocaleString()
         )}
       </p>
-      <p className="text-2xs text-gray-500">{label}</p>
+      <p className="text-2xs text-gray-500 dark:text-gray-400">{label}</p>
     </div>
   );
 }
@@ -296,13 +296,13 @@ function Bar({
     <div>
       <div className="flex items-baseline justify-between gap-2 text-2xs">
         {href ? (
-          <Link href={href} className="truncate text-gray-700 hover:underline">{label}</Link>
+          <Link href={href} className="truncate text-gray-700 dark:text-gray-300 hover:underline">{label}</Link>
         ) : (
-          <span className="truncate text-gray-700">{label}</span>
+          <span className="truncate text-gray-700 dark:text-gray-300">{label}</span>
         )}
-        <span className="shrink-0 tabular-nums text-gray-600">{value.toLocaleString()}</span>
+        <span className="shrink-0 tabular-nums text-gray-600 dark:text-gray-400">{value.toLocaleString()}</span>
       </div>
-      <div className="mt-0.5 h-1.5 overflow-hidden rounded-full bg-gray-100">
+      <div className="mt-0.5 h-1.5 overflow-hidden rounded-full bg-gray-100 dark:bg-gray-800">
         <div className={`h-full rounded-full ${colour}`} style={{ width: `${pct}%` }} />
       </div>
     </div>

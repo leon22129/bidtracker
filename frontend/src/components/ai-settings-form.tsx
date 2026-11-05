@@ -57,13 +57,13 @@ export function AiSettingsForm() {
     <form className="card mt-5 space-y-3 p-4" onSubmit={(event) => { event.preventDefault(); void save(); }}>
       <div>
         <h2 className="text-sm font-semibold">AI generation</h2>
-        <p className="mt-1 text-2xs text-gray-500">
+        <p className="mt-1 text-2xs text-gray-500 dark:text-gray-400">
           Choose the platform and model for your profiles and bidders. Used for resumes, cover letters, eligibility checks, and application answers.
         </p>
       </div>
-      {error ? <div role="alert" className="text-xs text-red-700">{error}
+      {error ? <div role="alert" className="text-xs text-red-700 dark:text-red-300">{error}
         <button type="button" className="ml-2 underline" onClick={() => setLoadVersion((value) => value + 1)}>Retry</button>
-      </div> : !settings ? <p className="text-xs text-gray-500">Loading AI settings…</p> : (
+      </div> : !settings ? <p className="text-xs text-gray-500 dark:text-gray-400">Loading AI settings…</p> : (
         <fieldset disabled={busy} className="space-y-3 disabled:opacity-60">
           <div>
             <label className="label" htmlFor="ai-platform">AI platform</label>
@@ -82,17 +82,17 @@ export function AiSettingsForm() {
             </select>
           </div>
           {selected && (
-            <div className="rounded border border-gray-200 bg-gray-50 p-3 text-xs">
+            <div className="rounded border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 p-3 text-xs">
               <dl className="grid grid-cols-3 gap-2">
-                <div><dt className="text-gray-500">Input{provider === 'deepseek' ? ' (peak)' : ''}</dt><dd className="mt-1 font-medium">{usd(selected.input)}</dd></div>
-                <div><dt className="text-gray-500">Cached input</dt><dd className="mt-1 font-medium">{selected.cached_input === null ? 'No discount' : usd(selected.cached_input)}</dd></div>
-                <div><dt className="text-gray-500">Output</dt><dd className="mt-1 font-medium">{usd(selected.output)}</dd></div>
+                <div><dt className="text-gray-500 dark:text-gray-400">Input{provider === 'deepseek' ? ' (peak)' : ''}</dt><dd className="mt-1 font-medium">{usd(selected.input)}</dd></div>
+                <div><dt className="text-gray-500 dark:text-gray-400">Cached input</dt><dd className="mt-1 font-medium">{selected.cached_input === null ? 'No discount' : usd(selected.cached_input)}</dd></div>
+                <div><dt className="text-gray-500 dark:text-gray-400">Output</dt><dd className="mt-1 font-medium">{usd(selected.output)}</dd></div>
               </dl>
-              {selected.off_peak && <p className="mt-2 text-2xs text-gray-600">
+              {selected.off_peak && <p className="mt-2 text-2xs text-gray-600 dark:text-gray-400">
                 Off-peak: {usd(selected.off_peak.input)} input · {usd(selected.off_peak.cached_input)} cached input · {usd(selected.off_peak.output)} output.
                 Peak: Mon–Fri, 01:00–04:00 and 06:00–10:00 UTC, excluding Chinese public holidays.
               </p>}
-              {selected.deprecated && <p className="mt-2 text-2xs text-amber-800">This model is deprecated by OpenAI and may have limited availability.</p>}
+              {selected.deprecated && <p className="mt-2 text-2xs text-amber-800 dark:text-amber-200">This model is deprecated by OpenAI and may have limited availability.</p>}
             </div>
           )}
           <details className="text-2xs">
@@ -100,14 +100,14 @@ export function AiSettingsForm() {
             <div className="mt-2 max-h-64 overflow-auto">
               <table className="w-full text-left">
                 <thead><tr className="border-b"><th className="py-1">Model</th><th>Input</th><th>Cached</th><th>Output</th></tr></thead>
-                <tbody>{models.map((model) => <tr key={model.id} className="border-b border-gray-100">
+                <tbody>{models.map((model) => <tr key={model.id} className="border-b border-gray-100 dark:border-gray-800">
                   <td className="py-1 pr-2">{model.id}{model.deprecated ? ' (deprecated)' : ''}</td>
                   <td className="pr-2">{usd(model.input)}</td><td className="pr-2">{model.cached_input === null ? '—' : usd(model.cached_input)}</td><td>{usd(model.output)}</td>
                 </tr>)}</tbody>
               </table>
             </div>
           </details>
-          <p className="text-2xs text-gray-500">
+          <p className="text-2xs text-gray-500 dark:text-gray-400">
             Text generation model families, without dated snapshots or duplicate aliases. Image, audio, embeddings, restricted research models, and retired models are excluded.
             Prices checked {settings.checked_at}. Standard text rates; long prompts, tools, and special processing can cost more. Availability depends on your API account.{' '}
             <a href={settings.sources[provider]} target="_blank" rel="noreferrer" className="text-primary-600 underline">Official pricing</a>
@@ -117,7 +117,7 @@ export function AiSettingsForm() {
             <input id="ai-api-key" type="password" className="input" autoComplete="new-password" maxLength={1000}
               placeholder={keyStatus?.configured ? 'Leave blank to keep the current key' : 'Enter API key'}
               value={key} onChange={(event) => setKey(event.target.value)} />
-            <p className="mt-1 text-2xs text-gray-500">
+            <p className="mt-1 text-2xs text-gray-500 dark:text-gray-400">
               {keyStatus?.saved ? 'Your key is saved. ' : 'Add your own API key to enable generation. '}
               Saved keys are encrypted and never displayed again. Each platform keeps its own key.
             </p>

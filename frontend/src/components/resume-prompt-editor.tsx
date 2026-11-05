@@ -29,7 +29,7 @@ export function ResumePromptEditor({ settings, onSaved }: { settings: AiSettings
     <details className="card mt-5 p-4">
       <summary className="cursor-pointer text-sm font-semibold">Base resume generation prompt</summary>
       <form onSubmit={save} className="mt-3 space-y-3">
-        <p className="text-2xs text-gray-500">
+        <p className="text-2xs text-gray-500 dark:text-gray-400">
           {settings.resume_prompt_customized ? 'You are using a custom prompt.' : 'You are using the original prompt.'}{' '}
           Edit the instructions used for new resumes and cover letters across your profiles. Other admins keep their own prompts.
         </p>
@@ -39,14 +39,14 @@ export function ResumePromptEditor({ settings, onSaved }: { settings: AiSettings
             <textarea id="resume-generation-prompt" className="input min-h-96 font-mono text-xs" rows={20}
               value={prompt} onChange={(event) => setPrompt(event.target.value)} maxLength={settings.resume_prompt_max_length}
               spellCheck={false} aria-describedby="resume-prompt-help" required />
-            <p className="mt-1 text-right text-2xs text-gray-500">{prompt.length.toLocaleString()} / {settings.resume_prompt_max_length.toLocaleString()} characters</p>
+            <p className="mt-1 text-right text-2xs text-gray-500 dark:text-gray-400">{prompt.length.toLocaleString()} / {settings.resume_prompt_max_length.toLocaleString()} characters</p>
           </div>
-          <p id="resume-prompt-help" className="text-2xs text-gray-500">
+          <p id="resume-prompt-help" className="text-2xs text-gray-500 dark:text-gray-400">
             Keep these placeholders so each resume receives the correct job and candidate details:{' '}
-            {settings.resume_prompt_variables.map((token) => <code key={token} className="mr-1 inline-block rounded bg-gray-100 px-1">{token}</code>)}
+            {settings.resume_prompt_variables.map((token) => <code key={token} className="mr-1 inline-block rounded bg-gray-100 dark:bg-gray-800 px-1">{token}</code>)}
             The app keeps the required resume fields and JSON output format.
           </p>
-          {dirty && missing.length > 0 && <p role="alert" className="text-xs text-red-700">Missing placeholders: {missing.join(', ')}</p>}
+          {dirty && missing.length > 0 && <p role="alert" className="text-xs text-red-700 dark:text-red-300">Missing placeholders: {missing.join(', ')}</p>}
           <div className="flex flex-wrap justify-end gap-2">
             <button type="button" className="btn-secondary" disabled={prompt === settings.default_resume_prompt}
               onClick={() => setPrompt(settings.default_resume_prompt)}>Restore original prompt</button>
@@ -54,7 +54,7 @@ export function ResumePromptEditor({ settings, onSaved }: { settings: AiSettings
               {busy ? 'Saving…' : 'Save prompt'}
             </button>
           </div>
-          {dirty && <p className="text-2xs text-amber-800">Unsaved changes. Save to apply this prompt to future generations.</p>}
+          {dirty && <p className="text-2xs text-amber-800 dark:text-amber-200">Unsaved changes. Save to apply this prompt to future generations.</p>}
         </fieldset>
       </form>
     </details>

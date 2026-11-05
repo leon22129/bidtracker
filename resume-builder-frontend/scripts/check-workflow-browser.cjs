@@ -228,6 +228,10 @@ function fixture(extensionVersion) {
       await clickSelector('[role="menuitem"]');
       await waitFor("document.querySelector('[role=dialog]')?.textContent.includes('Profile settings: Candidate')");
     };
+    const openExtensionSettings = async () => {
+      await clickSelector('button[aria-label="Open settings"]');
+      await waitFor("document.querySelector('[role=dialog]')?.textContent.includes('Profile download locations')");
+    };
     await openProfileSettings();
     await clickSelector('#profile-cover-letter');
     await clickSelector('#profile-save-in-folder');
@@ -294,9 +298,9 @@ function fixture(extensionVersion) {
     await click('Download PDF');
     await waitFor('workflowTest.downloads.length === 3');
     const folderDownloads = await evaluate('workflowTest.downloads');
-    assert.match(folderDownloads[0].filename, /^Resumes\/\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2} - Acme\/Resume - Acme\.pdf$/);
+    assert.match(folderDownloads[0].filename, /^Resumes\/\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2} - Acme\/Resume\.pdf$/);
     assert.equal(folderDownloads[1].filename.split('/').at(-1), 'job-description.txt');
-    assert.equal(folderDownloads[2].filename.split('/').at(-1), 'Cover Letter - Acme.pdf');
+    assert.equal(folderDownloads[2].filename.split('/').at(-1), 'Cover Letter.pdf');
     assert.equal(folderDownloads[0].filename.slice(0, folderDownloads[0].filename.lastIndexOf('/')), folderDownloads[2].filename.slice(0, folderDownloads[2].filename.lastIndexOf('/')));
     for (const file of [folderDownloads[0], folderDownloads[2]]) {
       assert.equal(file.header, '%PDF-');
@@ -309,7 +313,7 @@ function fixture(extensionVersion) {
       workflowTest.pickerMode = options.mode;
       return (await navigator.storage.getDirectory()).getDirectoryHandle('fixture-resumes', { create: true });
     }`);
-    await openProfileSettings();
+    await openExtensionSettings();
     await click('Choose folder');
     await waitFor("document.querySelector('[role=dialog]').textContent.includes('fixture-resumes')");
     assert.equal(await evaluate('workflowTest.pickerMode'), 'readwrite');
@@ -322,11 +326,13 @@ function fixture(extensionVersion) {
       const files = [];
       for await (const directory of parent.values()) for await (const handle of directory.values()) {
         const file = await handle.getFile();
-        files.push({ name: handle.name, header: (await file.text()).slice(0, 5), size: file.size });
+        files.push({ directory: directory.name, name: handle.name, header: (await file.text()).slice(0, 5), size: file.size });
       }
       return files;
     })()`);
-    assert.deepEqual(nativeFiles.map(file => file.name).sort(), ['Cover Letter - Acme.pdf', 'Resume - Acme.pdf', 'job-description.txt']);
+    assert.deepEqual(nativeFiles.map(file => file.name).sort(), ['Cover Letter.pdf', 'Resume.pdf', 'job-description.txt']);
+    assert.equal(new Set(nativeFiles.map(file => file.directory)).size, 1);
+    assert.match(nativeFiles[0].directory, /^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2} - Acme$/);
     assert.ok(nativeFiles.filter(file => file.name.endsWith('.pdf')).every(file => file.header === '%PDF-' && file.size > 1000));
     await evaluate(`window.originalGetDirectory = FileSystemDirectoryHandle.prototype.getDirectoryHandle;
       FileSystemDirectoryHandle.prototype.getDirectoryHandle = async () => { throw new DOMException('Folder unavailable', 'NotAllowedError'); }`);
@@ -336,10 +342,12 @@ function fixture(extensionVersion) {
     await evaluate('FileSystemDirectoryHandle.prototype.getDirectoryHandle = window.originalGetDirectory');
     await click('Close');
 
-    await openProfileSettings();
+    await openExtensionSettings();
     await waitFor("document.querySelector('[role=dialog]').textContent.includes('fixture-resumes')");
     await click('Use Downloads folder');
     await waitFor("document.querySelector('[role=dialog]').textContent.includes('Current folder: Chrome Downloads/Resumes')");
+    await click('Close');
+    await openProfileSettings();
     await clickSelector('#profile-save-in-folder');
     await clickSelector('#profile-cover-letter');
     await clickSelector('#profile-company-name');
@@ -349,7 +357,7 @@ function fixture(extensionVersion) {
     await click('Preview');
     await click('Download PDF');
     await waitFor('workflowTest.downloads.length === 4');
-    assert.equal(await evaluate('workflowTest.downloads.at(-1).filename'), 'Resume.pdf', 'Turning options off removes both company name and cover letter');
+    assert.equal(await evaluate('workflowTest.downloads.at(-1).filename'), 'Resume.pdf', 'Turning options off downloads only the resume without a directory');
     await click('Close');
     await openProfileSettings();
     await clickSelector('#profile-cover-letter');
@@ -360,14 +368,14 @@ function fixture(extensionVersion) {
     await click('Preview');
     await click('Download PDF');
     await waitFor('workflowTest.downloads.length === 6');
-    assert.deepEqual(await evaluate('workflowTest.downloads.slice(-2).map(file => file.filename)'), ['Resume - Acme.pdf', 'Cover Letter - Acme.pdf']);
+    assert.deepEqual(await evaluate('workflowTest.downloads.slice(-2).map(file => file.filename)'), ['Resume.pdf', 'Cover Letter.pdf'], 'Company names belong only in directory names, including when downloading without a directory');
     await evaluate('workflowTest.failDownload = true');
     await click('Download PDF');
     await waitFor("activeProfileWorkspace.textContent.includes('Chrome could not start the download')");
     assert.equal(await evaluate('workflowTest.downloads.length'), 6);
     await evaluate('workflowTest.failDownload = false');
     await click('Close');
-    console.log('PASS: profile options persist; generation keeps its workspace; company names and cover-letter switches affect files; Chrome and native-folder PDF downloads work; failures propagate');
+    console.log('PASS: profile options persist; generation keeps its workspace; company names appear only in directory names; cover-letter switches affect files; Chrome and native-folder PDF downloads work; failures propagate');
     await evaluate("document.querySelector('[toast-close]')?.click()");
     await click('Questions');
     await waitFor("[...document.querySelectorAll('button')].some(el=>el.textContent.includes('Generate Answers'))");

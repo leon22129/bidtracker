@@ -295,8 +295,8 @@ export default function WorkspaceTablePage() {
     return (
       <main className="mx-auto max-w-lg px-4 py-16 text-center">
         <h1 className="text-sm font-semibold">Workspace unavailable</h1>
-        <p className="mt-2 text-xs text-gray-600">{loadError}</p>
-        <p className="mt-1 text-2xs text-gray-500">
+        <p className="mt-2 text-xs text-gray-600 dark:text-gray-400">{loadError}</p>
+        <p className="mt-1 text-2xs text-gray-500 dark:text-gray-400">
           If you believe this workspace should be assigned to you, ask an admin to reassign it.
         </p>
         <Link href="/workspaces" className="btn-secondary btn-xs mt-4 inline-flex">
@@ -307,7 +307,7 @@ export default function WorkspaceTablePage() {
   }
 
   if (!workspace) {
-    return <p className="px-4 py-6 text-sm text-gray-500">Loading workspace…</p>;
+    return <p className="px-4 py-6 text-sm text-gray-500 dark:text-gray-400">Loading workspace…</p>;
   }
 
   return (

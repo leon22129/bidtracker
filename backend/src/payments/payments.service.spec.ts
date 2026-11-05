@@ -25,7 +25,7 @@ describe('PaymentsService', () => {
     });
 
     expect(tx.jobApplication.updateMany).toHaveBeenCalledWith(expect.objectContaining({
-      where: expect.objectContaining({ created_by_user_id: 'bidder-1', paid: false }),
+      where: expect.objectContaining({ created_by_user_id: 'bidder-1', application_status: 'Applied', paid: false }),
       data: { paid: true },
     }));
     expect(tx.paymentReport.create).toHaveBeenCalledWith(expect.objectContaining({
@@ -72,7 +72,7 @@ describe('PaymentsService', () => {
     expect(tx.paymentReport.create).not.toHaveBeenCalled();
     expect(tx.jobApplication.updateMany).toHaveBeenCalledTimes(1);
     expect(tx.jobApplication.updateMany).toHaveBeenCalledWith(expect.objectContaining({
-      where: expect.objectContaining({ created_by_user_id: 'bidder-1' }),
+      where: expect.objectContaining({ created_by_user_id: 'bidder-1', application_status: 'Applied', paid: false }),
     }));
   });
 
@@ -83,6 +83,7 @@ describe('PaymentsService', () => {
           {
             workspace_id: 'workspace-visible',
             created_by_user_id: 'bidder-original',
+            application_status: 'Applied',
             _count: { _all: 2 },
           },
         ]),
@@ -126,6 +127,7 @@ describe('PaymentsService', () => {
         groupBy: jest.fn().mockResolvedValue([{
           workspace_id: 'former-workspace',
           created_by_user_id: 'bidder-1',
+          application_status: 'Rejected',
           _count: { _all: 3 },
         }]),
       },
@@ -147,23 +149,42 @@ describe('PaymentsService', () => {
         bidder_id: 'someone-else',
       },
     )).resolves.toMatchObject({
-      total_applied: 3,
-      bidders: [{ bidder_id: 'bidder-1', applied_count: 3 }],
+      total_applied: 0,
+      total_rejected: 3,
+      bidders: [{ bidder_id: 'bidder-1', applied_count: 0, rejected_count: 3 }],
+      managers: [{
+        manager_id: null,
+        applied_count: 0,
+        rejected_count: 3,
+        profiles: [{ workspace_id: 'former-workspace', applied_count: 0, rejected_count: 3 }],
+      }],
     });
 
     expect(access.visibleWorkspaceIds).not.toHaveBeenCalled();
     expect(prisma.jobApplication.groupBy).toHaveBeenCalledWith(expect.objectContaining({
-      where: expect.objectContaining({ created_by_user_id: 'bidder-1' }),
+      by: ['created_by_user_id', 'workspace_id', 'application_status'],
+      where: expect.objectContaining({
+        created_by_user_id: 'bidder-1',
+        date: { gte: new Date('2026-09-01T00:00:00.000Z'), lte: new Date('2026-09-07T23:59:59.999Z') },
+        OR: [
+          { application_status: 'Applied', paid: false },
+          { application_status: 'Rejected' },
+        ],
+      }),
     }));
     expect(prisma.jobApplication.groupBy.mock.calls[0][0].where).not.toHaveProperty('workspace_id');
+    expect(prisma.jobApplication.groupBy.mock.calls[0][0].where).not.toHaveProperty('paid');
   });
 
-  it('groups profile and bidder counts under their bidder manager', async () => {
+  it('combines Applied and Rejected counts per creator and profile under their bidder manager', async () => {
     const prisma = {
       jobApplication: {
         groupBy: jest.fn().mockResolvedValue([
-          { workspace_id: 'rock-profile', created_by_user_id: 'richard', _count: { _all: 100 } },
-          { workspace_id: 'hao-profile', created_by_user_id: 'jacob', _count: { _all: 100 } },
+          { workspace_id: 'rock-profile', created_by_user_id: 'richard', application_status: 'Rejected', _count: { _all: 5 } },
+          { workspace_id: 'rock-profile', created_by_user_id: 'richard', application_status: 'Applied', _count: { _all: 100 } },
+          { workspace_id: 'hao-profile', created_by_user_id: 'jacob', application_status: 'Applied', _count: { _all: 100 } },
+          { workspace_id: 'hao-profile', created_by_user_id: 'jacob', application_status: 'Rejected', _count: { _all: 7 } },
+          { workspace_id: 'rock-profile', created_by_user_id: 'jacob', application_status: 'Rejected', _count: { _all: 3 } },
         ]),
       },
       workspace: {
@@ -186,13 +207,30 @@ describe('PaymentsService', () => {
       { id: 'admin-1', username: 'admin', email: 'admin@example.com', role: 'admin' },
       { start_date: '2026-09-01', end_date: '2026-09-07' },
     )).resolves.toMatchObject({
+      total_applied: 200,
+      total_rejected: 15,
+      bidders: [
+        {
+          bidder_id: 'richard', applied_count: 100, rejected_count: 5,
+          workspaces: [{ workspace_id: 'rock-profile', applied_count: 100, rejected_count: 5 }],
+        },
+        {
+          bidder_id: 'jacob', applied_count: 100, rejected_count: 10,
+          workspaces: [
+            { workspace_id: 'hao-profile', applied_count: 100, rejected_count: 7 },
+            { workspace_id: 'rock-profile', applied_count: 0, rejected_count: 3 },
+          ],
+        },
+      ],
       managers: [{
         manager_id: 'rock-manager',
         manager_username: 'rock',
         applied_count: 200,
+        rejected_count: 15,
         profiles: [
-          { profile_name: 'hao', bidder_username: 'Jacob', applied_count: 100 },
-          { profile_name: 'rock', bidder_username: 'Richard', applied_count: 100 },
+          { profile_name: 'hao', bidder_username: 'Jacob', applied_count: 100, rejected_count: 7 },
+          { profile_name: 'rock', bidder_username: 'Jacob', applied_count: 0, rejected_count: 3 },
+          { profile_name: 'rock', bidder_username: 'Richard', applied_count: 100, rejected_count: 5 },
         ],
       }],
     });
@@ -202,10 +240,10 @@ describe('PaymentsService', () => {
     const prisma = { jobApplication: { groupBy: jest.fn().mockResolvedValue([]) } };
     const service = new PaymentsService(prisma as never, { visibleWorkspaceIds: jest.fn() } as never);
 
-    await service.report(
+    await expect(service.report(
       { id: 'manager-1', username: 'rock', email: 'rock@example.com', role: 'bidder_manager' },
       { start_date: '2026-09-01', end_date: '2026-09-07' },
-    );
+    )).resolves.toMatchObject({ total_applied: 0, total_rejected: 0, bidders: [], managers: [] });
 
     expect(prisma.jobApplication.groupBy).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({
@@ -215,6 +253,44 @@ describe('PaymentsService', () => {
         } },
       }),
     }));
+  });
+
+  it('includes a manager with only their own rejected applications', async () => {
+    const prisma = {
+      jobApplication: {
+        groupBy: jest.fn().mockResolvedValue([{
+          workspace_id: 'manager-profile', created_by_user_id: 'manager-1',
+          application_status: 'Rejected', _count: { _all: 4 },
+        }]),
+      },
+      workspace: { findMany: jest.fn().mockResolvedValue([{ id: 'manager-profile', name: 'Manager Profile' }]) },
+      user: { findMany: jest.fn().mockResolvedValue([{ id: 'manager-1', username: 'manager', role: 'bidder_manager' }]) },
+    };
+    const service = new PaymentsService(prisma as never, {} as never);
+
+    await expect(service.report(
+      { id: 'manager-1', username: 'manager', email: 'manager@example.com', role: 'bidder_manager' },
+      { start_date: '2026-09-01', end_date: '2026-09-07' },
+    )).resolves.toMatchObject({
+      total_applied: 0,
+      total_rejected: 4,
+      managers: [{
+        manager_id: 'manager-1', applied_count: 0, rejected_count: 4,
+        profiles: [{ profile_name: 'Manager Profile', applied_count: 0, rejected_count: 4 }],
+      }],
+    });
+  });
+
+  it('returns zero counts when an admin has no visible workspaces', async () => {
+    const prisma = { jobApplication: { groupBy: jest.fn() } };
+    const access = { visibleWorkspaceIds: jest.fn().mockResolvedValue([]) };
+    const service = new PaymentsService(prisma as never, access as never);
+
+    await expect(service.report(
+      { id: 'admin-1', username: 'admin', email: 'admin@example.com', role: 'admin' },
+      { start_date: '2026-09-01', end_date: '2026-09-07' },
+    )).resolves.toMatchObject({ total_applied: 0, total_rejected: 0, bidders: [], managers: [] });
+    expect(prisma.jobApplication.groupBy).not.toHaveBeenCalled();
   });
 
   it('rejects payment processing for a non-bidder creator', async () => {

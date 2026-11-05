@@ -22,7 +22,7 @@ export class PaymentsService {
     // immutable application creator instead, so reassignment does not hide their historical work.
     const workspaceIds = admin ? await this.access.visibleWorkspaceIds(user) : null;
     if (workspaceIds?.length === 0) {
-      return { start_date: range.start, end_date: range.end, bidders: [], managers: [], total_applied: 0 };
+      return { start_date: range.start, end_date: range.end, bidders: [], managers: [], total_applied: 0, total_rejected: 0 };
     }
     const bidderId = admin
       ? period.bidder_id
@@ -35,10 +35,12 @@ export class PaymentsService {
       : { role: { in: [...PAYABLE_ROLES] } };
 
     const counts = await this.prisma.jobApplication.groupBy({
-      by: ['created_by_user_id', 'workspace_id'],
+      by: ['created_by_user_id', 'workspace_id', 'application_status'],
       where: {
-        application_status: 'Applied',
-        paid: false,
+        OR: [
+          { application_status: 'Applied', paid: false },
+          { application_status: 'Rejected' },
+        ],
         date: { gte: range.start, lte: endOfDay(range.end) },
         ...(workspaceIds ? { workspace_id: { in: workspaceIds } } : {}),
         ...(bidderId ? { created_by_user_id: bidderId } : {}),
@@ -69,27 +71,60 @@ export class PaymentsService {
     const workspaceById = new Map(workspaces.map((workspace) => [workspace.id, workspace]));
     const creatorById = new Map(creators.map((creator) => [creator.id, creator]));
 
-    const bidders = new Map<string, { bidder_id: string; bidder_username: string; applied_count: number; workspaces: Array<{ workspace_id: string; workspace_name: string; applied_count: number }> }>();
+    const countsByCreatorWorkspace = new Map<string, {
+      workspace_id: string;
+      created_by_user_id: string | null;
+      applied_count: number;
+      rejected_count: number;
+    }>();
+    for (const row of counts) {
+      const key = `${row.created_by_user_id}:${row.workspace_id}`;
+      const combined = countsByCreatorWorkspace.get(key) ?? {
+        workspace_id: row.workspace_id,
+        created_by_user_id: row.created_by_user_id,
+        applied_count: 0,
+        rejected_count: 0,
+      };
+      if (row.application_status === 'Applied') combined.applied_count += row._count._all;
+      if (row.application_status === 'Rejected') combined.rejected_count += row._count._all;
+      countsByCreatorWorkspace.set(key, combined);
+    }
+
+    const bidders = new Map<string, {
+      bidder_id: string;
+      bidder_username: string;
+      applied_count: number;
+      rejected_count: number;
+      workspaces: Array<{ workspace_id: string; workspace_name: string; applied_count: number; rejected_count: number }>;
+    }>();
     const managers = new Map<string, {
       manager_id: string | null;
       manager_username: string;
       applied_count: number;
+      rejected_count: number;
       profiles: Array<{
         workspace_id: string;
         profile_name: string;
         bidder_id: string;
         bidder_username: string;
         applied_count: number;
+        rejected_count: number;
       }>;
     }>();
-    for (const row of counts) {
+    for (const row of countsByCreatorWorkspace.values()) {
       const workspace = workspaceById.get(row.workspace_id);
       const creatorId = row.created_by_user_id;
       const creator = creatorId ? creatorById.get(creatorId) : null;
       if (!workspace || !creatorId || !creator) continue;
-      const bidder = bidders.get(creatorId) ?? { bidder_id: creatorId, bidder_username: creator.username, applied_count: 0, workspaces: [] };
-      bidder.applied_count += row._count._all;
-      bidder.workspaces.push({ workspace_id: workspace.id, workspace_name: workspace.name, applied_count: row._count._all });
+      const bidder = bidders.get(creatorId) ?? { bidder_id: creatorId, bidder_username: creator.username, applied_count: 0, rejected_count: 0, workspaces: [] };
+      bidder.applied_count += row.applied_count;
+      bidder.rejected_count += row.rejected_count;
+      bidder.workspaces.push({
+        workspace_id: workspace.id,
+        workspace_name: workspace.name,
+        applied_count: row.applied_count,
+        rejected_count: row.rejected_count,
+      });
       bidders.set(creatorId, bidder);
 
       const managerId = creator.role === 'bidder_manager'
@@ -103,15 +138,18 @@ export class PaymentsService {
         manager_id: managerId,
         manager_username: managerUsername,
         applied_count: 0,
+        rejected_count: 0,
         profiles: [],
       };
-      manager.applied_count += row._count._all;
+      manager.applied_count += row.applied_count;
+      manager.rejected_count += row.rejected_count;
       manager.profiles.push({
         workspace_id: workspace.id,
         profile_name: workspace.resumeProfile?.name ?? workspace.name,
         bidder_id: creator.id,
         bidder_username: creator.username,
-        applied_count: row._count._all,
+        applied_count: row.applied_count,
+        rejected_count: row.rejected_count,
       });
       managers.set(managerKey, manager);
     }
@@ -131,6 +169,7 @@ export class PaymentsService {
       bidders: bidderRows,
       managers: managerRows,
       total_applied: bidderRows.reduce((total, bidder) => total + bidder.applied_count, 0),
+      total_rejected: bidderRows.reduce((total, bidder) => total + bidder.rejected_count, 0),
     };
   }
 

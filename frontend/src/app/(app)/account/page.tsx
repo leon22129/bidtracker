@@ -6,6 +6,7 @@ import { useAuth } from '@/lib/auth-context';
 import { isAdmin, roleLabel } from '@/lib/permissions';
 import { useToast } from '@/components/ui/toast';
 import { AiSettingsForm } from '@/components/ai-settings-form';
+import { ThemeSettings } from '@/components/theme-settings';
 
 /** Personal account settings and administrator-managed integrations. */
 export default function AccountPage() {
@@ -90,30 +91,32 @@ export default function AccountPage() {
     <main className="mx-auto max-w-2xl px-4 py-6">
       <h1 className="text-lg font-semibold">Account</h1>
 
-      <dl className="card mt-4 divide-y divide-gray-100 p-4 text-xs">
+      <dl className="card mt-4 divide-y divide-gray-100 dark:divide-gray-800 p-4 text-xs">
         <div className="flex justify-between pb-2">
-          <dt className="text-gray-500">Username</dt>
+          <dt className="text-gray-500 dark:text-gray-400">Username</dt>
           <dd className="font-medium">{user.username}</dd>
         </div>
         <div className="flex justify-between py-2">
-          <dt className="text-gray-500">Email</dt>
+          <dt className="text-gray-500 dark:text-gray-400">Email</dt>
           <dd className="font-medium">{user.email}</dd>
         </div>
         <div className="flex justify-between pt-2">
-          <dt className="text-gray-500">Role</dt>
+          <dt className="text-gray-500 dark:text-gray-400">Role</dt>
           <dd className="font-medium">{roleLabel(user.role)}</dd>
         </div>
       </dl>
-      <p className="mt-1.5 text-2xs text-gray-500">
+      <p className="mt-1.5 text-2xs text-gray-500 dark:text-gray-400">
         Only an admin can change a username, email, or role — ask one if these are wrong.
       </p>
+
+      <ThemeSettings />
 
       {isAdmin(user) && <AiSettingsForm />}
 
         <form onSubmit={saveSlack} className="card mt-5 space-y-3 p-4">
           <div>
             <h2 className="text-sm font-semibold">Slack notifications</h2>
-            <p className="mt-1 text-2xs text-gray-500">
+            <p className="mt-1 text-2xs text-gray-500 dark:text-gray-400">
               Your admin’s Slack channel receives each new daily milestone of 10 submitted applications. Add your Slack member ID to be mentioned by name and receive Slack alerts.
             </p>
           </div>
@@ -131,7 +134,7 @@ export default function AccountPage() {
               value={slackWebhook}
               onChange={(event) => setSlackWebhook(event.target.value)}
             />
-            <p className="mt-1 text-2xs text-gray-500">The saved URL is never displayed again.</p>
+            <p className="mt-1 text-2xs text-gray-500 dark:text-gray-400">The saved URL is never displayed again.</p>
           </div>}
 
           <div>
@@ -144,7 +147,7 @@ export default function AccountPage() {
               onChange={(event) => setSlackUserId(event.target.value.toUpperCase())}
               maxLength={30}
             />
-            <p className="mt-1 text-2xs text-gray-500">
+            <p className="mt-1 text-2xs text-gray-500 dark:text-gray-400">
               In Slack, open your profile → More → Copy member ID. Leave blank to use your BidTracker username without a Slack mention.
             </p>
           </div>
@@ -194,7 +197,7 @@ export default function AccountPage() {
             required
             minLength={8}
           />
-          {tooShort && <p className="mt-1 text-2xs text-red-600">At least 8 characters.</p>}
+          {tooShort && <p className="mt-1 text-2xs text-red-600 dark:text-red-300">At least 8 characters.</p>}
         </div>
 
         <div>
@@ -208,7 +211,7 @@ export default function AccountPage() {
             onChange={(e) => setConfirm(e.target.value)}
             required
           />
-          {mismatch && <p className="mt-1 text-2xs text-red-600">Passwords don&apos;t match.</p>}
+          {mismatch && <p className="mt-1 text-2xs text-red-600 dark:text-red-300">Passwords don&apos;t match.</p>}
         </div>
 
         <div className="flex justify-end pt-1">
@@ -221,7 +224,7 @@ export default function AccountPage() {
           </button>
         </div>
 
-        <p className="text-2xs text-gray-500">
+        <p className="text-2xs text-gray-500 dark:text-gray-400">
           You stay signed in on this device. Existing tokens elsewhere remain valid until they expire —
           if you suspect an account is compromised, ask an admin to deactivate it.
         </p>

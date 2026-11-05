@@ -171,7 +171,7 @@ function BulkSelect({
     >
       <option value="">{label}…</option>
       {options.map((o) => (
-        <option key={o} value={o} className="text-gray-900">
+        <option key={o} value={o} className="text-gray-900 dark:text-gray-100">
           {o}
         </option>
       ))}

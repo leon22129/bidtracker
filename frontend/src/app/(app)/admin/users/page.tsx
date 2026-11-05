@@ -80,7 +80,7 @@ export default function UsersPage() {
   if (!canManageUsers(me)) {
     return (
       <main className="mx-auto max-w-lg px-4 py-16 text-center">
-        <p className="text-sm text-gray-600">You do not have access to user management.</p>
+        <p className="text-sm text-gray-600 dark:text-gray-400">You do not have access to user management.</p>
       </main>
     );
   }
@@ -146,7 +146,7 @@ export default function UsersPage() {
       <div className="mb-5 flex items-start justify-between gap-4">
         <div>
           <h1 className="text-lg font-semibold">Users</h1>
-          <p className="mt-0.5 text-xs text-gray-500">
+          <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
             {isManager
               ? 'Add bidders to your team and deactivate access when needed.'
               : 'Roles decide what a person can do; profile ownership decides which workspace they use.'}
@@ -176,11 +176,11 @@ export default function UsersPage() {
       </div>
 
       {loading ? (
-        <p className="text-sm text-gray-500">Loading…</p>
+        <p className="text-sm text-gray-500 dark:text-gray-400">Loading…</p>
       ) : (
         <div className="card overflow-hidden">
           <table className="w-full text-xs">
-            <thead className="bg-gray-50 text-left text-2xs uppercase tracking-wide text-gray-500">
+            <thead className="bg-gray-50 dark:bg-gray-800 text-left text-2xs uppercase tracking-wide text-gray-500 dark:text-gray-400">
               <tr>
                 <th className="px-3 py-2 font-medium">User</th>
                 <th className="px-3 py-2 font-medium">Role</th>
@@ -198,21 +198,21 @@ export default function UsersPage() {
                 return (
                   <tr
                     key={u.id}
-                    className={`border-t border-gray-100 ${
-                      u.is_active ? '' : 'bg-gray-50 text-gray-500'
-                    } ${u.role === 'bidder_manager' ? 'bg-slate-50/60' : ''}`}
+                    className={`border-t border-gray-100 dark:border-gray-800 ${
+                      u.is_active ? '' : 'bg-gray-50 dark:bg-gray-800 text-gray-500 dark:text-gray-400'
+                    } ${u.role === 'bidder_manager' ? 'bg-slate-50/60 dark:bg-slate-800/60' : ''}`}
                   >
                     <td className="px-3 py-2">
                       <div className={isManagedBidder ? 'flex items-start pl-5' : ''}>
                         {isManagedBidder && (
-                          <span className="mr-2 text-gray-300" aria-hidden="true">&#8627;</span>
+                          <span className="mr-2 text-gray-300 dark:text-gray-500" aria-hidden="true">&#8627;</span>
                         )}
                         <div>
                           <div className="font-medium">
                             {u.username}
-                            {isMe && <span className="ml-1.5 text-2xs text-gray-500">(you)</span>}
+                            {isMe && <span className="ml-1.5 text-2xs text-gray-500 dark:text-gray-400">(you)</span>}
                           </div>
-                          <div className="text-2xs text-gray-500">{u.email}</div>
+                          <div className="text-2xs text-gray-500 dark:text-gray-400">{u.email}</div>
                         </div>
                       </div>
                     </td>
@@ -231,7 +231,7 @@ export default function UsersPage() {
                         ))}
                       </select>
                     </td>
-                    <td className="px-3 py-2 tabular-nums text-gray-600">
+                    <td className="px-3 py-2 tabular-nums text-gray-600 dark:text-gray-400">
                       {u.owned_workspace_count ?? 0} owned
                     </td>
                     <td className="px-3 py-2">
@@ -248,9 +248,9 @@ export default function UsersPage() {
                           ))}
                         </select>
                       ) : isManager ? (
-                        <span className="text-gray-600">You</span>
+                        <span className="text-gray-600 dark:text-gray-400">You</span>
                       ) : u.role === 'bidder_manager' ? (
-                        <span className="text-gray-600">
+                        <span className="text-gray-600 dark:text-gray-400">
                           {u.managed_bidder_count ?? 0} bidder{u.managed_bidder_count === 1 ? '' : 's'}
                         </span>
                       ) : (
@@ -261,8 +261,8 @@ export default function UsersPage() {
                       <span
                         className={`rounded px-1.5 py-0.5 text-2xs font-medium ring-1 ring-inset ${
                           u.is_active
-                            ? 'bg-green-50 text-green-700 ring-green-200'
-                            : 'bg-gray-100 text-gray-600 ring-gray-300'
+                            ? 'bg-green-50 dark:bg-green-950 text-green-700 dark:text-green-300 ring-green-200 dark:ring-green-800'
+                            : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 ring-gray-300 dark:ring-gray-600'
                         }`}
                       >
                         {u.is_active ? 'active' : 'deactivated'}
@@ -306,14 +306,14 @@ export default function UsersPage() {
             </tbody>
           </table>
           {filteredUsers.length === 0 && (
-            <p className="p-6 text-center text-xs text-gray-500">
+            <p className="p-6 text-center text-xs text-gray-500 dark:text-gray-400">
               No {statusFilter === 'all' ? '' : `${statusFilter} `}users found.
             </p>
           )}
         </div>
       )}
 
-      <p className="mt-3 text-2xs text-gray-500">
+      <p className="mt-3 text-2xs text-gray-500 dark:text-gray-400">
         Deactivating is preferred over deleting: it revokes access immediately (the next API call fails)
         while keeping the person&apos;s workspaces and payment history intact.
       </p>
@@ -393,7 +393,7 @@ function CreateUserModal({
         <div>
           <label className="label" htmlFor="cu-password">Temporary password</label>
           <input id="cu-password" type="password" autoComplete="new-password" className="input font-mono" value={password} onChange={(e) => setPassword(e.target.value)} required minLength={8} />
-          <p className="mt-1 text-2xs text-gray-500">
+          <p className="mt-1 text-2xs text-gray-500 dark:text-gray-400">
             Minimum 8 characters. Shown as plain text because you have to pass it on — the user can change
             it from their Account page.
           </p>
@@ -455,7 +455,7 @@ function ResetPasswordModal({ user, onClose }: { user: User; onClose: () => void
   return (
     <Modal title={`Reset password — ${user.username}`} onClose={onClose}>
       <form onSubmit={submit} className="space-y-3">
-        <p className="text-xs text-gray-600">
+        <p className="text-xs text-gray-600 dark:text-gray-400">
           There is no password-reset email in this system by design, so an admin sets the new password
           directly and hands it over.
         </p>
@@ -498,7 +498,7 @@ function Modal({
       <div className="card w-full max-w-md p-5">
         <div className="mb-4 flex items-center justify-between">
           <h2 className="text-sm font-semibold">{title}</h2>
-          <button type="button" className="text-gray-400 hover:text-gray-700" onClick={onClose} aria-label="Close">
+          <button type="button" className="text-gray-400 hover:text-gray-700 dark:hover:text-gray-300" onClick={onClose} aria-label="Close">
             ✕
           </button>
         </div>

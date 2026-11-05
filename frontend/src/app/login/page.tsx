@@ -4,6 +4,7 @@ import { Suspense, useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useAuth } from '@/lib/auth-context';
 import { BrandIcon } from '@/components/brand-icon';
+import { ThemeToggle } from '@/components/theme-toggle';
 
 /**
  * `useSearchParams` opts a route out of static prerendering unless it sits inside a Suspense boundary,
@@ -13,11 +14,14 @@ import { BrandIcon } from '@/components/brand-icon';
 export default function LoginPage() {
   return (
     <main className="flex h-full items-center justify-center px-4">
+      <div className="absolute right-4 top-4">
+        <ThemeToggle />
+      </div>
       <div className="w-full max-w-sm">
         <div className="mb-6 text-center">
           <BrandIcon size={64} className="mx-auto mb-4 rounded-2xl shadow-lg shadow-slate-900/10" />
           <h1 className="text-2xl font-semibold tracking-tight">BidTracker</h1>
-          <p className="mt-1 text-sm text-gray-500">Job application &amp; bidder management</p>
+          <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">Job application &amp; bidder management</p>
         </div>
 
         <Suspense
@@ -100,7 +104,7 @@ function LoginForm() {
       </div>
 
       {error && (
-        <p role="alert" className="rounded-md bg-red-50 px-3 py-2 text-xs text-red-700">
+        <p role="alert" className="rounded-md bg-red-50 dark:bg-red-950 px-3 py-2 text-xs text-red-700 dark:text-red-300">
           {error}
         </p>
       )}
