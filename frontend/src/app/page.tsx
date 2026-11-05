@@ -16,7 +16,7 @@ export default function RootPage() {
 
   return (
     <main className="flex h-full items-center justify-center">
-      <p className="text-sm text-gray-500">Loading…</p>
+      <p className="text-sm text-gray-500 dark:text-gray-400">Loading…</p>
     </main>
   );
 }

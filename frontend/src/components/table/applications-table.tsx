@@ -150,7 +150,7 @@ export function ApplicationsTable(props: Props) {
     <div className="flex h-full min-h-0 flex-col">
       <div
         ref={scrollRef}
-        className="thin-scroll relative min-h-0 flex-1 overflow-auto bg-white"
+        className="thin-scroll relative min-h-0 flex-1 overflow-auto bg-white dark:bg-gray-900"
         role="grid"
         aria-label="Job applications"
         tabIndex={0}
@@ -172,7 +172,7 @@ export function ApplicationsTable(props: Props) {
               <input
                 type="checkbox"
                 aria-label="Select visible rows"
-                className="h-3.5 w-3.5 accent-gray-900"
+                className="h-3.5 w-3.5 accent-gray-900 dark:accent-gray-200"
                 checked={allVisibleSelected}
                 ref={(input) => {
                   if (input) input.indeterminate = !allVisibleSelected && visibleRows.some(({ row }) => selectedIds.has(row.id));
@@ -190,7 +190,7 @@ export function ApplicationsTable(props: Props) {
                   aria-sort={active ? (filters.sort_dir === 'asc' ? 'ascending' : 'descending') : 'none'}
                   className={`group relative flex shrink-0 items-center border-r border-gray-600
                     bg-gray-700 px-2 text-2xs font-semibold uppercase tracking-wide text-white ${
-                      col.sortable ? 'cursor-pointer select-none hover:text-gray-900' : ''
+                      col.sortable ? 'cursor-pointer select-none hover:bg-gray-600' : ''
                     } ${col.sticky ? 'sticky z-10 shadow-sticky-col' : ''}`}
                   style={{
                     width: widthOf(col.key),
@@ -225,7 +225,7 @@ export function ApplicationsTable(props: Props) {
           {/* ---- virtualised body ---- */}
           <div style={{ height: virtualizer.getTotalSize(), position: 'relative' }}>
             {total === 0 && !loading && (
-              <div className="absolute inset-x-0 top-8 text-center text-xs text-gray-500">
+              <div className="absolute inset-x-0 top-8 text-center text-xs text-gray-500 dark:text-gray-400">
                 No applications match the current filters.
               </div>
             )}
@@ -239,7 +239,7 @@ export function ApplicationsTable(props: Props) {
                 return (
                   <div
                     key={virtualRow.key}
-                    className="absolute left-0 flex items-center border-b border-gray-300"
+                    className="absolute left-0 flex items-center border-b border-gray-300 dark:border-gray-600"
                     style={{
                       top: virtualRow.start,
                       height: ROW_HEIGHT,
@@ -247,10 +247,10 @@ export function ApplicationsTable(props: Props) {
                     }}
                   >
                     <div
-                      className="sticky left-0 shrink-0 bg-white"
+                      className="sticky left-0 shrink-0 bg-white dark:bg-gray-900"
                       style={{ width: SELECT_COL_WIDTH }}
                     />
-                    <div className="ml-2 h-3 w-40 animate-pulse rounded bg-gray-100" />
+                    <div className="ml-2 h-3 w-40 animate-pulse rounded bg-gray-100 dark:bg-gray-800" />
                   </div>
                 );
               }
@@ -267,9 +267,9 @@ export function ApplicationsTable(props: Props) {
                   : Boolean(nextRow && nextRow.date.slice(0, 10) !== row.date.slice(0, 10));
               const weekBoundary = dayStart && isWeekBoundary(row.date);
               const boundaryClass = weekBoundary
-                ? 'bg-green-50'
+                ? 'bg-green-50 dark:bg-green-950'
                 : dayStart
-                  ? 'bg-red-50'
+                  ? 'bg-red-50 dark:bg-red-950'
                   : '';
               const boundaryStyle = weekBoundary
                 ? { borderTop: '7px solid #16a34a' }
@@ -277,25 +277,25 @@ export function ApplicationsTable(props: Props) {
                   ? { borderTop: '5px solid #ef4444' }
                   : undefined;
               const rowSurface = row.application_status === 'Duplicated'
-                ? 'bg-red-200 text-red-950 hover:bg-red-300'
+                ? 'bg-red-200 dark:bg-red-900 text-red-950 dark:text-red-200 hover:bg-red-300 dark:hover:bg-red-800'
                 : row.application_status === 'Banned'
-                  ? 'bg-orange-50 text-orange-950 hover:bg-orange-100'
+                  ? 'bg-orange-50 dark:bg-orange-950 text-orange-950 dark:text-orange-200 hover:bg-orange-100 dark:hover:bg-orange-900'
                   : row.application_status === 'Rejected'
                     ? 'bg-gray-500 text-white hover:bg-gray-600'
                     : row.application_status === 'Applied' && row.paid
-                      ? 'bg-green-100 text-green-950 hover:bg-green-200'
+                      ? 'bg-green-100 dark:bg-green-900 text-green-950 dark:text-green-200 hover:bg-green-200 dark:hover:bg-green-800'
                       : row.application_status === 'Applied'
-                        ? 'bg-green-50 text-green-950 hover:bg-green-100'
+                        ? 'bg-green-50 dark:bg-green-950 text-green-950 dark:text-green-200 hover:bg-green-100 dark:hover:bg-green-900'
                         : row.application_status === 'Pending'
-                          ? 'bg-amber-50 text-gray-900 hover:bg-amber-100'
-                          : dayStart ? boundaryClass : 'bg-white hover:bg-gray-50/80';
+                          ? 'bg-amber-50 dark:bg-amber-950 text-gray-900 dark:text-gray-100 hover:bg-amber-100 dark:hover:bg-amber-900'
+                          : dayStart ? boundaryClass : 'bg-white dark:bg-gray-900 hover:bg-gray-50/80 dark:hover:bg-gray-800/80';
               return (
                 <div
                   key={row.id}
                   role="row"
                   aria-rowindex={virtualRow.index + 1}
                   aria-selected={selected}
-                  className={`absolute left-0 flex border-b border-gray-300 ${selected ? 'bg-blue-50' : rowSurface}`}
+                  className={`absolute left-0 flex border-b border-gray-300 dark:border-gray-600 ${selected ? 'bg-blue-50 dark:bg-blue-950' : rowSurface}`}
                   style={{
                     top: virtualRow.start,
                     height: ROW_HEIGHT,
@@ -305,13 +305,13 @@ export function ApplicationsTable(props: Props) {
                 >
                   <div
                     className={`sticky left-0 z-10 flex shrink-0 items-center justify-center border-r
-                      border-gray-300 ${selected ? 'bg-blue-50' : rowSurface.replace(/ text-\S+| hover:\S+/g, '')}`}
+                      border-gray-300 dark:border-gray-600 ${selected ? 'bg-blue-50 dark:bg-blue-950' : rowSurface.replace(/ (?:dark:)?(?:text-|hover:)\S+/g, '')}`}
                     style={{ width: SELECT_COL_WIDTH }}
                   >
                     <input
                       type="checkbox"
                       aria-label={`Select row ${row.number}`}
-                      className="h-3.5 w-3.5 accent-gray-900"
+                      className="h-3.5 w-3.5 accent-gray-900 dark:accent-gray-200"
                       checked={selected}
                       onChange={(e) =>
                         onToggleSelect(
@@ -327,10 +327,10 @@ export function ApplicationsTable(props: Props) {
                     <div
                       key={col.key}
                       role="gridcell"
-                      className={`shrink-0 border-r border-gray-300 ${
+                      className={`shrink-0 border-r border-gray-300 dark:border-gray-600 ${
                         col.sticky
                           ? `sticky z-[5] shadow-sticky-col ${
-                              selected ? 'bg-blue-50' : rowSurface.replace(/ text-\S+| hover:\S+/g, '')
+                              selected ? 'bg-blue-50 dark:bg-blue-950' : rowSurface.replace(/ (?:dark:)?(?:text-|hover:)\S+/g, '')
                             }`
                           : ''
                       }`}
@@ -361,22 +361,22 @@ export function ApplicationsTable(props: Props) {
       </div>
 
       {/* ---- status bar ---- */}
-      <div className="flex h-8 shrink-0 items-center gap-3 border-t border-gray-200 bg-gray-50 px-3
-        text-2xs text-gray-600">
+      <div className="flex h-8 shrink-0 items-center gap-3 border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 px-3
+        text-2xs text-gray-600 dark:text-gray-400">
         <span className="tabular-nums">
           {total.toLocaleString()} row{total === 1 ? '' : 's'}
         </span>
         {selectedIds.size > 0 && (
-          <span className="font-medium text-gray-900">{selectedIds.size} selected · Copy links or Ctrl/Cmd+C</span>
+          <span className="font-medium text-gray-900 dark:text-gray-100">{selectedIds.size} selected · Copy links or Ctrl/Cmd+C</span>
         )}
-        {loading && <span className="text-gray-500">Loading…</span>}
+        {loading && <span className="text-gray-500 dark:text-gray-400">Loading…</span>}
         <div className="hidden items-center gap-2.5 md:flex" aria-label="Row color legend">
-          <LegendItem color="bg-green-50" label="Applied unpaid" />
-          <LegendItem color="bg-green-100" label="Applied paid" />
-          <LegendItem color="bg-amber-50" label="Pending" />
+          <LegendItem color="bg-green-50 dark:bg-green-950" label="Applied unpaid" />
+          <LegendItem color="bg-green-100 dark:bg-green-900" label="Applied paid" />
+          <LegendItem color="bg-amber-50 dark:bg-amber-950" label="Pending" />
           <LegendItem color="bg-gray-500" label="Rejected" />
-          <LegendItem color="bg-orange-50" label="Banned" />
-          <LegendItem color="bg-red-200" label="Duplicated" />
+          <LegendItem color="bg-orange-50 dark:bg-orange-950" label="Banned" />
+          <LegendItem color="bg-red-200 dark:bg-red-900" label="Duplicated" />
         </div>
         <span className="ml-auto text-gray-400">
           {stickyCount} pinned column{stickyCount === 1 ? '' : 's'} · drag a header edge to resize ·
@@ -390,7 +390,7 @@ export function ApplicationsTable(props: Props) {
 function LegendItem({ color, label }: { color: string; label: string }) {
   return (
     <span className="flex items-center gap-1 whitespace-nowrap">
-      <span className={`h-2.5 w-2.5 rounded-sm border border-gray-400 ${color}`} aria-hidden="true" />
+      <span className={`h-2.5 w-2.5 rounded-sm border border-gray-400 dark:border-gray-500 ${color}`} aria-hidden="true" />
       {label}
     </span>
   );

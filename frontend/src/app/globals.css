@@ -4,31 +4,40 @@
 
 :root {
   color-scheme: light;
+  --scrollbar-thumb: #cbd5e1;
+  --scrollbar-hover: #94a3b8;
+}
+
+:root.dark {
+  @apply bg-gray-950 text-gray-100;
+  color-scheme: dark;
+  --scrollbar-thumb: #4b5563;
+  --scrollbar-hover: #6b7280;
 }
 
 html,
 body {
-  @apply h-full bg-gray-50 text-gray-900 antialiased;
+  @apply h-full bg-gray-50 text-gray-900 antialiased dark:bg-gray-950 dark:text-gray-100;
 }
 
 /* Dense-grid scrollbars: the table is the whole product, so it gets a slim, always-visible bar
    rather than the OS overlay default (which hides the position indicator while scrolling 50k rows). */
 .thin-scroll {
   scrollbar-width: thin;
-  scrollbar-color: #cbd5e1 transparent;
+  scrollbar-color: var(--scrollbar-thumb) transparent;
 }
 .thin-scroll::-webkit-scrollbar {
   width: 12px;
   height: 12px;
 }
 .thin-scroll::-webkit-scrollbar-thumb {
-  background: #cbd5e1;
+  background: var(--scrollbar-thumb);
   border: 3px solid transparent;
   border-radius: 8px;
   background-clip: content-box;
 }
 .thin-scroll::-webkit-scrollbar-thumb:hover {
-  background: #94a3b8;
+  background: var(--scrollbar-hover);
   background-clip: content-box;
   border: 3px solid transparent;
 }
@@ -36,13 +45,17 @@ body {
 @layer components {
   .btn {
     @apply inline-flex items-center justify-center gap-1.5 rounded-md border px-3 py-1.5 text-sm
-      font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50;
+      font-medium transition-colors focus-visible:outline-none focus-visible:ring-2
+      focus-visible:ring-blue-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-gray-900
+      disabled:cursor-not-allowed disabled:opacity-50;
   }
   .btn-primary {
-    @apply btn border-transparent bg-gray-900 text-white hover:bg-gray-700;
+    @apply btn border-transparent bg-gray-900 text-white hover:bg-gray-700
+      dark:bg-gray-100 dark:text-gray-900 dark:hover:bg-gray-300;
   }
   .btn-secondary {
-    @apply btn border-gray-300 bg-white text-gray-700 hover:bg-gray-50;
+    @apply btn border-gray-300 bg-white text-gray-700 hover:bg-gray-50
+      dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700;
   }
   .btn-danger {
     @apply btn border-transparent bg-red-600 text-white hover:bg-red-700;
@@ -54,13 +67,15 @@ body {
   .input {
     @apply w-full rounded-md border border-gray-300 bg-white px-2.5 py-1.5 text-sm
       placeholder:text-gray-400 focus:border-gray-900 focus:outline-none focus:ring-1
-      focus:ring-gray-900 disabled:bg-gray-100 disabled:text-gray-500;
+      focus:ring-gray-900 disabled:bg-gray-100 disabled:text-gray-500
+      dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100 dark:placeholder:text-gray-400
+      dark:focus:border-gray-400 dark:focus:ring-gray-400 dark:disabled:bg-gray-800 dark:disabled:text-gray-500;
   }
   .label {
-    @apply mb-1 block text-xs font-medium text-gray-600;
+    @apply mb-1 block text-xs font-medium text-gray-600 dark:text-gray-400;
   }
   .card {
-    @apply rounded-lg border border-gray-200 bg-white shadow-sm;
+    @apply rounded-lg border border-gray-200 bg-white shadow-sm dark:border-gray-700 dark:bg-gray-900;
   }
 
   /* Grid cell: editable cells must look editable on hover without shifting layout, so the affordance
@@ -69,7 +84,8 @@ body {
     @apply flex h-full items-center overflow-hidden whitespace-nowrap px-2 text-xs;
   }
   .cell-editable {
-    @apply cursor-text hover:bg-blue-50/70 hover:ring-1 hover:ring-inset hover:ring-blue-200;
+    @apply cursor-text hover:bg-blue-50/70 hover:ring-1 hover:ring-inset hover:ring-blue-200
+      dark:hover:bg-blue-950/70 dark:hover:ring-blue-700;
   }
   .cell-locked {
     @apply cursor-not-allowed;
@@ -79,20 +95,20 @@ body {
 /* Status pills — colours are the spec's contract:
    Pending gray, Applied green, Rejected black, Banned orange, Duplicated red. */
 .status-pending {
-  @apply bg-gray-100 text-gray-700 ring-gray-300;
+  @apply bg-gray-100 text-gray-700 ring-gray-300 dark:bg-gray-800 dark:text-gray-300 dark:ring-gray-600;
 }
 .status-applied {
-  @apply bg-green-100 text-green-800 ring-green-300;
+  @apply bg-green-100 text-green-800 ring-green-300 dark:bg-green-900 dark:text-green-200 dark:ring-green-700;
 }
 .status-rejected {
-  @apply bg-gray-900 text-white ring-gray-900;
+  @apply bg-gray-900 text-white ring-gray-900 dark:bg-gray-950 dark:ring-gray-500;
 }
 .status-duplicated {
-  @apply bg-red-100 text-red-700 ring-red-300;
+  @apply bg-red-100 text-red-700 ring-red-300 dark:bg-red-900 dark:text-red-200 dark:ring-red-700;
 }
 .status-cancelled {
-  @apply bg-slate-100 text-slate-600 ring-slate-300;
+  @apply bg-slate-100 text-slate-600 ring-slate-300 dark:bg-slate-800 dark:text-slate-300 dark:ring-slate-600;
 }
 .status-banned {
-  @apply bg-orange-100 text-orange-800 ring-orange-300;
+  @apply bg-orange-100 text-orange-800 ring-orange-300 dark:bg-orange-900 dark:text-orange-200 dark:ring-orange-700;
 }

@@ -158,7 +158,7 @@ export default function WorkspacesPage() {
       <div className="mb-6 flex items-baseline justify-between">
         <div>
           <h1 className="text-lg font-semibold">Dashboard</h1>
-          <p className="mt-0.5 text-xs text-gray-500">
+          <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
             Admins assign profiles to bidder managers; managers assign those profiles to bidders on their team.
           </p>
         </div>
@@ -171,7 +171,7 @@ export default function WorkspacesPage() {
               <h2 id="today-applied-heading" className="text-sm font-semibold">
                 Today&apos;s applied applications
               </h2>
-              <p className="mt-0.5 text-2xs text-gray-500">Select a bidder to see their profile counts</p>
+              <p className="mt-0.5 text-2xs text-gray-500 dark:text-gray-400">Select a bidder to see their profile counts</p>
             </div>
             <label className="label min-w-52">
               Bidder
@@ -190,7 +190,7 @@ export default function WorkspacesPage() {
             </label>
             <div className="text-right">
               <p className="text-2xl font-semibold tabular-nums">{appliedTodayTotal.toLocaleString()}</p>
-              <p className="text-2xs text-gray-500">total today</p>
+              <p className="text-2xs text-gray-500 dark:text-gray-400">total today</p>
             </div>
           </div>
 
@@ -200,7 +200,7 @@ export default function WorkspacesPage() {
                 <p className="text-sm font-medium">
                   {bidder.username}: total {bidder.total.toLocaleString()}
                 </p>
-                <div className="mt-1 flex flex-wrap gap-x-2 gap-y-1 text-sm text-gray-700">
+                <div className="mt-1 flex flex-wrap gap-x-2 gap-y-1 text-sm text-gray-700 dark:text-gray-300">
                   {bidder.profiles.map((profile) => (
                     <span key={profile.id}>
                       {profile.name}-{profile.count.toLocaleString()}
@@ -210,7 +210,7 @@ export default function WorkspacesPage() {
               </div>
             ))}
             {displayedBidderActivity.length === 0 && (
-              <p className="text-sm text-gray-500">No applications today for this bidder.</p>
+              <p className="text-sm text-gray-500 dark:text-gray-400">No applications today for this bidder.</p>
             )}
           </div>
         </section>
@@ -291,10 +291,10 @@ export default function WorkspacesPage() {
       )}
 
       {loading ? (
-        <p className="text-sm text-gray-500">Loading…</p>
+        <p className="text-sm text-gray-500 dark:text-gray-400">Loading…</p>
       ) : workspaces.length === 0 ? (
         <div className="card p-8 text-center">
-          <p className="text-sm text-gray-600">
+          <p className="text-sm text-gray-600 dark:text-gray-400">
             {admin
               ? 'No workspaces yet. Create one above to get started.'
               : 'No workspaces have been assigned to you yet. Ask an admin for access.'}
@@ -302,7 +302,7 @@ export default function WorkspacesPage() {
         </div>
       ) : filteredWorkspaces.length === 0 ? (
         <div className="card p-8 text-center">
-          <p className="text-sm text-gray-600">No {workspaceFilter} workspaces.</p>
+          <p className="text-sm text-gray-600 dark:text-gray-400">No {workspaceFilter} workspaces.</p>
         </div>
       ) : (
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -319,11 +319,11 @@ export default function WorkspacesPage() {
                   >
                     {w.name}
                   </Link>
-                  <p className="mt-0.5 text-2xs text-gray-500">
+                  <p className="mt-0.5 text-2xs text-gray-500 dark:text-gray-400">
                     Owner: {w.owner.username}
                     {w.is_archived && ' · archived'}
                   </p>
-                  <p className="mt-0.5 text-2xs text-gray-500">
+                  <p className="mt-0.5 text-2xs text-gray-500 dark:text-gray-400">
                     Manager: {w.manager?.username ?? 'Unassigned'}
                   </p>
                 </div>
@@ -332,12 +332,12 @@ export default function WorkspacesPage() {
               <p className="mt-3 text-2xl font-semibold tabular-nums">
                 {w.application_count.toLocaleString()}
               </p>
-              <p className="text-2xs text-gray-500">applications</p>
+              <p className="text-2xs text-gray-500 dark:text-gray-400">applications</p>
 
               {admin && (
-                <div className="mt-3 border-t border-gray-100 pt-3">
-                  <p className="text-2xs font-medium uppercase tracking-wide text-gray-500">Applied today</p>
-                  <p className="mt-1 text-xs text-gray-700">
+                <div className="mt-3 border-t border-gray-100 dark:border-gray-800 pt-3">
+                  <p className="text-2xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Applied today</p>
+                  <p className="mt-1 text-xs text-gray-700 dark:text-gray-300">
                     {w.applied_today_by_user.length > 0
                       ? w.applied_today_by_user
                         .map((item) => `${item.username}(${item.count.toLocaleString()})`)
@@ -467,23 +467,23 @@ function ProfileViewModal({ workspace, onClose }: { workspace: Workspace; onClos
         <div className="flex items-start justify-between gap-4">
           <div>
             <h2 className="text-sm font-semibold">Resume profile — {workspace.owner.username}</h2>
-            <p className="mt-0.5 text-2xs text-gray-500">Read-only · {profile.name}</p>
+            <p className="mt-0.5 text-2xs text-gray-500 dark:text-gray-400">Read-only · {profile.name}</p>
           </div>
-          <button type="button" className="text-gray-400 hover:text-gray-700" onClick={onClose} aria-label="Close">×</button>
+          <button type="button" className="text-gray-400 hover:text-gray-700 dark:hover:text-gray-300" onClick={onClose} aria-label="Close">×</button>
         </div>
 
         <dl className="mt-4 grid gap-x-6 gap-y-3 sm:grid-cols-2">
           {details.map(([label, value]) => (
             <div key={label}>
-              <dt className="text-2xs font-medium uppercase tracking-wide text-gray-500">{label}</dt>
-              <dd className="mt-0.5 whitespace-pre-wrap text-xs text-gray-900">{value}</dd>
+              <dt className="text-2xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">{label}</dt>
+              <dd className="mt-0.5 whitespace-pre-wrap text-xs text-gray-900 dark:text-gray-100">{value}</dd>
             </div>
           ))}
         </dl>
 
         <section className="mt-5">
           <h3 className="text-xs font-semibold">Career path</h3>
-          <p className="mt-1 whitespace-pre-wrap rounded bg-gray-50 p-3 text-xs text-gray-700">
+          <p className="mt-1 whitespace-pre-wrap rounded bg-gray-50 dark:bg-gray-800 p-3 text-xs text-gray-700 dark:text-gray-300">
             {profile.career_path || 'Not provided'}
           </p>
         </section>
@@ -492,18 +492,18 @@ function ProfileViewModal({ workspace, onClose }: { workspace: Workspace; onClos
           <div>
             <h3 className="text-xs font-semibold">Education</h3>
             {profile.education.length ? profile.education.map((item, index) => (
-              <p key={index} className="mt-1 text-xs text-gray-700">
+              <p key={index} className="mt-1 text-xs text-gray-700 dark:text-gray-300">
                 {[item.degree, item.school, item.year].filter(Boolean).join(' · ')}
               </p>
-            )) : <p className="mt-1 text-xs text-gray-500">Not provided</p>}
+            )) : <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">Not provided</p>}
           </div>
           <div>
             <h3 className="text-xs font-semibold">Certifications</h3>
             {profile.certifications.length ? profile.certifications.map((item, index) => (
-              <p key={index} className="mt-1 text-xs text-gray-700">
+              <p key={index} className="mt-1 text-xs text-gray-700 dark:text-gray-300">
                 {[item.name, item.issuer, item.year].filter(Boolean).join(' · ')}
               </p>
-            )) : <p className="mt-1 text-xs text-gray-500">Not provided</p>}
+            )) : <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">Not provided</p>}
           </div>
         </section>
 
@@ -664,20 +664,20 @@ function ProfileModal({
             onChange={(v) => setPersonal({ ...personal, ethnicity: v })}
           />
         </div>
-        <p className="mt-2 text-xs text-gray-500">
+        <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
           U.S. work status is optional, used only for application autofill, and is never inferred by AI.
         </p>
-        <p className="mt-2 text-xs text-gray-500">
+        <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
           Application autofill always selects “I am not a protected veteran” for veteran status. Demographic values are optional and are never inferred by AI.
         </p>
         <label className="label mt-4" htmlFor="career-path">Career path</label>
         <textarea id="career-path" className="input mt-1 min-h-32 font-mono text-xs" value={careerPath} onChange={(e) => setCareerPath(e.target.value)} />
         <div className="mt-3 space-y-2">
-          <label className="flex items-center gap-2 text-xs text-gray-700">
+          <label className="flex items-center gap-2 text-xs text-gray-700 dark:text-gray-300">
             <input type="checkbox" checked={updateHeadline} onChange={(e) => setUpdateHeadline(e.target.checked)} />
             Update headline from generated resume
           </label>
-          <label className="flex items-center gap-2 text-xs text-gray-700">
+          <label className="flex items-center gap-2 text-xs text-gray-700 dark:text-gray-300">
             <input type="checkbox" checked={useGeneratedRoleTitles} onChange={(e) => setUseGeneratedRoleTitles(e.target.checked)} />
             Use AI-generated job titles
           </label>
@@ -761,7 +761,7 @@ function ManagerAssignmentModal({
     <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/30 p-4">
       <div className="card w-full max-w-md p-5">
         <h2 className="text-sm font-semibold">Assign manager — {workspace.profile?.name ?? workspace.name}</h2>
-        <p className="mt-1 text-2xs text-gray-500">
+        <p className="mt-1 text-2xs text-gray-500 dark:text-gray-400">
           The selected manager can view this profile and assign it to one of their bidders.
         </p>
         <label className="label mt-4" htmlFor="profile-manager">Bidder manager</label>
@@ -833,7 +833,7 @@ function BidderAssignmentModal({
     <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/30 p-4">
       <div className="card w-full max-w-md p-5">
         <h2 className="text-sm font-semibold">Choose assignee — {workspace.profile?.name ?? workspace.name}</h2>
-        <p className="mt-1 text-2xs text-gray-500">
+        <p className="mt-1 text-2xs text-gray-500 dark:text-gray-400">
           Work on this profile yourself or assign it to an active bidder allocated to you.
         </p>
         <label className="label mt-4" htmlFor="profile-bidder">Profile assignee</label>
@@ -850,7 +850,7 @@ function BidderAssignmentModal({
           ))}
         </select>
         {eligibleBidders.length === 0 && (
-          <p className="mt-2 text-xs text-gray-500">No active bidders are allocated to you yet.</p>
+          <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">No active bidders are allocated to you yet.</p>
         )}
         <div className="mt-5 flex justify-end gap-2">
           <button type="button" className="btn-secondary" onClick={onClose} disabled={busy}>Cancel</button>

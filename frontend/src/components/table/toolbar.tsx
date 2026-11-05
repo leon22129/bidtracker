@@ -71,13 +71,13 @@ export function TableToolbar(props: Props) {
     (filters.search ? 1 : 0);
 
   return (
-    <div className="shrink-0 border-b border-gray-200 bg-white">
+    <div className="shrink-0 border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900">
       <div className="flex flex-wrap items-center gap-2 px-3 py-2">
         <div className="mr-1 min-w-0">
           <h1 className="truncate text-sm font-semibold leading-tight">{workspaceName}</h1>
-          <p className="text-2xs text-gray-500">
+          <p className="text-2xs text-gray-500 dark:text-gray-400">
             Owner {ownerUsername}
-            {!canEdit && <span className="ml-1 font-medium text-amber-700">· Read-only</span>}
+            {!canEdit && <span className="ml-1 font-medium text-amber-700 dark:text-amber-300">· Read-only</span>}
             {summary && (
               <>
                 {' · '}
@@ -106,7 +106,7 @@ export function TableToolbar(props: Props) {
           {searchText && (
             <button
               type="button"
-              className="absolute right-1.5 top-1 text-xs text-gray-400 hover:text-gray-700"
+              className="absolute right-1.5 top-1 text-xs text-gray-400 hover:text-gray-700 dark:hover:text-gray-300"
               onClick={() => setSearchText('')}
               aria-label="Clear search"
             >
@@ -129,7 +129,7 @@ export function TableToolbar(props: Props) {
         {activeCount > 0 && (
           <button
             type="button"
-            className="text-xs text-gray-500 underline hover:text-gray-900"
+            className="text-xs text-gray-500 dark:text-gray-400 underline hover:text-gray-900 dark:hover:text-gray-100"
             onClick={() =>
               onFiltersChange({ sort_by: filters.sort_by, sort_dir: filters.sort_dir })
             }
@@ -155,8 +155,8 @@ export function TableToolbar(props: Props) {
       </div>
 
       {showMore && (
-        <div className="flex flex-wrap items-start gap-x-6 gap-y-3 border-t border-gray-100
-          bg-gray-50/70 px-3 py-2.5">
+        <div className="flex flex-wrap items-start gap-x-6 gap-y-3 border-t border-gray-100 dark:border-gray-800
+          bg-gray-50/70 dark:bg-gray-800/70 px-3 py-2.5">
           <FilterGroup label="Job source">
             <div className="flex max-w-xl flex-wrap gap-1">
               {JOB_SOURCES.map((s) => (
@@ -232,7 +232,7 @@ export function TableToolbar(props: Props) {
 function FilterGroup({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div>
-      <p className="mb-1 text-2xs font-medium uppercase tracking-wide text-gray-500">{label}</p>
+      <p className="mb-1 text-2xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">{label}</p>
       {children}
     </div>
   );
@@ -276,8 +276,8 @@ function Chip({
       onClick={onClick}
       className={`rounded-full border px-2 py-0.5 text-2xs font-medium transition-colors ${
         active
-          ? 'border-gray-900 bg-gray-900 text-white'
-          : 'border-gray-300 bg-white text-gray-600 hover:border-gray-400 hover:text-gray-900'
+          ? 'border-gray-900 bg-gray-900 text-white dark:border-gray-100 dark:bg-gray-100 dark:text-gray-900'
+          : 'border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 text-gray-600 dark:text-gray-400 hover:border-gray-400 dark:hover:border-gray-500 hover:text-gray-900 dark:hover:text-gray-100'
       }`}
     >
       {label}

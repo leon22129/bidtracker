@@ -97,11 +97,11 @@ export default function ImportPage() {
   return (
     <main className="mx-auto max-w-4xl px-4 py-6">
       <div className="mb-5">
-        <Link href={`/workspaces/${workspaceId}`} className="text-xs text-gray-500 hover:underline">
+        <Link href={`/workspaces/${workspaceId}`} className="text-xs text-gray-500 dark:text-gray-400 hover:underline">
           ← {workspace?.name ?? 'Workspace'}
         </Link>
         <h1 className="mt-1 text-lg font-semibold">Import from Excel or CSV</h1>
-        <p className="mt-0.5 text-xs text-gray-500">
+        <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
           Recognised columns: Date, Job Title, Company Name, URL, Status, and Note. Only the URL
           column is required. Rows without a company name or job title are imported and flagged for review.
         </p>
@@ -110,7 +110,7 @@ export default function ImportPage() {
       {/* ---- step 1: file ---- */}
       <div
         className={`card flex flex-col items-center justify-center border-2 border-dashed p-8 text-center
-          transition-colors ${dragging ? 'border-gray-900 bg-gray-50' : 'border-gray-300'}`}
+          transition-colors ${dragging ? 'border-gray-900 bg-gray-50 dark:bg-gray-800' : 'border-gray-300 dark:border-gray-600'}`}
         onDragOver={(e) => {
           e.preventDefault();
           setDragging(true);
@@ -132,7 +132,7 @@ export default function ImportPage() {
         {file ? (
           <>
             <p className="text-sm font-medium">{file.name}</p>
-            <p className="mt-0.5 text-2xs text-gray-500">
+            <p className="mt-0.5 text-2xs text-gray-500 dark:text-gray-400">
               {(file.size / 1024).toFixed(0)} KB
               {preview && ` · ${preview.total_rows.toLocaleString()} data rows`}
             </p>
@@ -146,7 +146,7 @@ export default function ImportPage() {
           </>
         ) : (
           <>
-            <p className="text-sm text-gray-700">Drop a .xlsx or .csv file here</p>
+            <p className="text-sm text-gray-700 dark:text-gray-300">Drop a .xlsx or .csv file here</p>
             <button
               type="button"
               className="btn-secondary btn-xs mt-3"
@@ -163,7 +163,7 @@ export default function ImportPage() {
       {preview && !result && (
         <div className="card mt-5 p-4">
           <h2 className="text-sm font-semibold">Detected columns</h2>
-          <p className="mt-0.5 text-2xs text-gray-500">
+          <p className="mt-0.5 text-2xs text-gray-500 dark:text-gray-400">
             Matched from your header row. Unmatched columns are ignored.
           </p>
 
@@ -176,10 +176,10 @@ export default function ImportPage() {
                   key={field}
                   className={`rounded-md border px-2.5 py-1.5 text-2xs ${
                     found
-                      ? 'border-green-200 bg-green-50 text-green-900'
+                      ? 'border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-950 text-green-900 dark:text-green-200'
                       : field === 'url'
-                        ? 'border-red-200 bg-red-50 text-red-900'
-                        : 'border-gray-200 bg-gray-50 text-gray-500'
+                        ? 'border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-950 text-red-900 dark:text-red-200'
+                        : 'border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-gray-500 dark:text-gray-400'
                   }`}
                 >
                   <span className="font-medium">{label}</span>
@@ -192,14 +192,14 @@ export default function ImportPage() {
           </div>
 
           {missingUrl && (
-            <p className="mt-3 rounded border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800">
+            <p className="mt-3 rounded border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-950 px-3 py-2 text-xs text-red-800 dark:text-red-200">
               No URL column found. Rename the column to <strong>URL</strong> (or “Job Link”, “Link”,
               “Job URL”) and upload again — URLs are what duplicate detection is built on.
             </p>
           )}
 
           {preview.missing_fields.length > 0 && (
-            <p className="mt-3 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+            <p className="mt-3 rounded border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950 px-3 py-2 text-xs text-amber-900 dark:text-amber-200">
               {preview.missing_fields.length.toLocaleString()} row
               {preview.missing_fields.length === 1 ? '' : 's'} with a valid URL
               {preview.missing_fields.length === 1 ? ' is' : ' are'} missing a company name or job title.
@@ -208,9 +208,9 @@ export default function ImportPage() {
           )}
 
           {preview.sample.length > 0 && (
-            <div className="mt-4 overflow-auto rounded border border-gray-200">
+            <div className="mt-4 overflow-auto rounded border border-gray-200 dark:border-gray-700">
               <table className="w-full text-2xs">
-                <thead className="bg-gray-50 text-left text-gray-600">
+                <thead className="bg-gray-50 dark:bg-gray-800 text-left text-gray-600 dark:text-gray-400">
                   <tr>
                     {preview.headers.map((h, i) => (
                       <th key={i} className="whitespace-nowrap px-2 py-1 font-medium">
@@ -221,9 +221,9 @@ export default function ImportPage() {
                 </thead>
                 <tbody>
                   {preview.sample.map((row, ri) => (
-                    <tr key={ri} className="border-t border-gray-100">
+                    <tr key={ri} className="border-t border-gray-100 dark:border-gray-800">
                       {preview.headers.map((_, ci) => (
-                        <td key={ci} className="max-w-[220px] truncate px-2 py-1 text-gray-700">
+                        <td key={ci} className="max-w-[220px] truncate px-2 py-1 text-gray-700 dark:text-gray-300">
                           {String((row as unknown[])[ci] ?? '')}
                         </td>
                       ))}
@@ -234,7 +234,7 @@ export default function ImportPage() {
             </div>
           )}
 
-          <div className="mt-4 flex flex-wrap items-end gap-4 border-t border-gray-100 pt-4">
+          <div className="mt-4 flex flex-wrap items-end gap-4 border-t border-gray-100 dark:border-gray-800 pt-4">
             <div className="w-40">
               <label className="label" htmlFor="fallback-date">
                 Fallback date
@@ -246,7 +246,7 @@ export default function ImportPage() {
                 value={defaultDate}
                 onChange={(e) => setDefaultDate(e.target.value)}
               />
-              <p className="mt-1 text-2xs text-gray-500">Used for rows with a missing/unparseable date.</p>
+              <p className="mt-1 text-2xs text-gray-500 dark:text-gray-400">Used for rows with a missing/unparseable date.</p>
             </div>
 
             <button
@@ -275,12 +275,12 @@ export default function ImportPage() {
 
           {result.missing_fields.length > 0 && (
             <details className="mt-3" open={result.missing_fields.length <= 10}>
-              <summary className="cursor-pointer text-xs text-gray-600">
+              <summary className="cursor-pointer text-xs text-gray-600 dark:text-gray-400">
                 Review {result.missing_fields.length} row{result.missing_fields.length === 1 ? '' : 's'} with missing fields
               </summary>
               <ul className="mt-2 max-h-56 space-y-1 overflow-auto text-2xs">
                 {result.missing_fields.map((warning) => (
-                  <li key={warning.row} className="rounded border border-amber-100 bg-amber-50/60 px-2 py-1">
+                  <li key={warning.row} className="rounded border border-amber-100 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-950/60 px-2 py-1">
                     <span className="font-medium">Row {warning.row}:</span>{' '}
                     Missing {warning.fields.map((field) => MISSING_FIELD_LABELS[field]).join(' and ')}
                   </li>
@@ -291,12 +291,12 @@ export default function ImportPage() {
 
           {result.skipped.length > 0 && (
             <details className="mt-3" open={result.skipped.length <= 10}>
-              <summary className="cursor-pointer text-xs text-gray-600">
+              <summary className="cursor-pointer text-xs text-gray-600 dark:text-gray-400">
                 Why {result.skipped.length} row{result.skipped.length === 1 ? '' : 's'} were skipped
               </summary>
               <ul className="mt-2 max-h-56 space-y-1 overflow-auto text-2xs">
                 {result.skipped.map((s, i) => (
-                  <li key={i} className="rounded border border-amber-100 bg-amber-50/60 px-2 py-1">
+                  <li key={i} className="rounded border border-amber-100 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-950/60 px-2 py-1">
                     <span className="font-medium">Row {s.row}:</span> {s.reason}
                   </li>
                 ))}
@@ -324,15 +324,15 @@ export default function ImportPage() {
 
 function Stat({ label, value, tone }: { label: string; value: number; tone?: 'red' | 'amber' }) {
   return (
-    <div className="rounded-md border border-gray-200 px-3 py-2">
+    <div className="rounded-md border border-gray-200 dark:border-gray-700 px-3 py-2">
       <p
         className={`text-xl font-semibold tabular-nums ${
-          value === 0 ? 'text-gray-400' : tone === 'red' ? 'text-red-600' : tone === 'amber' ? 'text-amber-600' : ''
+          value === 0 ? 'text-gray-400' : tone === 'red' ? 'text-red-600 dark:text-red-300' : tone === 'amber' ? 'text-amber-600 dark:text-amber-300' : ''
         }`}
       >
         {value.toLocaleString()}
       </p>
-      <p className="text-2xs text-gray-500">{label}</p>
+      <p className="text-2xs text-gray-500 dark:text-gray-400">{label}</p>
     </div>
   );
 }

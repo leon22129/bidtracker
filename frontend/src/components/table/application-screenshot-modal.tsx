@@ -126,14 +126,14 @@ export function ApplicationScreenshotModal({ application, filters, onClose }: Pr
         aria-labelledby="application-screenshot-title"
         aria-describedby="application-screenshot-help"
         tabIndex={-1}
-        className="flex max-h-[92vh] w-full max-w-6xl flex-col overflow-hidden rounded-lg bg-white shadow-xl outline-none"
+        className="flex max-h-[92vh] w-full max-w-6xl flex-col overflow-hidden rounded-lg bg-white dark:bg-gray-900 shadow-xl outline-none"
       >
-        <div className="flex shrink-0 flex-wrap items-start justify-between gap-3 border-b border-gray-200 px-4 py-3">
+        <div className="flex shrink-0 flex-wrap items-start justify-between gap-3 border-b border-gray-200 dark:border-gray-700 px-4 py-3">
           <div className="min-w-0" aria-live="polite">
-            <h2 id="application-screenshot-title" className="text-sm font-semibold text-gray-900">
+            <h2 id="application-screenshot-title" className="text-sm font-semibold text-gray-900 dark:text-gray-100">
               Submission screenshot
             </h2>
-            <p className="mt-1 break-words text-xs text-gray-600">
+            <p className="mt-1 break-words text-xs text-gray-600 dark:text-gray-400">
               {current.date.slice(0, 10)} · #{current.number} ·{' '}
               {[current.company_name, current.job_title].filter(Boolean).join(' — ') || 'Application'}
             </p>
@@ -148,9 +148,9 @@ export function ApplicationScreenshotModal({ application, filters, onClose }: Pr
             <button type="button" className="btn-secondary btn-xs" onClick={onClose}>Close</button>
           </div>
         </div>
-        <div ref={contentRef} className="min-h-0 overflow-auto bg-gray-100 p-3" aria-busy={!activeImage}>
+        <div ref={contentRef} className="min-h-0 overflow-auto bg-gray-100 dark:bg-gray-800 p-3" aria-busy={!activeImage}>
           {activeImage?.error ? (
-            <div role="alert" className="p-8 text-center text-sm text-red-700">
+            <div role="alert" className="p-8 text-center text-sm text-red-700 dark:text-red-300">
               <p>{activeImage.error}</p>
               <button type="button" className="btn-secondary btn-xs mt-3" onClick={() => setAttempt((value) => value + 1)}>
                 Retry
@@ -163,11 +163,11 @@ export function ApplicationScreenshotModal({ application, filters, onClose }: Pr
               onError={() => setImage((value) => value?.id === current.id
                 ? { ...value, error: 'Could not display the screenshot.' } : value)} />
           ) : (
-            <p role="status" className="p-12 text-center text-sm text-gray-500">Loading screenshot…</p>
+            <p role="status" className="p-12 text-center text-sm text-gray-500 dark:text-gray-400">Loading screenshot…</p>
           )}
         </div>
-        <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-gray-200 px-4 py-3">
-          <p id="application-screenshot-help" className="text-xs text-gray-500">
+        <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-gray-200 dark:border-gray-700 px-4 py-3">
+          <p id="application-screenshot-help" className="text-xs text-gray-500 dark:text-gray-400">
             ← Previous · Next → · Esc to close. Skips applications without screenshots.
           </p>
           <div className="flex items-center gap-2">
@@ -181,7 +181,7 @@ export function ApplicationScreenshotModal({ application, filters, onClose }: Pr
             </button>
           </div>
           {navigationError && (
-            <p role="alert" className="w-full text-xs text-red-700">
+            <p role="alert" className="w-full text-xs text-red-700 dark:text-red-300">
               {navigationError}{' '}
               <button type="button" className="underline" onClick={() => setAttempt((value) => value + 1)}>Retry navigation</button>
             </p>

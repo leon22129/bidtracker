@@ -61,11 +61,11 @@ export default function AddApplicationPage() {
 
   return (
     <main className="mx-auto max-w-xl px-4 py-6">
-      <Link href={`/workspaces/${workspaceId}`} className="text-xs text-gray-500 hover:underline">
+      <Link href={`/workspaces/${workspaceId}`} className="text-xs text-gray-500 dark:text-gray-400 hover:underline">
         ← {workspace?.name ?? 'Workspace'}
       </Link>
       <h1 className="mt-1 text-lg font-semibold">Add application</h1>
-      <p className="mt-0.5 text-xs text-gray-500">All fields are required.</p>
+      <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">All fields are required.</p>
 
       <form onSubmit={submit} className="card mt-5 space-y-4 p-4">
         <Field label="Job title" htmlFor="job-title">
@@ -114,7 +114,7 @@ export default function AddApplicationPage() {
           </select>
         </Field>
 
-        <div className="flex justify-end gap-2 border-t border-gray-100 pt-4">
+        <div className="flex justify-end gap-2 border-t border-gray-100 dark:border-gray-800 pt-4">
           <Link href={`/workspaces/${workspaceId}`} className="btn-secondary">Cancel</Link>
           <button type="submit" className="btn-primary" disabled={submitting}>
             {submitting ? 'Adding…' : 'Add application'}
