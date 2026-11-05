@@ -28,6 +28,7 @@ export default function PaymentsPage() {
   const [history, setHistory] = useState<PaymentReport[]>([]);
   const [loading, setLoading] = useState(true);
   const [processing, setProcessing] = useState<string | null>(null);
+  const payableBidders = data?.bidders.filter((bidder) => bidder.applied_count > 0) ?? [];
 
   async function load() {
     setLoading(true);
@@ -67,7 +68,7 @@ export default function PaymentsPage() {
     <main className="mx-auto max-w-6xl px-4 py-6">
       <div className="mb-5">
         <h1 className="text-lg font-semibold">{isAdmin(user) ? 'Bid Count Report' : 'My Bid Count Report'}</h1>
-        <p className="mt-0.5 text-xs text-gray-500">Applied, unpaid applications credited to the bidder who created them.</p>
+        <p className="mt-0.5 text-xs text-gray-500">Unpaid Applied and all Rejected applications in the selected period, credited to the bidder who created them.</p>
       </div>
 
       <section className="card mb-6 p-4">
@@ -75,7 +76,12 @@ export default function PaymentsPage() {
           <label className="label">Start Date<input type="date" className="input mt-1 w-40" value={startDate} onChange={(e) => setStartDate(e.target.value)} /></label>
           <label className="label">End Date<input type="date" className="input mt-1 w-40" value={endDate} onChange={(e) => setEndDate(e.target.value)} /></label>
           <button type="button" className="btn-primary" onClick={() => void load()} disabled={loading || !startDate || !endDate}>Run Report</button>
-          {data && <span className="ml-auto text-sm text-gray-600">Total unpaid Applied: <strong>{data.total_applied.toLocaleString()}</strong></span>}
+          {data && (
+            <div className="ml-auto flex flex-wrap gap-x-4 gap-y-1 text-sm text-gray-600">
+              <span>Total unpaid Applied: <strong>{data.total_applied.toLocaleString()}</strong></span>
+              <span>Total Rejected: <strong>{data.total_rejected.toLocaleString()}</strong></span>
+            </div>
+          )}
         </div>
       </section>
 
@@ -84,18 +90,24 @@ export default function PaymentsPage() {
           <section className="space-y-4">
             {data?.managers.map((manager) => (
               <div key={manager.manager_id ?? 'unassigned'} className="card overflow-hidden">
-                <div className="flex items-center justify-between bg-gray-50 px-4 py-3 text-sm font-semibold">
-                  <span>{manager.manager_username} (manager)</span>
-                  <span className="tabular-nums">total {manager.applied_count.toLocaleString()}</span>
+                <div className="flex flex-wrap items-center justify-between gap-2 bg-gray-50 px-4 py-3 text-sm font-semibold">
+                  <span className="min-w-0 break-words">{manager.manager_username} (manager)</span>
+                  <div className="ml-auto flex flex-wrap justify-end gap-x-4 gap-y-1 tabular-nums">
+                    <span>Applied: {manager.applied_count.toLocaleString()}</span>
+                    <span>Rejected: {manager.rejected_count.toLocaleString()}</span>
+                  </div>
                 </div>
                 <div className="divide-y divide-gray-100">
                   {manager.profiles.map((profile) => (
                     <div
                       key={`${profile.workspace_id}:${profile.bidder_id}`}
-                      className="flex items-center justify-between px-4 py-2.5 text-xs"
+                      className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5 text-xs"
                     >
-                      <span>{profile.profile_name} ({profile.bidder_username})</span>
-                      <span className="font-semibold tabular-nums">{profile.applied_count.toLocaleString()}</span>
+                      <span className="min-w-0 break-words">{profile.profile_name} ({profile.bidder_username})</span>
+                      <div className="ml-auto flex flex-wrap justify-end gap-x-4 gap-y-1 tabular-nums">
+                        <span>Applied: <strong>{profile.applied_count.toLocaleString()}</strong></span>
+                        <span>Rejected: <strong>{profile.rejected_count.toLocaleString()}</strong></span>
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -103,12 +115,12 @@ export default function PaymentsPage() {
             ))}
             {data?.managers.length === 0 && (
               <div className="card p-6 text-center text-xs text-gray-500">
-                No unpaid Applied applications in this period.
+                No unpaid Applied or Rejected applications in this period.
               </div>
             )}
           </section>
 
-          {isAdmin(user) && Boolean(data?.bidders.length) && (
+          {isAdmin(user) && payableBidders.length > 0 && (
             <section className="mt-6">
               <h2 className="mb-2 text-sm font-semibold">Payment processing</h2>
               <div className="card overflow-hidden">
@@ -117,7 +129,7 @@ export default function PaymentsPage() {
                     <tr><th className="px-3 py-2">Bidder</th><th className="px-3 py-2 text-right">Applied</th><th className="px-3 py-2 text-right">Action</th></tr>
                   </thead>
                   <tbody>
-                    {data?.bidders.map((bidder) => (
+                    {payableBidders.map((bidder) => (
                       <tr key={bidder.bidder_id} className="border-t border-gray-100">
                         <td className="px-3 py-2 font-medium">{bidder.bidder_username}</td>
                         <td className="px-3 py-2 text-right font-semibold tabular-nums">{bidder.applied_count.toLocaleString()}</td>

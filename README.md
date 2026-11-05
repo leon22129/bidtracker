@@ -360,7 +360,7 @@ The `duplicates` count includes skipped URL matches and company matches saved as
 
 | Method | Path                | Description                                                                                                      |
 | ------ | ------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| GET    | `/payments/report`  | Unpaid `Applied` totals for `?start_date&end_date`; bidders see only work they created, including reassigned profiles |
+| GET    | `/payments/report`  | Unpaid `Applied` and all `Rejected` counts for `?start_date&end_date`, totaled by bidder, manager, and profile; bidders see only work they created, including reassigned profiles |
 | GET    | `/payments/history` | Immutable payment-processing history; regular admins see their own settlements and super admins see all reports |
 | POST   | `/payments/process` | `{ start_date, end_date, bidder_id }` — atomically marks eligible rows paid and records the settled count        |
 

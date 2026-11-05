@@ -180,22 +180,26 @@ export interface PaymentReportResult {
   start_date: string;
   end_date: string;
   total_applied: number;
+  total_rejected: number;
   bidders: Array<{
     bidder_id: string;
     bidder_username: string;
     applied_count: number;
-    workspaces: Array<{ workspace_id: string; workspace_name: string; applied_count: number }>;
+    rejected_count: number;
+    workspaces: Array<{ workspace_id: string; workspace_name: string; applied_count: number; rejected_count: number }>;
   }>;
   managers: Array<{
     manager_id: string | null;
     manager_username: string;
     applied_count: number;
+    rejected_count: number;
     profiles: Array<{
       workspace_id: string;
       profile_name: string;
       bidder_id: string;
       bidder_username: string;
       applied_count: number;
+      rejected_count: number;
     }>;
   }>;
 }
