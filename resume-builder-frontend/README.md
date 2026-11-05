@@ -17,6 +17,27 @@ Paste or enter the job description manually. When installed as the Chrome extens
 
 Enter or paste application questions one per line, then use **Generate Answers** to write answers using the resume's existing backend conversation. Review the generated answers and copy them into the application form manually. Contact details and sensitive fields must also be entered manually. The extension generates documents and answers; entering form values, uploading files, and submitting applications are manual steps.
 
+## Profile generation and download settings
+
+Open **Profiles**, select a profile, and save its options:
+
+- **Generate cover letter** includes a cover letter with the next generated resume.
+- **Download as a directory** puts the resume, cover letter, and optional job
+  description in the same dated application folder. By default, the extension uses
+  `Resumes` inside Chrome Downloads. Choose another folder or save a different
+  Downloads subfolder directly in profile settings.
+- **Include company name in filenames and folders** adds the target company to
+  both PDF filenames and the application directory, for example `Resume - Acme.pdf`.
+
+These switches are saved per profile. Folder locations are saved separately on each
+browser. Changing the location does not move existing files. Saving options retains
+the assigned workspace and any existing automatic-download preference. Download
+errors appear in the preview instead of reporting success or saving somewhere else.
+
+The browser workflow check covers option persistence, generation after settings
+changes, real resume and cover-letter PDF creation, native folder writes, Chrome
+Downloads filenames, disabled options, and failed downloads.
+
 ## Required extension version
 
 The backend requires Resume Builder **0.9.3 or newer** by default. Every extension API

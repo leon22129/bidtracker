@@ -111,6 +111,7 @@ const webAiProfiles: AiProfilesApi = {
     if (!response.ok) throw new Error(data?.message || "Unable to save profile settings.")
     return {
       ...input,
+      workspaceId: data.workspace_id,
       careerPath: data.career_path || "",
       personalInfo: normalizeResumePersonalInfo(data.personal_info),
       education: normalizeResumeEducation(data.education),

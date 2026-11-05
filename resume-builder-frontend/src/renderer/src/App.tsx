@@ -561,23 +561,14 @@ export default function Home() {
                   profiles.map((profile) => (
                     <DropdownMenuItem
                       key={profile.id}
-                      onSelect={(e) => e.preventDefault()}
-                      className="flex items-center gap-2 pr-1"
+                      onSelect={() => setSettingsProfileId(profile.id)}
+                      className="flex items-center gap-2"
                     >
+                      <Settings className="h-4 w-4 shrink-0" />
                       <span className="flex-1 truncate text-sm">
                         {profile.name || "Unnamed"}
                       </span>
-                      <button
-                        type="button"
-                        onPointerDown={(event) => event.stopPropagation()}
-                        onClick={(event) => {
-                          event.stopPropagation()
-                          setSettingsProfileId(profile.id)
-                        }}
-                        className="shrink-0 rounded px-2 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
-                      >
-                        <Pencil className="h-3.5 w-3.5" />
-                      </button>
+                      <span className="text-xs text-muted-foreground">Settings</span>
                     </DropdownMenuItem>
                   ))
                 )}
@@ -739,7 +730,7 @@ export default function Home() {
                   handleGenerationComplete(profileId, tab.tabId, companyName)
                 }
                 triggerPreview={triggerPreviewFor === tab.tabId}
-                onPreviewTriggered={() => setTriggerPreviewFor(null)}
+                onPreviewTriggered={() => { setTriggerPreviewFor(null); handleTabClick(tab.tabId); }}
                 settingsOpen={settingsProfileId === profile.id}
                 isActive={tab.tabId === activeTabId}
               />

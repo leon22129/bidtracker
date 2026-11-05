@@ -4,6 +4,7 @@ import { useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth-context';
+import { BrandIcon } from '@/components/brand-icon';
 import { canManageUsers, canViewAnalytics, isAdmin, roleLabel } from '@/lib/permissions';
 
 /**
@@ -44,7 +45,8 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex h-full flex-col">
       <header className="z-20 flex h-12 shrink-0 items-center gap-6 border-b border-gray-800 bg-gray-900 px-4 text-white">
-        <Link href="/workspaces" className="text-sm font-semibold tracking-tight text-white">
+        <Link href="/workspaces" className="flex shrink-0 items-center gap-2 text-sm font-semibold tracking-tight text-white">
+          <BrandIcon size={28} />
           BidTracker
         </Link>
 

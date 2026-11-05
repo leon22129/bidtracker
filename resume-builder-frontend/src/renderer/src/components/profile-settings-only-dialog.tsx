@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { TemplateSelector } from "@/components/template-selector"
+import { ProfileDownloadLocation } from "@/components/profile-download-location"
 import { COVER_LETTER_TEMPLATES, DEFAULT_COVER_LETTER_TEMPLATE, type CoverLetterTemplateId } from "@/lib/cover-letter-templates"
 import { DEFAULT_TEMPLATE, type TemplateId } from "@/lib/pdf-templates"
 import type { AiProfile } from "../../../shared/ai-profiles"
@@ -26,7 +27,6 @@ export function ProfileSettingsOnlyDialog({
   const [generateCoverLetter, setGenerateCoverLetter] = useState(false)
   const [coverLetterTemplate, setCoverLetterTemplate] = useState<CoverLetterTemplateId>(DEFAULT_COVER_LETTER_TEMPLATE)
   const [saveInFolder, setSaveInFolder] = useState(false)
-  const [autoDownload, setAutoDownload] = useState(false)
   const [downloadJDWithPDF, setDownloadJDWithPDF] = useState(false)
   const [useCompanyName, setUseCompanyName] = useState(true)
   const [busy, setBusy] = useState(false)
@@ -38,9 +38,6 @@ export function ProfileSettingsOnlyDialog({
     setGenerateCoverLetter(profile.generateCoverLetter ?? false)
     setCoverLetterTemplate((profile.coverLetterTemplate as CoverLetterTemplateId | undefined) ?? DEFAULT_COVER_LETTER_TEMPLATE)
     setSaveInFolder(profile.saveInFolder ?? false)
-    /// set this as false for now
-    // setAutoDownload(profile.autoDownload ?? false)
-    setAutoDownload(false)
     setDownloadJDWithPDF(profile.downloadJDWithPDF ?? false)
     setUseCompanyName(profile.useCompanyName ?? true)
     setMessage("")
@@ -62,7 +59,6 @@ export function ProfileSettingsOnlyDialog({
         generateCoverLetter,
         coverLetterTemplate,
         saveInFolder,
-        autoDownload,
         downloadJDWithPDF,
         useCompanyName,
       })
@@ -80,25 +76,21 @@ export function ProfileSettingsOnlyDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
         <DialogHeader>
-          <DialogTitle>Resume settings: {profile?.name}</DialogTitle>
-          <DialogDescription>Profile identity and resume content are managed in BidTracker. Only generation and download settings can be changed here.</DialogDescription>
+          <DialogTitle>Profile settings: {profile?.name}</DialogTitle>
+          <DialogDescription>Choose cover letter, download, and PDF options for this profile.</DialogDescription>
         </DialogHeader>
-        <div className="space-y-6 py-4">
-          <section>
-            <h3 className="mb-3 text-sm font-medium">PDF template</h3>
-            <TemplateSelector value={template} onChange={setTemplate} />
-          </section>
-
+        <fieldset disabled={busy} className="space-y-6 py-4">
           <section className="space-y-4">
             <h3 className="text-sm font-medium">Cover letter</h3>
-            <label className="flex items-center gap-3 text-sm">
-              <Checkbox checked={generateCoverLetter} onCheckedChange={(value) => setGenerateCoverLetter(value === true)} />
+            <label htmlFor="profile-cover-letter" className="flex items-center gap-3 text-sm">
+              <Checkbox id="profile-cover-letter" checked={generateCoverLetter} onCheckedChange={(value) => setGenerateCoverLetter(value === true)} />
               Generate cover letter
             </label>
+            <p className="text-xs text-muted-foreground">Include a cover letter with the next resume you generate.</p>
             {generateCoverLetter && (
               <div className="grid gap-2 sm:grid-cols-3">
                 {COVER_LETTER_TEMPLATES.map((item) => (
-                  <button key={item.id} type="button" onClick={() => setCoverLetterTemplate(item.id)} className={`rounded-md border px-3 py-2 text-left text-sm ${coverLetterTemplate === item.id ? "border-primary bg-primary/5" : "border-border"}`}>
+                  <button key={item.id} type="button" aria-pressed={coverLetterTemplate === item.id} onClick={() => setCoverLetterTemplate(item.id)} className={`rounded-md border px-3 py-2 text-left text-sm ${coverLetterTemplate === item.id ? "border-primary bg-primary/5" : "border-border"}`}>
                     <div className="font-medium">{item.name}</div>
                     <div className="mt-1 text-xs text-muted-foreground">{item.description}</div>
                   </button>
@@ -109,25 +101,26 @@ export function ProfileSettingsOnlyDialog({
 
           <section className="space-y-4">
             <h3 className="text-sm font-medium">Download options</h3>
-            <label className="flex items-center gap-3 text-sm">
-              <Checkbox checked={saveInFolder} onCheckedChange={(value) => setSaveInFolder(value === true)} />
-              Save inside dated folder
+            <label htmlFor="profile-save-in-folder" className="flex items-center gap-3 text-sm">
+              <Checkbox id="profile-save-in-folder" checked={saveInFolder} onCheckedChange={(value) => setSaveInFolder(value === true)} />
+              Download as a directory
             </label>
-            <label className="flex items-center gap-3 pl-6 text-sm">
-              <Checkbox checked={false} disabled />
-              Automatically download when ready
-            </label>
-            <label className="flex items-center gap-3 pl-6 text-sm">
-              <Checkbox checked={downloadJDWithPDF} disabled={!saveInFolder} onCheckedChange={(value) => setDownloadJDWithPDF(value === true)} />
+            {saveInFolder && profile && <ProfileDownloadLocation profileId={profile.id} disabled={busy} />}
+            <label htmlFor="profile-download-jd" className="flex items-center gap-3 pl-6 text-sm">
+              <Checkbox id="profile-download-jd" checked={downloadJDWithPDF} disabled={!saveInFolder} onCheckedChange={(value) => setDownloadJDWithPDF(value === true)} />
               Also save job description
             </label>
-            <label className="flex items-center gap-3 text-sm">
-              <Checkbox checked={useCompanyName} onCheckedChange={(value) => setUseCompanyName(value === true)} />
-              Include company name in output name
+            <label htmlFor="profile-company-name" className="flex items-center gap-3 text-sm">
+              <Checkbox id="profile-company-name" checked={useCompanyName} onCheckedChange={(value) => setUseCompanyName(value === true)} />
+              Include company name in filenames and folders
             </label>
           </section>
-        </div>
-        {message && <p className="border-t pt-3 text-xs text-muted-foreground">{message}</p>}
+          <details className="space-y-3">
+            <summary className="cursor-pointer text-sm font-medium">Resume PDF template</summary>
+            <TemplateSelector value={template} onChange={setTemplate} />
+          </details>
+        </fieldset>
+        {message && <p role="status" className="border-t pt-3 text-xs text-muted-foreground">{message}</p>}
         <DialogFooter>
           <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={busy}>Close</Button>
           <Button type="button" onClick={() => void save()} disabled={busy || !profile}>{busy ? "Saving..." : "Save"}</Button>

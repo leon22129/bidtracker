@@ -152,7 +152,7 @@ export function ProfileWorkspace({
   // Operational settings synced from profile
   const [selectedTemplate, setSelectedTemplate] =
     useState<TemplateId>(DEFAULT_TEMPLATE);
-  const [companyName, setCompanyName] = useState("");
+  const [companyName, setCompanyName] = useState(savedTab?.preparedJob?.companyName ?? profile.companyName ?? "");
   const [useCompanyName, setUseCompanyName] = useState(true);
   const [useGeneratedRoleTitles, setUseGeneratedRoleTitles] = useState(true);
   const [saveInFolder, setSaveInFolder] = useState(false);
@@ -226,7 +226,6 @@ export function ProfileWorkspace({
     const nextAutoDownload = p.autoDownload ?? false;
     setSaveInFolder(p.saveInFolder ?? nextAutoDownload);
     setAutoDownload(nextAutoDownload);
-    setCompanyName(p.companyName ?? "");
     setUseCompanyName(p.useCompanyName ?? true);
     setUseGeneratedRoleTitles(p.useGeneratedRoleTitles ?? true);
     setDownloadJDWithPDF(p.downloadJDWithPDF ?? false);
@@ -647,10 +646,7 @@ export function ProfileWorkspace({
       const dd = String(now.getDate()).padStart(2, "0");
       const yyyy = String(now.getFullYear());
       const effectiveGenerateCoverLetter =
-        overrideGenerateCoverLetter ?? (
-          Boolean(overrideCoverLetterText ?? coverLetterText) ||
-          (profile.generateCoverLetter ?? generateCoverLetter)
-        );
+        overrideGenerateCoverLetter ?? (profile.generateCoverLetter ?? generateCoverLetter);
       const effectiveCoverLetterTemplate =
         overrideCoverLetterTemplate ??
         ((profile.coverLetterTemplate as CoverLetterTemplateId | undefined) ?? coverLetterTemplate);
@@ -665,7 +661,8 @@ export function ProfileWorkspace({
           ? targetCompanyName.replace(/[^a-zA-Z0-9 _-]/g, "_")
           : "";
       const safeFolder = `${yyyy}-${mm}-${dd}_${hh}-${mm1}-${ss}${safeCompany ? ` - ${safeCompany}` : ""}`;
-      const safeFullName = "Resume";
+      const safeFullName = `Resume${safeCompany ? ` - ${safeCompany}` : ""}`;
+      const coverLetterFilename = `Cover Letter${safeCompany ? ` - ${safeCompany}` : ""}.pdf`;
       const savedJobDescription = downloadJDWithPDF
         ? !resumeJobDescription.current.includes("\n\nExpected Rate") && targetResumeData.rateInJd === false && targetResumeData.annualSalary && targetResumeData.hourlyRate
           ? `${resumeJobDescription.current.trim()}\n\nEstimated Salary Expectation (salary not mentioned in this JD)\nAnnual: ${targetResumeData.annualSalary}\nHourly: ${targetResumeData.hourlyRate}`
@@ -679,6 +676,9 @@ export function ProfileWorkspace({
       if (shouldSaveInFolder) {
         const paths = await getProfileDownloadPaths();
         downloadPath = paths[profile.id];
+        if (!downloadPath && (globalThis as { chrome?: { downloads?: unknown } }).chrome?.downloads) {
+          downloadPath = "Resumes";
+        }
         if (!downloadPath) {
           if (isGenerating) {
             throw new Error("Choose a download location in Settings before enabling automatic download.");
@@ -705,7 +705,7 @@ export function ProfileWorkspace({
               personalInfo,
               companyName: targetCompanyName || "",
             },
-            `Cover Letter.pdf`,
+            coverLetterFilename,
             true,
             effectiveCoverLetterTemplate,
             safeFolder,
@@ -724,14 +724,13 @@ export function ProfileWorkspace({
         );
         folderPath = r.folderPath;
         if (effectiveGenerateCoverLetter && targetCoverLetterText) {
-          const clFilename = `Cover Letter.pdf`;
           await generateCoverLetterPDF(
             {
               text: targetCoverLetterText,
               personalInfo,
               companyName: targetCompanyName || "",
             },
-            clFilename,
+            coverLetterFilename,
             false,
             effectiveCoverLetterTemplate,
             undefined,
@@ -980,7 +979,7 @@ export function ProfileWorkspace({
               {isGenerating ? "Generating..." : "Generate Resume"}
             </Button>
             <Button
-              onClick={() => setPreviewOpen(true)}
+                onClick={() => { setPreviewOpen(true); onPreviewTriggered(); }}
               disabled={!resumeData}
               variant="outline"
               className="min-h-10 px-4"
@@ -1102,6 +1101,7 @@ export function ProfileWorkspace({
         </DialogDescription>
         </DialogHeader>
 
+        {error && <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>}
         <Tabs defaultValue="resume" className="mt-2 flex-1 overflow-hidden flex flex-col">
         <TabsList>
           <TabsTrigger value="resume">Resume</TabsTrigger>

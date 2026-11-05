@@ -1,7 +1,7 @@
 const PENDING_KEY = "resume_ai_pending_screenshots";
 const TOKEN_KEY = "resume_ai_access_token";
 const API_URL_KEY = "resume_ai_api_url";
-const DEFAULT_API_URL = "http://api.yourdomain.com/api";
+const DEFAULT_API_URL = "https://bidtracker365.com/api";
 const MAX_PENDING_AGE_MS = 8 * 24 * 60 * 60 * 1000;
 const BROWSER_SESSION_KEY = "resume_ai_screenshot_browser_session";
 const CAPTURE_WARNING = 'Some form answers could not be recorded. The screenshot and any saved answers can still be added.';

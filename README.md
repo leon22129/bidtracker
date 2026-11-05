@@ -632,6 +632,11 @@ One occasional query remains deliberately unindexed:
 
 ## Deployment
 
+For **bidtracker365.com**, follow [the permanent Cloudflare Tunnel setup](docs/domain-hosting.md).
+The app and database stay on the Windows laptop; domain registration stays at GoDaddy.
+Run the app with `--no-cloudflare` once the permanent tunnel runs as a Windows
+service; that flag only disables the launcher's temporary Quick Tunnel.
+
 Target: a small VPS (1 vCPU / 1 GB is enough), a home server, or a local workstation. No managed
 database, external cache, or object storage is required.
 

@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react"
-import { Folder, Settings } from "lucide-react"
+import { Settings } from "lucide-react"
 import type { AiProfile } from "../../../shared/ai-profiles"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
-import { chooseProfileDirectory, getApiBaseUrl, getProfileDirectoryHandle, getProfileDownloadPaths, setApiBaseUrl, setProfileDownloadPath } from "@/lib/extension-storage"
+import { getApiBaseUrl, setApiBaseUrl } from "@/lib/extension-storage"
+import { ProfileDownloadLocation } from "@/components/profile-download-location"
 
 type ExtensionSettingsDialogProps = {
   open: boolean
@@ -17,20 +18,14 @@ type ExtensionSettingsDialogProps = {
 
 export function ExtensionSettingsDialog({ open, onOpenChange, profiles, username, onLogout }: ExtensionSettingsDialogProps) {
   const [apiUrl, setApiUrl] = useState("")
-  const [downloadPaths, setDownloadPaths] = useState<Record<string, string>>({})
   const [message, setMessage] = useState("")
   const [error, setError] = useState("")
-  const [directoryNames, setDirectoryNames] = useState<Record<string, string>>({})
 
   useEffect(() => {
     if (!open) return
     setError("")
     setMessage("")
-    void Promise.all([getApiBaseUrl(), getProfileDownloadPaths(), Promise.all(profiles.map(async (profile) => [profile.id, (await getProfileDirectoryHandle(profile.id))?.name || ""] as const))]).then(([url, paths, handles]) => {
-      setApiUrl(url)
-      setDownloadPaths(paths)
-      setDirectoryNames(Object.fromEntries(handles))
-    }).catch(() => setError("Unable to load extension settings."))
+    void getApiBaseUrl().then(setApiUrl).catch(() => setError("Unable to load extension settings."))
   }, [open])
 
   const saveApiUrl = async () => {
@@ -45,31 +40,6 @@ export function ExtensionSettingsDialog({ open, onOpenChange, profiles, username
       setError("")
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to save backend URL.")
-    }
-  }
-
-  const chooseDirectory = async (profileId: string) => {
-    try {
-      const name = await chooseProfileDirectory(profileId)
-      if (name) {
-        setDirectoryNames((current) => ({ ...current, [profileId]: name }))
-        setDownloadPaths((current) => ({ ...current, [profileId]: name }))
-        setMessage("Download location saved.")
-        setError("")
-      }
-    } catch (err) {
-      if ((err as DOMException)?.name === "AbortError") return
-      setError(err instanceof Error ? err.message : "Unable to choose download location.")
-    }
-  }
-
-  const savePath = async (profileId: string) => {
-    try {
-      await setProfileDownloadPath(profileId, downloadPaths[profileId] || "")
-      setMessage("Download location saved.")
-      setError("")
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Unable to save download location.")
     }
   }
 
@@ -96,16 +66,8 @@ export function ExtensionSettingsDialog({ open, onOpenChange, profiles, username
             </div>
             {profiles.map((profile) => (
               <div key={profile.id} className="space-y-1">
-                <label htmlFor={`download-path-${profile.id}`} className="text-sm">{profile.name || "Unnamed profile"}</label>
-                <div className="flex items-center gap-2">
-                  <div className="flex min-w-0 flex-1 items-center gap-2 rounded-md border bg-muted/30 px-3 py-2 text-sm">
-                    <Folder className="h-4 w-4 shrink-0 text-muted-foreground" />
-                    <span className="truncate">{directoryNames[profile.id] || downloadPaths[profile.id] || "No folder selected"}</span>
-                  </div>
-                  <Button type="button" variant="outline" onClick={() => void chooseDirectory(profile.id)}>
-                    {directoryNames[profile.id] ? "Change" : "Choose"}
-                  </Button>
-                </div>
+                <p className="text-sm">{profile.name || "Unnamed profile"}</p>
+                <ProfileDownloadLocation key={String(open)} profileId={profile.id} />
               </div>
             ))}
           </section>
