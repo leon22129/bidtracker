@@ -661,8 +661,8 @@ export function ProfileWorkspace({
           ? targetCompanyName.replace(/[^a-zA-Z0-9 _-]/g, "_")
           : "";
       const safeFolder = `${yyyy}-${mm}-${dd}_${hh}-${mm1}-${ss}${safeCompany ? ` - ${safeCompany}` : ""}`;
-      const safeFullName = `Resume${safeCompany ? ` - ${safeCompany}` : ""}`;
-      const coverLetterFilename = `Cover Letter${safeCompany ? ` - ${safeCompany}` : ""}.pdf`;
+      const resumeFilename = "Resume.pdf";
+      const coverLetterFilename = "Cover Letter.pdf";
       const savedJobDescription = downloadJDWithPDF
         ? !resumeJobDescription.current.includes("\n\nExpected Rate") && targetResumeData.rateInJd === false && targetResumeData.annualSalary && targetResumeData.hourlyRate
           ? `${resumeJobDescription.current.trim()}\n\nEstimated Salary Expectation (salary not mentioned in this JD)\nAnnual: ${targetResumeData.annualSalary}\nHourly: ${targetResumeData.hourlyRate}`
@@ -689,7 +689,7 @@ export function ProfileWorkspace({
         }
         const r = await generateResumePDF(
           targetResumeData,
-          `${safeFullName}.pdf`,
+          resumeFilename,
           true,
           selectedTemplate,
           safeFolder,
@@ -714,10 +714,9 @@ export function ProfileWorkspace({
           );
         }
       } else {
-        const filename = `${safeFullName}.pdf`;
         const r = await generateResumePDF(
           targetResumeData,
-          filename,
+          resumeFilename,
           false,
           selectedTemplate,
           undefined,

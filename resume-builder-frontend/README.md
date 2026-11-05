@@ -25,9 +25,11 @@ Open **Profiles**, select a profile, and save its options:
 - **Download as a directory** puts the resume, cover letter, and optional job
   description in the same dated application folder. By default, the extension uses
   `Resumes` inside Chrome Downloads. Choose another folder or save a different
-  Downloads subfolder directly in profile settings.
-- **Include company name in filenames and folders** adds the target company to
-  both PDF filenames and the application directory, for example `Resume - Acme.pdf`.
+  Downloads subfolder in extension **Settings → Profile download locations**.
+- **Include company name in directory name** adds the target company to the
+  dated application directory, for example `2026-11-05_09-30-00 - Acme/Resume.pdf`.
+  The PDF filenames stay `Resume.pdf` and `Cover Letter.pdf`, including when
+  downloading without a directory.
 
 These switches are saved per profile. Folder locations are saved separately on each
 browser. Changing the location does not move existing files. Saving options retains

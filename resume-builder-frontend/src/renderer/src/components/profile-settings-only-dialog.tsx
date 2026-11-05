@@ -5,7 +5,6 @@ import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { TemplateSelector } from "@/components/template-selector"
-import { ProfileDownloadLocation } from "@/components/profile-download-location"
 import { COVER_LETTER_TEMPLATES, DEFAULT_COVER_LETTER_TEMPLATE, type CoverLetterTemplateId } from "@/lib/cover-letter-templates"
 import { DEFAULT_TEMPLATE, type TemplateId } from "@/lib/pdf-templates"
 import type { AiProfile } from "../../../shared/ai-profiles"
@@ -105,15 +104,16 @@ export function ProfileSettingsOnlyDialog({
               <Checkbox id="profile-save-in-folder" checked={saveInFolder} onCheckedChange={(value) => setSaveInFolder(value === true)} />
               Download as a directory
             </label>
-            {saveInFolder && profile && <ProfileDownloadLocation profileId={profile.id} disabled={busy} />}
+            {saveInFolder && <p className="text-xs text-muted-foreground">Choose the download folder in Settings under Profile download locations.</p>}
             <label htmlFor="profile-download-jd" className="flex items-center gap-3 pl-6 text-sm">
               <Checkbox id="profile-download-jd" checked={downloadJDWithPDF} disabled={!saveInFolder} onCheckedChange={(value) => setDownloadJDWithPDF(value === true)} />
               Also save job description
             </label>
             <label htmlFor="profile-company-name" className="flex items-center gap-3 text-sm">
               <Checkbox id="profile-company-name" checked={useCompanyName} onCheckedChange={(value) => setUseCompanyName(value === true)} />
-              Include company name in filenames and folders
+              Include company name in directory name
             </label>
+            <p className="text-xs text-muted-foreground">Applies when downloading as a directory. Files are named Resume.pdf and Cover Letter.pdf.</p>
           </section>
           <details className="space-y-3">
             <summary className="cursor-pointer text-sm font-medium">Resume PDF template</summary>

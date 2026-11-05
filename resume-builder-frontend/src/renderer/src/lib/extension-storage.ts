@@ -322,7 +322,7 @@ export async function getProfileDirectoryHandle(profileId: string): Promise<File
       db.close();
     }
   } catch (cause) {
-    throw new Error("Unable to read the saved download folder. Check the location in profile settings.", { cause });
+    throw new Error("Unable to read the saved download folder. Check the location in extension Settings under Profile download locations.", { cause });
   }
 }
 

@@ -38,17 +38,17 @@ export async function createProfileDownload(
             throw error
           }
         } catch (cause) {
-          throw new Error(`Could not save ${filename}. Check the selected folder in profile settings.`, { cause })
+          throw new Error(`Could not save ${filename}. Check the selected folder in extension Settings under Profile download locations.`, { cause })
         }
       }
     } catch (cause) {
-      throw new Error("Could not access the selected folder. Choose it again in profile settings.", { cause })
+      throw new Error("Could not access the selected folder. Choose it again in extension Settings under Profile download locations.", { cause })
     }
   }
 
   const chromeApi = (globalThis as { chrome?: { downloads?: unknown } }).chrome
   if (!chromeApi?.downloads) {
-    throw new Error("Choose a download folder in profile settings before downloading as a directory.")
+    throw new Error("Choose a download folder in extension Settings under Profile download locations before downloading as a directory.")
   }
   const prefix = [downloadPath || "Resumes", folderName].filter(Boolean).join("/")
   return (blob, filename) => downloadBlob(blob, `${prefix}/${filename}`)
