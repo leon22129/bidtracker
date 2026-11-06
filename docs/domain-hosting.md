@@ -163,6 +163,12 @@ Reload the unpacked extension from `resume-builder-frontend/dist-web` in
 `https://bidtracker365.com/api` and sign in. Existing saved URLs are retained
 until changed; the defaults already use this domain.
 
+For the other servers, use `https://ted.bidtracker365.com/api` or
+`https://navi.bidtracker365.com/api`. The extension allows HTTPS connections to
+`bidtracker365.com` and its subdomains in both its manifest and page security
+policies. After installing this build, reload the extension and reopen its panel
+so Chrome applies the updated policies.
+
 The bare `/api` URL is a base address, not a web page; use `/api/health` for a
 browser connectivity check. If the extension reports a connection error, reload
 the rebuilt extension so Chrome applies the domain permissions, and check whether
