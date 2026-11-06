@@ -288,6 +288,21 @@ function fixture(extensionVersion) {
     assert.equal(await evaluate("Object.values(workflowTest.pending).find(entry => entry.applicationId === 'd1').tabId"), 75);
     assert.equal(await evaluate("activeProfileWorkspace.querySelector('pre').textContent.includes('Expected Rate')"), true);
     assert.equal(await evaluate("activeProfileWorkspace.querySelector('[data-submission-screenshot] button').disabled"), true);
+    const assertPreparedJobLinks = async () => {
+      await waitFor("[...activeProfileWorkspace.querySelectorAll('[data-job-source] button')].some(button => button.textContent === 'Open linked job' && !button.disabled)");
+      const buttons = await evaluate(`([...activeProfileWorkspace.querySelectorAll('[data-job-source] button')].map(button => ({
+        text: button.textContent, disabled: button.disabled, visible: button.getClientRects().length > 0,
+      })))`);
+      assert.deepEqual(buttons, [
+        { text: 'Link current page', disabled: true, visible: true },
+        { text: 'Open linked job', disabled: false, visible: true },
+      ], 'A generated resume keeps its open button and disables the visible link button');
+    };
+    await assertPreparedJobLinks();
+    await click('Open linked job');
+    await waitFor('workflowTest.browserTabId === 75');
+    await assertPreparedJobLinks();
+    await evaluate('workflowTest.browserTabId = 74');
     // Updating options must preserve the prepared company's name and workspace.
     await openProfileSettings();
     await click('Save');
@@ -387,6 +402,8 @@ function fixture(extensionVersion) {
     await click('Resume');
     await evaluate("activeProfileWorkspace.querySelector('textarea').focus(); workflowTest.browserTabId = 75");
     await page.send('Input.insertText', { text: firstJd });
+    assert.equal(await evaluate("[...activeProfileWorkspace.querySelectorAll('button')].find(el=>el.textContent.includes('Link current page')).disabled"), false, 'A new JD enables linking again');
+    assert.equal(await evaluate("[...activeProfileWorkspace.querySelectorAll('button')].find(el=>el.textContent.includes('Generate Resume')).disabled"), true, 'A new JD must be linked before generation');
     await click('Link current page');
     await waitFor("![...activeProfileWorkspace.querySelectorAll('button')].find(el=>el.textContent.includes('Generate Resume')).disabled");
     await evaluate("activeProfileWorkspace.querySelector('input[type=checkbox]').click()");
@@ -417,6 +434,7 @@ function fixture(extensionVersion) {
     await waitFor("workflowTest.requests.some(path=>path.startsWith('/applications/drafts/latest')) && document.body.innerText.includes('Last application loaded')");
     await click('Resume');
     await waitFor("activeProfileWorkspace.querySelector('textarea')?.value === ''");
+    await assertPreparedJobLinks();
 
     // A second tab for the same profile starts empty and prepares a different job independently.
     await clickSelector('button[aria-label="Open profile tab"]');
@@ -456,6 +474,7 @@ function fixture(extensionVersion) {
     await waitFor("document.querySelectorAll('[data-profile-tab-id]').length === 2 && activeProfileWorkspace.innerText.includes('Prepared job: Acme')");
     assert.equal(await evaluate('activeProfileWorkspace.dataset.profileTabId'), firstTabId);
     assert.equal(await evaluate("activeProfileWorkspace.querySelector('textarea').value"), '');
+    await assertPreparedJobLinks();
     await click('Questions');
     await waitFor("[...activeProfileWorkspace.querySelectorAll('textarea')].some(el => el.value === 'It fits my experience.')");
     await click('Resume');
@@ -529,8 +548,9 @@ function fixture(extensionVersion) {
     const downloadLink = "[...document.querySelectorAll('a')].find(el => el.textContent.includes('Download latest version'))";
     assert.equal(await evaluate(`(${downloadLink}).href`), 'https://downloads.example.test/resume-builder.zip');
     assert.equal(await evaluate(`(${downloadLink}).target`), '_blank');
+    await evaluate('window.workflowReloadMarker = true');
     await page.send('Page.reload');
-    await waitFor("document.body.innerText.includes('Resume Builder update required') && !window.activeProfileWorkspace");
+    await waitFor("window.workflowReloadMarker !== true && document.body.innerText.includes('Resume Builder update required') && !window.activeProfileWorkspace");
     assert.equal(await evaluate("chrome.storage.local.get('resume_ai_access_token').then(store => store.resume_ai_access_token)"), 'fixture-token');
     assert.equal(await evaluate(`(${downloadLink}).href`), 'https://downloads.example.test/resume-builder.zip');
     await evaluate("workflowTest.downloadUrl = 'javascript:alert(1)'; window.aiProfiles.list().catch(() => {})");
@@ -553,6 +573,7 @@ function fixture(extensionVersion) {
     fs.writeFileSync(path.join(profilePath, 'extension-update-verified.png'), Buffer.from(updateCapture.data, 'base64'));
     console.log('PASS: HTTP 426 displays the configured download button on login, during a session, and after reload; invalid links are rejected; existing login tokens are preserved');
     console.log('PASS: linked source URL stays with pasted JD across browser-tab switches and reload; changed/closed sources blocked before backend calls; reopened source used for capture; independent profile tabs, draft submission, retries, and success toast');
+    console.log('PASS: generated and restored resumes keep the open-job button and disable linking; a new JD requires its own linked page');
     console.log('PASS: a pending answer request blocks resume generation, job restoration, relinking, and submission until the answers are saved');
   } finally {
     if (page) page.close();
