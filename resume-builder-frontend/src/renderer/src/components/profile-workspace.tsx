@@ -193,7 +193,8 @@ export function ProfileWorkspace({
   const [jobDescription, setJobDescription] = useState(savedTab?.jobDescription ?? "");
   const resumeJobDescription = useRef(savedTab?.preparedJob?.description ?? "");
   const [jobSource, setJobSource] = useState<JobPageSource | null>(savedTab?.jobSource
-    ?? (savedTab?.scannedJobUrl ? { url: savedTab.scannedJobUrl } : null));
+    ?? (savedTab?.scannedJobUrl ? { url: savedTab.scannedJobUrl } : null)
+    ?? (!savedTab?.jobDescription.trim() && savedTab?.preparedJob ? { url: savedTab.preparedJob.url } : null));
   const [preparedJob, setPreparedJob] = useState<PreparedTabJob | null>(savedTab?.preparedJob ?? null);
   const [resumeData, setResumeData] = useState<ResumeData | null>(savedTab?.resumeData ?? null);
   const [conversationId, setConversationId] = useState<string | null>(savedTab?.conversationId ?? null);
@@ -211,6 +212,7 @@ export function ProfileWorkspace({
   const [error, setError] = useState("");
   const [applicationError, setApplicationError] = useState("");
   const isJobBusy = isGenerating || isGeneratingAnswers || isSubmitting || isLoadingLastApplication || isLinkingJob;
+  const isPreparedJobActive = Boolean(preparedJob) && !jobDescription.trim();
 
   // UI state
   const [previewOpen, setPreviewOpen] = useState(false);
@@ -282,7 +284,7 @@ export function ProfileWorkspace({
   };
 
   const handleLinkJobPage = async (openLinked = false) => {
-    if (isJobBusy) return;
+    if (isJobBusy || (!openLinked && isPreparedJobActive)) return;
     setIsLinkingJob(true);
     setError("");
     try {
@@ -291,6 +293,12 @@ export function ProfileWorkspace({
         : await getCurrentBrowserTabContext();
       if (source.tabId === undefined) throw new Error("Open the job posting in Chrome and link its page first.");
       setJobSource(source);
+      if (openLinked && isPreparedJobActive && preparedJob && !preparedJob.submittedAt) {
+        await armApplicationScreenshot(preparedJob.applicationId, {
+          companyName: preparedJob.companyName, jobTitle: preparedJob.jobTitle,
+          tabId: source.tabId, url: preparedJob.url, profileTabId,
+        });
+      }
     } catch (err) {
       setError(getFriendlyErrorMessage(err, "The job page could not be linked."));
     } finally {
@@ -437,7 +445,6 @@ export function ProfileWorkspace({
       setScannedQuestions([]);
       setApplicationAnswers(data.answers ?? []);
       setJobDescription((current) => current.trim() === sourceDescription ? "" : current);
-      setJobSource(null);
 
       if (data.draft?.id) {
         try {
@@ -495,7 +502,7 @@ export function ProfileWorkspace({
       }
 
       setJobDescription("");
-      setJobSource(null);
+      setJobSource((current) => current?.url === saved.url ? current : { url: saved.url });
       setPreparedJob({ applicationId: saved.draft_id || saved.id, submittedAt: saved.submitted_at,
         url: saved.url, companyName: saved.company_name || "", jobTitle: saved.job_title || "", description: saved.job_description || "" });
       resumeJobDescription.current = saved.job_description ?? "";
@@ -913,13 +920,15 @@ export function ProfileWorkspace({
             <>
               {jobSource.title && <p className="text-muted-foreground">{jobSource.title}</p>}
               <p className="break-all text-xs">{jobSource.url}</p>
-              <p className="text-xs text-muted-foreground">Generate Resume uses this linked job, even when another browser tab is active.</p>
+              <p className="text-xs text-muted-foreground">{isPreparedJobActive
+                ? "Resume generated for this linked job. Paste a new JD to link another page."
+                : "Generate Resume uses this linked job, even when another browser tab is active."}</p>
             </>
           ) : (
             <p className="text-xs text-muted-foreground">Paste the JD and link its job page before generating.</p>
           )}
           <div className="flex flex-wrap gap-2">
-            <Button type="button" variant="outline" size="sm" disabled={isJobBusy}
+            <Button type="button" variant="outline" size="sm" disabled={isJobBusy || isPreparedJobActive}
               onClick={() => void handleLinkJobPage()}>
               <Link2 />{isLinkingJob ? "Linking…" : "Link current page"}
             </Button>
@@ -945,9 +954,15 @@ export function ProfileWorkspace({
           className="field-sizing-fixed h-36 min-h-24 max-h-64 resize-y overflow-y-auto font-mono text-sm"
           value={jobDescription}
           onChange={(e) => {
-          setJobDescription(e.target.value);
-          if (!e.target.value.trim()) setJobSource(null);
-          setError("");
+            setJobDescription(e.target.value);
+            if (!e.target.value.trim()) {
+              setJobSource((current) => preparedJob
+                ? current?.url === preparedJob.url ? current : { url: preparedJob.url }
+                : null);
+            } else if (isPreparedJobActive) {
+              setJobSource(null);
+            }
+            setError("");
           }}
           onPaste={(e) => {
             const editor = e.currentTarget;
