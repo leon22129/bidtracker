@@ -41,6 +41,7 @@ model User {
   bidderPaymentReports     PaymentReport[]      @relation("BidderPaymentReports")
   createdBannedUrlPatterns BannedUrlPattern[]   @relation("BannedUrlPatternCreator")
   resumeConversations      ResumeConversation[]
+  generationJobs           GenerationJob[]
   creator                  User?                @relation("UserCreator", fields: [created_by_user_id], references: [id], onDelete: SetNull)
   manager                  User?                @relation("BidderManagerAssignments", fields: [manager_user_id], references: [id], onDelete: SetNull)
 
@@ -72,6 +73,7 @@ model Workspace {
   applications        JobApplication[]
   resumeProfile       ResumeProfile?
   resumeConversations ResumeConversation[]
+  generationJobs      GenerationJob[]
 
   @@index([owner_user_id])
   @@index([manager_user_id])
@@ -128,11 +130,12 @@ model ResumeProfile {
   @@map("resume_profiles")
 }
 
-// OpenAI runs share a remote conversation from eligibility through application answers.
-// Other providers and older local runs use local_<uuid> with saved reference context.
+// New runs use local_<uuid> and bounded reference context for either provider.
+// Older OpenAI conversation IDs remain available for history and retention cleanup.
 // The public id is always this row's id.
 model ResumeConversation {
   reference_context      String?
+  answer_cache_json      String?
   id                     String   @id @default(cuid())
   openai_conversation_id String   @unique
   user_id                String
@@ -161,6 +164,32 @@ model ExtensionRelease {
   updated_at     DateTime @default(now()) @updatedAt
 
   @@map("extension_release")
+}
+
+// Short HTTP requests submit/poll these jobs; provider work runs outside the client connection.
+model GenerationJob {
+  id               String    @id
+  user_id          String
+  workspace_id     String
+  kind             String
+  request_hash     String
+  request_json     String?
+  status           String    @default("queued")
+  result_json      String?
+  error_message    String?
+  error_status     Int?
+  lease_expires_at DateTime?
+  created_at       DateTime  @default(now())
+  completed_at     DateTime?
+
+  user      User      @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  workspace Workspace @relation(fields: [workspace_id], references: [id], onDelete: Cascade)
+
+  @@index([status, created_at])
+  @@index([user_id, status])
+  @@index([workspace_id])
+  @@index([completed_at])
+  @@map("generation_jobs")
 }
 
 model AiSettings {

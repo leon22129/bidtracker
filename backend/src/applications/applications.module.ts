@@ -10,15 +10,18 @@ import { ApplicationScreenshotService } from './application-screenshot.service';
 import { ApplicationScreenshotCleanupService } from './application-screenshot-cleanup.service';
 import { ApplicationDraftService } from './application-draft.service';
 import { AiSettingsModule } from '../ai/ai-settings.module';
+import { GenerationJobsService } from '../resume/generation-jobs.service';
+import { GenerationJobsController } from '../resume/generation-jobs.controller';
 
 @Module({
   imports: [AiSettingsModule],
-  controllers: [ApplicationsController],
+  controllers: [ApplicationsController, GenerationJobsController],
   providers: [
     ApplicationsService, NumberingService, DuplicateService, BannedUrlService,
     ApplicationGenerationService, SlackNotificationService, ApplicationScreenshotService,
     ApplicationScreenshotCleanupService,
     ApplicationDraftService,
+    GenerationJobsService,
   ],
   exports: [ApplicationsService, NumberingService, DuplicateService, BannedUrlService, ApplicationGenerationService],
 })

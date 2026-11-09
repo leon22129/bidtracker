@@ -24,11 +24,11 @@ describe('OpenAI request recovery', () => {
 
   });
 
-  const generate = (prompt: string, options = {}) => (service as any).openAi(prompt, { config, ...options });
+  const generate = (prompt: string, options = {}) => (service as any).generateText(prompt, { config, ...options });
   const json = (data: unknown, status = 200, headers?: Record<string, string>) =>
     new Response(JSON.stringify(data), { status, headers });
   const request = (target: ApplicationGenerationService) =>
-    (target as any).openAiRequest('/conversations', { items: [] }, 'POST', 'conversation_create', config);
+    (target as any).requestProvider('/conversations', { items: [] }, 'POST', 'conversation_create', config);
   const stream = (data: unknown, type: string) => new Response(
     `event: ${type}\ndata: ${JSON.stringify({ type, response: data })}\n\n`,
     { headers: { 'content-type': 'text/event-stream' } },
@@ -45,10 +45,47 @@ describe('OpenAI request recovery', () => {
     expect(request.headers.Authorization).toBe('Bearer deepseek-secret');
     const body = JSON.parse(request.body);
     expect(body.model).toBe('deepseek-v4-pro');
-    expect(body.input).toContain('Candidate resume and job description');
+    expect(body.input).toEqual([
+      { role: 'user', content: 'Candidate resume and job description' },
+      { role: 'user', content: 'Why this role?' },
+    ]);
     expect(body.reasoning.effort).toBe('high');
     expect(body).not.toHaveProperty('conversation');
     expect(body).not.toHaveProperty('store');
+  });
+
+  it('rejects provider conversation IDs on the DeepSeek path before any request', async () => {
+    await expect(generate('Answer', {
+      config: { provider: 'deepseek', model: 'deepseek-flash', apiKey: 'test-key', baseUrl: 'https://api.deepseek.com' },
+      conversationId: 'conv_legacy',
+    })).rejects.toThrow('DeepSeek requires local reference context');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('allows DeepSeek queueing beyond 120 seconds and handles its SSE keep-alive comments', async () => {
+    const timeout = jest.spyOn(AbortSignal, 'timeout').mockReturnValue(new AbortController().signal);
+    fetchMock.mockResolvedValueOnce(new Response(
+      ': keep-alive\n\n: keep-alive\n\nevent: response.completed\ndata: {"type":"response.completed","response":{"status":"completed","output_text":"Ready"}}\n\n',
+      { headers: { 'content-type': 'text/event-stream' } },
+    ));
+    await expect(generate('Generate', {
+      config: { provider: 'deepseek', model: 'deepseek-flash', apiKey: 'test-key', baseUrl: 'https://api.deepseek.com' },
+    })).resolves.toBe('Ready');
+    expect(timeout).toHaveBeenCalledWith(900_000);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses low reasoning for inexpensive DeepSeek tasks and never sends OpenAI state parameters', async () => {
+    fetchMock.mockResolvedValueOnce(stream({ status: 'completed', output_text: '{}' }, 'response.completed'));
+    await generate('Check eligibility', {
+      config: { provider: 'deepseek', model: 'deepseek-flash', apiKey: 'test-key', baseUrl: 'https://api.deepseek.com' },
+      reasoningEffort: 'low', maxOutputTokens: 4096,
+    });
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(body.reasoning).toEqual({ effort: 'low' });
+    for (const key of ['conversation', 'previous_response_id', 'store', 'prompt_cache_key', 'prompt_cache_retention']) {
+      expect(body).not.toHaveProperty(key);
+    }
   });
 
   it('omits reasoning for non-reasoning OpenAI models', async () => {
@@ -132,9 +169,9 @@ describe('OpenAI request recovery', () => {
   });
 
   it('gives company extraction enough output space for reasoning and JSON', async () => {
-    const openAi = jest.spyOn(service as any, 'openAi').mockResolvedValue('{"company_name":"Acme","job_title":"Engineer"}');
+    const generateText = jest.spyOn(service as any, 'generateText').mockResolvedValue('{"company_name":"Acme","job_title":"Engineer"}');
     await expect((service as any).extractJobIdentity('Acme is hiring an engineer.', config)).resolves.toMatchObject({ company_name: 'Acme' });
-    expect(openAi).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ maxOutputTokens: 2048, reasoningEffort: 'low' }));
+    expect(generateText).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ maxOutputTokens: 2048, reasoningEffort: 'low' }));
   });
 
   it('recovers from the logged connection-reset then non-JSON 503 sequence', async () => {

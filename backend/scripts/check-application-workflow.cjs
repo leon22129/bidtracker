@@ -10,6 +10,7 @@ const build = join(__dirname, '..', process.env.WORKFLOW_CHECK_BUILD || 'dist');
 const { ApplicationsService } = require(join(build, 'applications/applications.service'));
 const { ApplicationDraftService } = require(join(build, 'applications/application-draft.service'));
 const { ApplicationGenerationService } = require(join(build, 'resume/resume.service'));
+const { GenerationJobsService } = require(join(build, 'resume/generation-jobs.service'));
 const { DuplicateService } = require(join(build, 'applications/duplicate.service'));
 const { BannedUrlService } = require(join(build, 'applications/banned-url.service'));
 const { NumberingService } = require(join(build, 'applications/numbering.service'));
@@ -37,9 +38,11 @@ async function main() {
   await root.$executeRawUnsafe(`CREATE SCHEMA "${schema}"`);
   createdSchema = true;
   // Create the old tables, then exercise the actual draft migration against that existing schema.
-  await runSql(diff.stdout.replace(/^\s*"application_form_json" TEXT,?\r?\n/gm, '').split(';').filter((statement) => !statement.includes('"application_drafts"')).join(';'));
+  await runSql(diff.stdout.replace(/^\s*"(?:application_form_json|answer_cache_json)" TEXT,?\r?\n/gm, '').split(';').filter((statement) => !statement.includes('"application_drafts"') && !statement.includes('"generation_jobs"')).join(';'));
   await runSql(readFileSync(join(__dirname, '../prisma/migrations/20261026000000_add_application_drafts/migration.sql'), 'utf8'));
   await runSql(readFileSync(join(__dirname, '../prisma/migrations/20261103000000_add_application_form_capture/migration.sql'), 'utf8'));
+  await runSql(readFileSync(join(__dirname, '../prisma/migrations/20261109000000_add_application_answer_cache/migration.sql'), 'utf8'));
+  await runSql(readFileSync(join(__dirname, '../prisma/migrations/20261109010000_add_generation_jobs/migration.sql'), 'utf8'));
   const user = await db.user.create({ data: { username: 'workflow-bidder', email: 'workflow@example.test', password_hash: 'fixture', role: 'bidder' } });
   const other = await db.user.create({ data: { username: 'other-bidder', email: 'other@example.test', password_hash: 'fixture', role: 'bidder' } });
   const workspace = await db.workspace.create({ data: { name: 'Workflow', owner_user_id: user.id } });
@@ -57,7 +60,7 @@ async function main() {
   const generation = new ApplicationGenerationService(db, access, duplicates, banned, applications, {}, drafts, aiSettings);
   const payments = new PaymentsService(db, access);
   const calls = [];
-  generation.openAi = async (prompt, options) => {
+  generation.generateText = async (prompt, options) => {
     calls.push(options.operation);
     if (options.operation === 'job_identity') return JSON.stringify({ company_name: 'Unstructured', job_title: 'Engineer' });
     if (options.operation === 'job_eligibility') return JSON.stringify({
@@ -73,8 +76,7 @@ async function main() {
     if (options.operation === 'application_answers') return JSON.stringify({ answers: [{ question: 'Why this role?', answer: 'It fits my experience.' }] });
     throw Error(`Unexpected AI operation ${options.operation}`);
   };
-  generation.openAiRequest = async (_path, _body, _method, operation) => {
-    if (operation === 'conversation_create') return { id: `conv_fixture_${randomUUID()}` };
+  generation.requestProvider = async (_path, _body, _method, operation) => {
     throw Error(`Unexpected provider operation ${operation}`);
   };
   let job = 0;
@@ -94,8 +96,8 @@ async function main() {
   assert.equal(await pay(), 0);
   assert.deepEqual(calls, ['job_eligibility', 'resume_generation']);
   const conversation = await db.resumeConversation.findUniqueOrThrow({ where: { id: prepared.conversation_id } });
-  assert.match(conversation.openai_conversation_id, /^conv_fixture_/);
-  assert.match(conversation.reference_context, /Full name: Candidate/);
+  assert.match(conversation.openai_conversation_id, /^local_/);
+  assert.match(conversation.reference_context, /"fullName":"Candidate"/);
   assert.match(prepared.job_description, /Expected Rate \(estimated\).*Annual: \$150,000/s);
   const saved = await drafts.latest(user, workspace.id);
   assert.equal(saved.source_job_description, source.job_description);
@@ -103,6 +105,11 @@ async function main() {
   assert.equal(saved.resume.summary, 'Prepared resume');
   await generation.answerQuestions(user, { conversation_id: prepared.conversation_id, questions: [{ question: 'Why this role?' }] });
   assert.equal((await drafts.latest(user, workspace.id)).answers[0].answer, 'It fits my experience.');
+  const cached = await db.resumeConversation.findUniqueOrThrow({ where: { id: prepared.conversation_id } });
+  assert.ok(cached.answer_cache_json.includes('It fits my experience.'));
+  const callsBeforeReuse = calls.length;
+  await generation.answerQuestions(user, { conversation_id: prepared.conversation_id, questions: [{ question: 'Name' }, { question: 'Why this role?' }] });
+  assert.equal(calls.length, callsBeforeReuse, 'profile fields and cached answers need no model request');
   const capturedStep = (key, answer, time) => ({ key, step: key, url: source.url, captured_at: time,
     fields: [{ id: 'why', question: 'Why this role?', answer, section: '', field_type: 'textarea' }] });
   const capturedAt = Date.now();
@@ -177,7 +184,38 @@ async function main() {
   await assert.rejects(drafts.submit(user, urlDrafts[1].draft.id, file, true), /already in the application table/);
   assert.equal(await db.applicationScreenshot.count(), 4);
   assert.equal(await count(), 4);
-  console.log('PASS: draft/form migrations, actual answers across steps, corrections/stale retries, AI separation, ownership/frozen submission, atomic screenshot commit, rollback, and concurrent duplicate exclusion');
+  let finishGeneration;
+  let backgroundCalls = 0;
+  const delayedGeneration = { generate: async () => {
+    backgroundCalls++;
+    await new Promise((resolve) => { finishGeneration = resolve; });
+    return { conversation_id: prepared.conversation_id, eligible: true };
+  } };
+  const worker = new GenerationJobsService(db, access, delayedGeneration);
+  const secondWorker = new GenerationJobsService(db, access, delayedGeneration);
+  const requestId = randomUUID();
+  const jobInput = input('BackgroundCo');
+  const submittedJobs = await Promise.all(Array.from({ length: 3 }, () => worker.submit(user, 'application', jobInput, requestId)));
+  assert.equal(new Set(submittedJobs.map((job) => job.job_id)).size, 1);
+  assert.equal(await db.generationJob.count(), 1);
+  assert.equal(backgroundCalls, 0, 'submission returns before provider work starts');
+  await assert.rejects(worker.get(other, requestId), /not found/);
+  await Promise.all([worker.dispatch(), secondWorker.dispatch()]);
+  for (let tries = 0; !finishGeneration && tries < 100; tries++) await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(backgroundCalls, 1, 'concurrent workers must not send the same paid request twice');
+  assert.equal((await worker.get(user, requestId)).status, 'running');
+  finishGeneration();
+  await Promise.all([...worker.active.values(), ...secondWorker.active.values()]);
+  assert.equal((await secondWorker.get(user, requestId)).result.conversation_id, prepared.conversation_id);
+  assert.equal((await worker.submit(user, 'application', jobInput, requestId)).status, 'completed');
+  assert.equal(backgroundCalls, 1);
+  const interrupted = await worker.submit(user, 'application', jobInput);
+  await db.generationJob.update({ where: { id: interrupted.job_id }, data: { status: 'running', lease_expires_at: new Date(Date.now() - 1000) } });
+  await secondWorker.maintain();
+  assert.equal((await worker.get(user, interrupted.job_id)).status, 'failed');
+  assert.equal((await db.generationJob.findUnique({ where: { id: interrupted.job_id } })).request_json, null);
+  worker.onModuleDestroy(); secondWorker.onModuleDestroy();
+  console.log('PASS: draft/form/cache/job migrations, local conversation and answer reuse, actual captured answers, atomic submission, duplicate exclusion, idempotent background jobs, concurrent worker claims, and interrupted-job recovery');
 }
 
 main().catch((error) => { console.error(error); process.exitCode = 1; }).finally(async () => {

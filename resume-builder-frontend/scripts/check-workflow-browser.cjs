@@ -110,23 +110,36 @@ function fixture(extensionVersion) {
       Object.assign(state.profile, input);
       return json(state.profile);
     }
-    if (endpoint === '/applications/generate') {
+    if (endpoint === '/resume/jobs/application') {
       const input = JSON.parse(init.body);
       if (input.workspace_id !== 'w1') throw Error('Profile settings lost the assigned workspace');
       const job = jobs.find((job) => job.url === input.url);
       if (!job || input.job_description !== jd(job)) throw Error('Wrong JD was sent');
       (state.generationUrls ||= []).push(input.url);
       state.latestDraft = job.id;
-      return json({ success: true, eligible: true, draft: { id: job.id, url: job.url, company_name: job.company, job_title: 'Engineer' }, resume: rawResume(job), conversation_id: job.id + '-conversation', job_description: updated(job) });
+      const id = new Headers(init.headers).get('X-Generation-Id');
+      (state.generationJobs ||= {})[id] = { kind: 'application', polls: 0, result: { success: true, eligible: true, draft: { id: job.id, url: job.url, company_name: job.company, job_title: 'Engineer' }, resume: rawResume(job), conversation_id: job.id + '-conversation', job_description: updated(job) } };
+      return json({ job_id: id, status: 'queued' });
     }
-    if (endpoint === '/resume/answers') {
-      if (state.holdAnswers) {
+    if (endpoint === '/resume/jobs/answers') {
+      const id = new Headers(init.headers).get('X-Generation-Id');
+      (state.generationJobs ||= {})[id] = { kind: 'answers', polls: 0 };
+      return json({ job_id: id, status: 'queued' });
+    }
+    if (endpoint.startsWith('/resume/jobs/')) {
+      const id = endpoint.split('/').at(-1);
+      const job = state.generationJobs[id];
+      if (job.kind === 'answers' && state.holdAnswers) {
         state.answersWaiting = true;
-        await new Promise((resolve) => { state.releaseAnswers = resolve; });
-        state.answersWaiting = false;
+        state.releaseAnswers = () => { state.holdAnswers = false; state.answersWaiting = false; };
+        return json({ job_id: id, status: 'running' });
       }
-      state.answers = [{ question: 'Why this role?', answer: 'It fits my experience.' }];
-      return json({ answers: state.answers });
+      if (job.polls++ === 0) return json({ job_id: id, status: 'running' });
+      if (job.kind === 'answers') {
+        state.answers = [{ question: 'Why this role?', answer: 'It fits my experience.' }];
+        job.result = { answers: state.answers };
+      }
+      return json({ job_id: id, status: 'completed', result: job.result });
     }
     if (endpoint.startsWith('/applications/drafts/latest')) {
       const job = jobs.find((job) => job.id === state.latestDraft);
@@ -268,11 +281,11 @@ function fixture(extensionVersion) {
     await evaluate("workflowTest.browserTabs[73] = 'https://jobs.example.test/456'");
     await click('Generate Resume');
     await waitFor("activeProfileWorkspace.innerText.includes('The linked browser tab has changed')");
-    assert.equal(await evaluate("workflowTest.requests.includes('/applications/generate')"), false);
+    assert.equal(await evaluate("workflowTest.requests.includes('/resume/jobs/application')"), false);
     await evaluate('delete workflowTest.browserTabs[73]');
     await click('Generate Resume');
     await waitFor("activeProfileWorkspace.innerText.includes('The linked job page is closed or unavailable')");
-    assert.equal(await evaluate("workflowTest.requests.includes('/applications/generate')"), false);
+    assert.equal(await evaluate("workflowTest.requests.includes('/resume/jobs/application')"), false);
     await click('Open linked job');
     await waitFor('workflowTest.browserTabId === 75');
     // Restore the panel on its original browser tab; the JD's linked page is kept separately.

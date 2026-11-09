@@ -16,6 +16,7 @@ import {
 } from "../../../shared/resume-profile"
 import { authStorage, getApiBaseUrl } from "@/lib/extension-storage"
 import { parseExtensionUpdate } from "@/lib/extension-update"
+import { generateWithJob } from "@/lib/generation-job"
 
 function createId() {
   return crypto.randomUUID()
@@ -136,28 +137,21 @@ const webAiProfiles: AiProfilesApi = {
     const conversationAnswers = input.kind === "applicationAnswers" && Boolean(input.conversationId)
     const applicationGeneration = !conversationAnswers && Boolean(input.url && input.workspaceId)
     const path = conversationAnswers
-      ? "/resume/answers"
+      ? "/resume/jobs/answers"
       : applicationGeneration
-        ? "/applications/generate"
-        : "/resume/profile-generate"
-    const response = await apiFetch(path, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(conversationAnswers
+        ? "/resume/jobs/application"
+        : "/resume/jobs/profile"
+    const data = await generateWithJob(apiFetch, path, conversationAnswers
         ? { conversation_id: input.conversationId, questions: input.questions }
         : {
-            ...(applicationGeneration ? { workspace_id: input.workspaceId, url: input.url } : {}),
+            ...(applicationGeneration ? { workspace_id: input.workspaceId } : {}),
+            url: input.url,
             profile_id: input.profileId,
             job_description: input.jobDescription,
             kind: input.kind,
             ...(!applicationGeneration ? { questions: input.questions } : {}),
             resume: input.resume,
-          }),
-    })
-    const data = await response.json().catch(() => null) as { tailored_resume?: string; full_name?: string; conversation_id?: string; job_description?: string; error?: string; message?: string; eligible?: boolean; reason?: string; banned?: boolean; resume?: unknown; answers?: unknown; application?: GenerateResumeResult["application"]; draft?: GenerateResumeResult["draft"]; duplicate?: boolean; duplicate_type?: string | null; cooldown_days?: number; company_name?: string; existing_application?: GenerateResumeResult["existingApplication"] } | null
-    if (!response.ok) throw new Error(data?.message || data?.error || `Generation failed (${response.status}).`)
+          }, `${await getApiBaseUrl()}\n${await authStorage.getToken()}`) as { tailored_resume?: string; full_name?: string; conversation_id?: string; job_description?: string; error?: string; message?: string; eligible?: boolean; reason?: string; banned?: boolean; resume?: unknown; answers?: unknown; application?: GenerateResumeResult["application"]; draft?: GenerateResumeResult["draft"]; duplicate?: boolean; duplicate_type?: string | null; cooldown_days?: number; company_name?: string; existing_application?: GenerateResumeResult["existingApplication"] } | null
     if (conversationAnswers) {
       if (!Array.isArray(data?.answers)) throw new Error("The AI provider returned an empty response.")
       return { tailored_resume: JSON.stringify({ answers: data.answers }) }

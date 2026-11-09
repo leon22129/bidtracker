@@ -179,10 +179,38 @@ when prices or availability change. DeepSeek peak and off-peak prices are shown 
 Generation uses standard processing; the display is a reference, not a billing guarantee.
 
 Run `npm run prisma:deploy` in `backend` and rebuild/restart both services when installing this change.
-New application question context is stored locally, allowing provider/key changes between generation
-and follow-up questions. Existing remote OpenAI conversations require the owning admin's saved
-OpenAI key with access to the original OpenAI project, including for provider cleanup. Local context
-follows the same retention period.
+New runs use one local conversation ID for both OpenAI and DeepSeek. Eligibility and resume
+generation are independent requests; a rejected job never reaches resume generation. Answers receive
+the saved JD and final resume, current candidate information, and only the unanswered questions.
+Earlier eligibility instructions, resume-writing prompts, and question history are not replayed.
+OpenAI requests use `store: false`; DeepSeek's separate adapter sends only its supported stateless
+Responses API parameters. Both adapters retain the selected provider/model and credentials.
+
+Known name, contact, address, and work-authorization fields are answered directly from the saved
+profile without an AI request. Other answers are cached per conversation in the database. Changes
+to reference context, profile information, provider/model, prompt, question text, or answer options
+invalidate reuse. Repeated unresolved questions are combined into one request. Eligibility and
+application answers request low reasoning where the model supports it; resume generation retains
+its existing reasoning level.
+
+Apply the `20261109000000_add_application_answer_cache` migration before starting the new backend.
+Existing remote OpenAI runs with saved reference context also use local context. Older runs without
+that context retain their OpenAI conversation path and require the original project's key. Provider
+cleanup still requires the owning admin's OpenAI key. Local context follows the same retention period.
+
+Resume Builder submits generation to `/api/resume/jobs/application`, `/profile`, or `/answers` and
+polls `/api/resume/jobs/:id`. These return short responses while the backend finishes provider work,
+avoiding Cloudflare's read timeout on a single long HTTP request. Apply the
+`20261109010000_add_generation_jobs` migration and rebuild/reload the Resume Builder extension as
+well as restarting the API. Older synchronous endpoints remain available for compatibility.
+Jobs are stored in PostgreSQL, limited to four concurrent jobs per API process and three pending
+jobs per user. Submission retries reuse `X-Generation-Id` so a lost response does not start another
+paid generation. Results are retained for 24 hours; prepared resumes and answers retain their usual
+storage lifecycle. A crashed worker's running jobs fail after their lease expires rather than being
+automatically replayed. Queued jobs can continue after restart. DeepSeek requests stream internally
+with a 15-minute timeout per attempt, allowing for the provider's documented queue and inference time.
+This timeout does not change Cloudflare's edge limits. Quick Tunnels cannot disable those limits;
+background jobs and polling work without an Enterprise plan or browser SSE support.
 
 All users can optionally save their **Slack member ID** in Account. Milestone notifications use the
 creating admin's webhook and mention the bidder's own ID (`<@U…>`), so Slack resolves their display

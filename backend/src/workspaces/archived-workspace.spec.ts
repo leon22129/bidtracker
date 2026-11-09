@@ -89,12 +89,12 @@ describe('Archived profile write protection across services', () => {
     const imports = new ImportService(
       prisma as never, access, applications, duplicates as never, numbering as never, bannedUrls as never,
     );
-    const openAi = jest.spyOn(generation as any, 'openAi');
+    const generateText = jest.spyOn(generation as any, 'generateText');
     const conversation = jest.spyOn(generation as any, 'createGenerationConversation').mockResolvedValue({
       id: 'conversation-1', openai_conversation_id: 'conv_1',
     });
     return {
-      workspace, prisma, numbering, applications, generation, imports, workspaces, openAi, conversation,
+      workspace, prisma, numbering, applications, generation, imports, workspaces, generateText, conversation,
     };
   }
 
@@ -130,7 +130,7 @@ describe('Archived profile write protection across services', () => {
     await expect(writes[path](context)).rejects.toEqual(new ForbiddenException(
       'This profile is archived. Ask an admin to unarchive it before applying.',
     ));
-    expect(context.openAi).not.toHaveBeenCalled();
+    expect(context.generateText).not.toHaveBeenCalled();
     expect(context.conversation).not.toHaveBeenCalled();
     expect(context.prisma.jobApplication.create).not.toHaveBeenCalled();
     expect(context.prisma.jobApplication.update).not.toHaveBeenCalled();
@@ -142,12 +142,12 @@ describe('Archived profile write protection across services', () => {
   it('blocks saving a resume when the profile is archived during generation', async () => {
     const context = setup();
     context.workspace.is_archived = false;
-    context.openAi.mockResolvedValueOnce(JSON.stringify(eligibility)).mockImplementationOnce(async () => {
+    context.generateText.mockResolvedValueOnce(JSON.stringify(eligibility)).mockImplementationOnce(async () => {
       context.workspace.is_archived = true;
       return JSON.stringify({ summary: 'Tailored summary', annual_salary: '$150,000', hourly_rate: '$72.12' });
     });
     await expect(context.generation.generate(user, input)).rejects.toBeInstanceOf(ForbiddenException);
-    expect(context.openAi).toHaveBeenCalledTimes(2);
+    expect(context.generateText).toHaveBeenCalledTimes(2);
     expect(context.prisma.jobApplication.create).not.toHaveBeenCalled();
     expect(context.numbering.withNextNumber).not.toHaveBeenCalled();
   });
@@ -158,11 +158,11 @@ describe('Archived profile write protection across services', () => {
 
     await context.workspaces.update(input.workspace_id, { is_archived: false }, admin);
     expect(context.workspace.is_archived).toBe(false);
-    context.openAi.mockResolvedValue(JSON.stringify({ ...eligibility, company_name: '', job_title: '' }));
+    context.generateText.mockResolvedValue(JSON.stringify({ ...eligibility, company_name: '', job_title: '' }));
     await expect(context.generation.generate(user, input)).resolves.toMatchObject({
       success: false, eligible: false, reason: 'Need company name and job title in the JD.',
     });
-    expect(context.openAi).toHaveBeenCalledTimes(1);
+    expect(context.generateText).toHaveBeenCalledTimes(1);
   });
 
   it('lets admins maintain existing pipeline history on archived profiles', async () => {
@@ -181,6 +181,6 @@ describe('Archived profile write protection across services', () => {
       questions: [{ question: 'Authorized?', options: [] }],
       answers: [{ question: 'Authorized?', answer: 'Yes' }],
     });
-    expect(context.openAi).not.toHaveBeenCalled();
+    expect(context.generateText).not.toHaveBeenCalled();
   });
 });
