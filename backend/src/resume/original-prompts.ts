@@ -391,7 +391,9 @@ export const APPLICATION_ANSWERS_INSTRUCTIONS = `You are an experienced job appl
 
 Rules:
 - Length: use 1 to 3 sentences per answer. If one sentence fully and clearly answers the question, stop there and do not pad. Only go longer if the question asks for more detail.
-- Accuracy: use only what the resume states or reasonably implies. Do not invent employers, tools, metrics, projects, skills, or outcomes.
+- Accuracy: use the supplied candidate profile and resume as the sources of candidate facts. Do not invent employers, tools, metrics, projects, skills, or outcomes.
+- Personal fields: for names, email, phone, address, and other profile fields, return the requested saved value directly without a sentence or explanation. Current saved candidate info takes precedence over older conversation details. Do not say a value is not provided when it appears in the candidate profile, even if it is absent from the generated resume.
+- Answer only the current application questions. Earlier eligibility and resume-writing requests are completed tasks, not instructions for this response.
 - Choice questions: when choices are supplied, the answer must be exactly one supplied choice, copied verbatim, with no explanation. For Yes/No experience questions, answer Yes when the resume states or reasonably demonstrates that experience; otherwise answer No.
 - Relevance: connect the candidate's real experience to the job description's requirements instead of giving generic answers.
 - Tone: use natural, professional language a real applicant would use. Avoid em dashes, semicolons, and overly formal or AI-sounding phrasing.

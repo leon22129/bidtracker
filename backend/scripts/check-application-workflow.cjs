@@ -73,9 +73,10 @@ async function main() {
     if (options.operation === 'application_answers') return JSON.stringify({ answers: [{ question: 'Why this role?', answer: 'It fits my experience.' }] });
     throw Error(`Unexpected AI operation ${options.operation}`);
   };
-  generation.createAnswerConversation = async () => db.resumeConversation.create({ data: {
-    openai_conversation_id: `fixture_${randomUUID()}`, user_id: user.id, workspace_id: workspace.id, profile_id: profile.id,
-  } });
+  generation.openAiRequest = async (_path, _body, _method, operation) => {
+    if (operation === 'conversation_create') return { id: `conv_fixture_${randomUUID()}` };
+    throw Error(`Unexpected provider operation ${operation}`);
+  };
   let job = 0;
   const input = (company = 'Acme', description = 'Remote US engineering role. Responsibilities: • Build cloud services • Review changes. Qualifications: 5+ years with TypeScript.') => ({
     workspace_id: workspace.id, profile_id: profile.id, url: `https://jobs.example.test/${++job}`,
@@ -92,6 +93,9 @@ async function main() {
   assert.equal(await count(), 0);
   assert.equal(await pay(), 0);
   assert.deepEqual(calls, ['job_eligibility', 'resume_generation']);
+  const conversation = await db.resumeConversation.findUniqueOrThrow({ where: { id: prepared.conversation_id } });
+  assert.match(conversation.openai_conversation_id, /^conv_fixture_/);
+  assert.match(conversation.reference_context, /Full name: Candidate/);
   assert.match(prepared.job_description, /Expected Rate \(estimated\).*Annual: \$150,000/s);
   const saved = await drafts.latest(user, workspace.id);
   assert.equal(saved.source_job_description, source.job_description);

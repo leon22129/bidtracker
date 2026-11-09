@@ -50,6 +50,7 @@ describe('Archived profile write protection across services', () => {
       resumeProfile: { findUnique: jest.fn().mockResolvedValue(profile) },
       applicationDraft: { findFirst: jest.fn().mockResolvedValue(null), create: jest.fn() },
       resumeConversation: {
+        update: jest.fn().mockResolvedValue({}),
         findUnique: jest.fn().mockResolvedValue({
           id: 'conversation-1', user_id: user.id, workspace_id: workspace.id,
           openai_conversation_id: 'provider-conversation',
@@ -89,7 +90,9 @@ describe('Archived profile write protection across services', () => {
       prisma as never, access, applications, duplicates as never, numbering as never, bannedUrls as never,
     );
     const openAi = jest.spyOn(generation as any, 'openAi');
-    const conversation = jest.spyOn(generation as any, 'createAnswerConversation');
+    const conversation = jest.spyOn(generation as any, 'createGenerationConversation').mockResolvedValue({
+      id: 'conversation-1', openai_conversation_id: 'conv_1',
+    });
     return {
       workspace, prisma, numbering, applications, generation, imports, workspaces, openAi, conversation,
     };
@@ -143,8 +146,6 @@ describe('Archived profile write protection across services', () => {
       context.workspace.is_archived = true;
       return JSON.stringify({ summary: 'Tailored summary', annual_salary: '$150,000', hourly_rate: '$72.12' });
     });
-    context.conversation.mockResolvedValue({ id: 'conversation-1' });
-
     await expect(context.generation.generate(user, input)).rejects.toBeInstanceOf(ForbiddenException);
     expect(context.openAi).toHaveBeenCalledTimes(2);
     expect(context.prisma.jobApplication.create).not.toHaveBeenCalled();

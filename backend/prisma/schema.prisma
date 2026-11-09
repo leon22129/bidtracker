@@ -128,8 +128,9 @@ model ResumeProfile {
   @@map("resume_profiles")
 }
 
-// Compact local context for application questions. Legacy rows retain their remote OpenAI id;
-// new rows use local_<uuid>. The public id is always this row's id.
+// OpenAI runs share a remote conversation from eligibility through application answers.
+// Other providers and older local runs use local_<uuid> with saved reference context.
+// The public id is always this row's id.
 model ResumeConversation {
   reference_context      String?
   id                     String   @id @default(cuid())

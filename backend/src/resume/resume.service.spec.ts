@@ -1,4 +1,3 @@
-import { Logger } from '@nestjs/common';
 import { ApplicationGenerationService } from './resume.service';
 import { DEFAULT_RESUME_PROMPT, RESUME_OUTPUT_INSTRUCTIONS } from '../ai/resume-prompt';
 
@@ -100,8 +99,9 @@ describe('ApplicationGenerationService application metadata eligibility', () => 
       drafts as any,
       aiSettings as any,
     );
+    (service as any).logger = { log: jest.fn(), warn: jest.fn(), error: jest.fn() };
     jest.spyOn(service as any, 'extractJobIdentity').mockResolvedValue({ company_name: 'Acme', job_title: 'Software Engineer' });
-    jest.spyOn(service as any, 'createAnswerConversation').mockResolvedValue({
+    jest.spyOn(service as any, 'createGenerationConversation').mockResolvedValue({
       id: 'conversation-1',
       openai_conversation_id: 'conv_openai_1',
     });
@@ -126,17 +126,15 @@ describe('ApplicationGenerationService application metadata eligibility', () => 
     ...overrides,
   });
 
-  it('saves question context locally without creating a provider conversation', async () => {
+  it('creates and saves the OpenAI conversation before eligibility, recovering from a temporary error', async () => {
     jest.useFakeTimers();
     try {
       const { service, prisma, applications, drafts } = setup();
-      (service as any).createAnswerConversation.mockRestore();
-      jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
-      jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+      (service as any).createGenerationConversation.mockRestore();
       const openAi = jest.spyOn(service as any, 'openAi')
         .mockResolvedValueOnce(eligible())
         .mockResolvedValueOnce(JSON.stringify({ summary: 'Generated resume', experience: [], annual_salary: '$150,000', hourly_rate: '$72.12' }));
-      prisma.resumeConversation.create.mockResolvedValue({ id: 'conversation-recovered' });
+      prisma.resumeConversation.create.mockImplementation(async ({ data }) => ({ id: 'conversation-recovered', ...data }));
       const provider = jest.spyOn(globalThis, 'fetch')
         .mockResolvedValueOnce(new Response('Service Unavailable', { status: 503 }))
         .mockResolvedValueOnce(new Response(JSON.stringify({ id: 'conv_recovered' })));
@@ -148,12 +146,18 @@ describe('ApplicationGenerationService application metadata eligibility', () => 
       });
       await jest.advanceTimersByTimeAsync(10_000);
       await result;
-      expect(provider).not.toHaveBeenCalled();
+      expect(provider).toHaveBeenCalledTimes(2);
+      expect(provider.mock.calls[0][0]).toBe('https://api.openai.com/v1/conversations');
       expect(prisma.resumeConversation.create).toHaveBeenCalledWith({ data: expect.objectContaining({
-        openai_conversation_id: expect.stringMatching(/^local_/),
-        reference_context: expect.stringContaining('Final generated candidate resume:'),
+        openai_conversation_id: 'conv_recovered',
       }) });
+      expect(prisma.resumeConversation.create.mock.invocationCallOrder[0]).toBeLessThan(openAi.mock.invocationCallOrder[0]);
       expect(openAi).toHaveBeenCalledTimes(2);
+      for (const [, options] of openAi.mock.calls) expect(options).toMatchObject({ conversationId: 'conv_recovered' });
+      expect(prisma.resumeConversation.update).toHaveBeenCalledWith({
+        where: { id: 'conversation-recovered' },
+        data: { reference_context: expect.stringContaining('Final generated candidate resume:') },
+      });
       expect(applications.createGenerated).not.toHaveBeenCalled();
       expect(drafts.prepare).toHaveBeenCalledWith(user, expect.objectContaining({
         conversation_id: 'conversation-recovered',
@@ -181,6 +185,127 @@ describe('ApplicationGenerationService application metadata eligibility', () => 
     expect(prompt).toContain('Chicago, IL');
     expect(prompt).toContain('US work status: US Citizen');
     expect(prompt).not.toContain('{{candidate_info}}');
+  });
+
+  it('sends eligibility, resume, and questions to the same real OpenAI conversation', async () => {
+    const { service, prisma, drafts } = setup();
+    (service as any).createGenerationConversation.mockRestore();
+    prisma.resumeConversation.create.mockImplementation(async ({ data }) => ({ id: 'conversation-1', ...data }));
+    const json = (body: unknown) => new Response(JSON.stringify(body), { headers: { 'content-type': 'application/json' } });
+    const provider = jest.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(json({ id: 'conv_shared' }))
+      .mockResolvedValueOnce(json({ output_text: eligible() }))
+      .mockResolvedValueOnce(json({ output_text: JSON.stringify({
+        summary: 'Tailored summary', annual_salary: '$150,000', hourly_rate: '$72.12',
+      }) }))
+      .mockResolvedValueOnce(json({ output_text: JSON.stringify({
+        answers: [{ question: 'What is your name?', answer: 'Not provided' }],
+      }) }));
+    try {
+      await expect(service.generate(user, dto)).resolves.toMatchObject({ success: true, conversation_id: 'conversation-1' });
+      prisma.resumeConversation.findUnique.mockResolvedValue({
+        id: 'conversation-1', ...prisma.resumeConversation.create.mock.calls[0][0].data,
+        reference_context: prisma.resumeConversation.update.mock.calls[0][0].data.reference_context,
+      });
+      await expect(service.answerQuestions(user, {
+        conversation_id: 'conversation-1', questions: [{ question: 'What is your name?' }],
+      })).resolves.toEqual({ answers: [{ question: 'What is your name?', answer: 'Candidate' }] });
+
+      expect(provider.mock.calls.map(([url]) => url)).toEqual([
+        'https://api.openai.com/v1/conversations',
+        'https://api.openai.com/v1/responses',
+        'https://api.openai.com/v1/responses',
+        'https://api.openai.com/v1/responses',
+      ]);
+      const [eligibility, resume, answers] = provider.mock.calls.slice(1).map(([, init]) => JSON.parse(init!.body as string));
+      for (const body of [eligibility, resume, answers]) {
+        expect(body.conversation).toBe('conv_shared');
+        expect(body.store).not.toBe(false);
+      }
+      expect(eligibility.input).toContain(dto.job_description);
+      expect(eligibility.input).toContain(dto.url);
+      expect(resume.input).toContain('Full name: Candidate');
+      expect(resume.instructions).toBe(RESUME_OUTPUT_INSTRUCTIONS);
+      expect(answers.input).toContain('Full name: Candidate');
+      expect(answers.input).not.toContain(dto.job_description);
+      expect(answers.instructions).toContain('Answer only the current application questions');
+      expect(drafts.prepare).toHaveBeenCalledWith(user, expect.objectContaining({ conversation_id: 'conversation-1' }));
+      expect(prisma.applicationDraft.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+        data: expect.objectContaining({ application_answers_json: JSON.stringify([{ question: 'What is your name?', answer: 'Candidate' }]) }),
+      }));
+    } finally {
+      provider.mockRestore();
+    }
+  });
+
+  it('keeps local reference context for DeepSeek without creating an OpenAI conversation', async () => {
+    const { service, prisma, aiSettings } = setup();
+    (service as any).createGenerationConversation.mockRestore();
+    const config = await aiSettings.forWorkspace();
+    aiSettings.forWorkspace.mockResolvedValue({ ...config, provider: 'deepseek', model: 'deepseek-v4-pro', baseUrl: 'https://api.deepseek.com' });
+    prisma.resumeConversation.create.mockImplementation(async ({ data }) => ({ id: 'local-conversation', ...data }));
+    const request = jest.spyOn(service as any, 'openAiRequest');
+    const openAi = jest.spyOn(service as any, 'openAi')
+      .mockResolvedValueOnce(eligible())
+      .mockResolvedValueOnce(JSON.stringify({ summary: 'Tailored summary', annual_salary: '$150,000', hourly_rate: '$72.12' }));
+
+    await expect(service.generate(user, dto)).resolves.toMatchObject({ success: true, conversation_id: 'local-conversation' });
+    expect(request).not.toHaveBeenCalled();
+    expect(prisma.resumeConversation.create.mock.calls[0][0].data.openai_conversation_id).toMatch(/^local_/);
+    for (const [, options] of openAi.mock.calls) expect(options).not.toHaveProperty('conversationId');
+    const context = prisma.resumeConversation.update.mock.calls[0][0].data.reference_context;
+    expect(context).toContain(dto.url);
+    expect(context).toContain('Full name: Candidate');
+    expect(context).toContain('Tailored summary');
+  });
+
+  it('keeps rejected conversations tracked for cleanup without generating a resume or prepared job', async () => {
+    const { service, prisma, drafts } = setup();
+    (service as any).createGenerationConversation.mockRestore();
+    prisma.resumeConversation.create.mockImplementation(async ({ data }) => ({ id: 'rejected-conversation', ...data }));
+    jest.spyOn(service as any, 'openAiRequest').mockResolvedValue({ id: 'conv_rejected' });
+    const openAi = jest.spyOn(service as any, 'openAi').mockResolvedValue(eligible({ requires_clearance: true }));
+    await expect(service.generate(user, dto)).resolves.toMatchObject({ success: false, eligible: false });
+    expect(prisma.resumeConversation.create).toHaveBeenCalledWith({ data: expect.objectContaining({ openai_conversation_id: 'conv_rejected' }) });
+    expect(openAi).toHaveBeenCalledTimes(1);
+    expect(openAi.mock.calls[0][1]).toMatchObject({ conversationId: 'conv_rejected' });
+    expect(prisma.resumeConversation.update).not.toHaveBeenCalled();
+    expect(drafts.prepare).not.toHaveBeenCalled();
+  });
+
+  it('keeps the provider id tracked when resume generation fails and does not prepare a job', async () => {
+    const { service, prisma, drafts } = setup();
+    (service as any).createGenerationConversation.mockRestore();
+    prisma.resumeConversation.create.mockImplementation(async ({ data }) => ({ id: 'failed-conversation', ...data }));
+    const request = jest.spyOn(service as any, 'openAiRequest').mockResolvedValue({ id: 'conv_failed' });
+    jest.spyOn(service as any, 'openAi').mockResolvedValueOnce(eligible()).mockRejectedValueOnce(new Error('Provider unavailable'));
+    await expect(service.generate(user, dto)).rejects.toThrow('Provider unavailable');
+    expect(prisma.resumeConversation.create).toHaveBeenCalledWith({ data: expect.objectContaining({ openai_conversation_id: 'conv_failed' }) });
+    expect(request).toHaveBeenCalledTimes(1);
+    expect(prisma.resumeConversation.update).not.toHaveBeenCalled();
+    expect(drafts.prepare).not.toHaveBeenCalled();
+  });
+
+  it('removes an empty provider conversation if its local record cannot be saved', async () => {
+    const { service, prisma, drafts } = setup();
+    (service as any).createGenerationConversation.mockRestore();
+    prisma.resumeConversation.create.mockRejectedValue(new Error('Database unavailable'));
+    const request = jest.spyOn(service as any, 'openAiRequest').mockResolvedValue({ id: 'conv_unsaved' });
+    const openAi = jest.spyOn(service as any, 'openAi');
+    await expect(service.generate(user, dto)).rejects.toThrow('Database unavailable');
+    expect(request).toHaveBeenLastCalledWith('/conversations/conv_unsaved', undefined, 'DELETE', 'conversation_cleanup', expect.any(Object));
+    expect(openAi).not.toHaveBeenCalled();
+    expect(drafts.prepare).not.toHaveBeenCalled();
+  });
+
+  it.each([{}, { id: '' }, { id: 'local_invalid' }])('stops when OpenAI returns an invalid conversation: %j', async (payload) => {
+    const { service, prisma } = setup();
+    (service as any).createGenerationConversation.mockRestore();
+    jest.spyOn(service as any, 'openAiRequest').mockResolvedValue(payload);
+    const openAi = jest.spyOn(service as any, 'openAi');
+    await expect(service.generate(user, dto)).rejects.toThrow('valid conversation id');
+    expect(prisma.resumeConversation.create).not.toHaveBeenCalled();
+    expect(openAi).not.toHaveBeenCalled();
   });
 
   it('blocks a banned URL before duplicate or eligibility checks without adding a row', async () => {
@@ -571,37 +696,24 @@ describe('ApplicationGenerationService application metadata eligibility', () => 
     expect(prisma.jobApplication.updateMany).toHaveBeenCalled();
   });
 
-  it('seeds answer conversations with real candidate profile values', async () => {
+  it('saves the complete resume and candidate profile as reference data', async () => {
     const { service, prisma } = setup();
-    (service as any).createAnswerConversation.mockRestore();
-    prisma.resumeConversation.create.mockResolvedValue({
-      id: 'conversation-1',
-      openai_conversation_id: 'conv_openai_1',
-    });
-    const request = jest.spyOn(service as any, 'openAiRequest').mockResolvedValue({
-      id: 'conv_openai_1',
-    });
-
-    await (service as any).createAnswerConversation(
-      user,
-      profile,
-      dto.workspace_id,
-      dto.job_description,
-      { summary: 'Tailored summary' },
-    );
-
-    expect(request).not.toHaveBeenCalled();
-    const context = prisma.resumeConversation.create.mock.calls[0][0].data.reference_context as string;
+    jest.spyOn(service as any, 'openAi')
+      .mockResolvedValueOnce(eligible())
+      .mockResolvedValueOnce(JSON.stringify({ summary: 'Tailored summary', annual_salary: '$150,000', hourly_rate: '$72.12' }));
+    await service.generate(user, dto);
+    const context = prisma.resumeConversation.update.mock.calls[0][0].data.reference_context as string;
     expect(context).toContain('Candidate info:');
+    expect(context).toContain('Full name: Candidate');
+    expect(context).toContain('Current location: Chicago, IL');
+    expect(context).toContain(dto.url);
+    expect(context).toContain('"personalInfo":{"fullName":"Candidate"');
     expect(context).toContain('US work status: US Citizen');
     expect(context).toContain('Require employment sponsorship now or later: No');
     expect(context).toContain('Legally authorized to work in the US: Yes');
     expect(context).toContain('Gender: Male');
     expect(context).toContain('Hispanic/Latino: No');
     expect(context).toContain('Race: White');
-    expect(prisma.resumeConversation.create).toHaveBeenCalledWith({
-      data: expect.objectContaining({ profile_id: profile.id }),
-    });
   });
 
   it('replaces resume prompt placeholders with real candidate information', () => {
@@ -610,7 +722,8 @@ describe('ApplicationGenerationService application metadata eligibility', () => 
 
     expect(prompt).toContain(`JD:\n${dto.job_description}`);
     expect(prompt).toContain(`Candidate Current Location (city and/or state):\n${profile.location}`);
-    expect(prompt).toContain('Candidate info:\nUS work status: US Citizen');
+    expect(prompt).toContain('Candidate info:\nFull name: Candidate');
+    expect(prompt).toContain('US work status: US Citizen');
     expect(prompt).toContain('Require employment sponsorship now or later: No');
     expect(prompt).toContain('Legally authorized to work in the US: Yes');
     expect(prompt).toContain('Gender: Male');
@@ -680,6 +793,107 @@ describe('ApplicationGenerationService application metadata eligibility', () => 
       ],
     });
     expect(prisma.resumeProfile.findUnique).toHaveBeenCalledWith({ where: { id: profile.id } });
+  });
+
+  it.each([
+    ['local_old', 'Saved resume and JD without personal details'],
+    ['conv_legacy', null],
+    ['conv_new', 'Saved complete reference context'],
+  ])('answers personal fields from the current profile for %s', async (providerId, referenceContext) => {
+    const { service, prisma, aiSettings } = setup();
+    const candidate = {
+      ...profile, full_name: 'Jane May de la Cruz', first_name: 'Jane', middle_name: 'May', last_name: 'de la Cruz',
+      email: 'jane@example.com', phone: '+1 555 0100', address1: '123 Example St', city: 'Chicago', state: 'IL', zip: '60601',
+      linkedin: 'https://www.linkedin.com/in/jane-example',
+      education_json: '[{"degree":"BS Computer Science","school":"Example University","year":"2015"}]',
+      certifications_json: '[{"name":"Example Certification","issuer":"Example","year":"2020"}]',
+    };
+    prisma.resumeProfile.findUnique.mockResolvedValue(candidate);
+    prisma.resumeConversation.findUnique.mockResolvedValue({
+      id: 'conversation-1', user_id: user.id, workspace_id: dto.workspace_id, profile_id: profile.id,
+      openai_conversation_id: providerId, reference_context: referenceContext,
+    });
+    const cases = [
+      ['Name *', candidate.full_name], ['What is your full legal name?', candidate.full_name],
+      ['Please enter your first name (required)', candidate.first_name], ['Middle name', candidate.middle_name],
+      ['Last Name', candidate.last_name], ['Surname', candidate.last_name],
+      ['Your email address', candidate.email], ['Phone number', candidate.phone],
+    ];
+    const questions = cases.map(([question]) => ({ question, options: [] }));
+    const openAi = jest.spyOn(service as any, 'openAi').mockResolvedValue(JSON.stringify({
+      answers: questions.map(({ question }) => ({ question, answer: 'Not provided' })),
+    }));
+    await expect(service.answerQuestions(user, { conversation_id: 'conversation-1', questions })).resolves.toEqual({
+      answers: cases.map(([question, answer]) => ({ question, answer })),
+    });
+    const [prompt, options] = openAi.mock.calls[0] as [string, Record<string, unknown>];
+    for (const value of [candidate.full_name, candidate.email, candidate.phone, candidate.address1, candidate.linkedin,
+      'Example University', 'Example Certification']) expect(prompt).toContain(value);
+    if (providerId.startsWith('local_')) {
+      expect(options).toMatchObject({ referenceContext });
+      expect(options).not.toHaveProperty('conversationId');
+      expect(aiSettings.forWorkspace).toHaveBeenCalledWith(dto.workspace_id);
+    } else {
+      expect(options).toMatchObject({ conversationId: providerId });
+      expect(options).not.toHaveProperty('referenceContext');
+      expect(aiSettings.forWorkspace).toHaveBeenCalledWith(dto.workspace_id, 'openai');
+    }
+  });
+
+  it('uses the full-name fallback for legacy profiles without separate name components', async () => {
+    const { service, prisma } = setup();
+    prisma.resumeProfile.findUnique.mockResolvedValue({ ...profile, full_name: 'Jane May Candidate' });
+    prisma.resumeConversation.findUnique.mockResolvedValue({
+      id: 'conversation-1', user_id: user.id, workspace_id: dto.workspace_id, profile_id: profile.id,
+      openai_conversation_id: 'local_legacy', reference_context: 'Old context',
+    });
+    const questions = ['First name', 'Middle name', 'Last name'].map((question) => ({ question }));
+    jest.spyOn(service as any, 'openAi').mockResolvedValue(JSON.stringify({ answers: questions.map(({ question }) => ({ question, answer: 'Not provided' })) }));
+    await expect(service.answerQuestions(user, { conversation_id: 'conversation-1', questions })).resolves.toEqual({
+      answers: [
+        { question: 'First name', answer: 'Jane' }, { question: 'Middle name', answer: 'May' }, { question: 'Last name', answer: 'Candidate' },
+      ],
+    });
+  });
+
+  it('also fixes personal answers on the standalone profile generation endpoint', async () => {
+    const { service, prisma } = setup();
+    prisma.resumeProfile.findUnique.mockResolvedValue({ ...profile, full_name: '', first_name: 'Jane', last_name: 'Candidate' });
+    jest.spyOn(service as any, 'openAi').mockResolvedValue(JSON.stringify({ answers: [{ question: 'Name', answer: 'Not provided' }] }));
+    const result = await service.generateProfilePrompt(user, { ...dto, kind: 'applicationAnswers', questions: [{ question: 'Name' }] });
+    expect(JSON.parse((result as { tailored_resume: string }).tailored_resume)).toEqual({ answers: [{ question: 'Name', answer: 'Jane Candidate' }] });
+  });
+
+  it('does not replace employer or reference names, or invent missing personal values', async () => {
+    const { service, prisma } = setup();
+    prisma.resumeProfile.findUnique.mockResolvedValue({ ...profile, full_name: '' });
+    prisma.resumeConversation.findUnique.mockResolvedValue({
+      id: 'conversation-1', user_id: user.id, workspace_id: dto.workspace_id, profile_id: profile.id,
+      openai_conversation_id: 'conv_legacy',
+    });
+    const answers = [
+      { question: 'What is your name?', answer: 'Not provided' },
+      { question: "What is your employer's name?", answer: 'Acme' },
+      { question: 'Reference full name', answer: 'Pat Reference' },
+      { question: 'Name a project you led', answer: 'A migration project.' },
+    ];
+    jest.spyOn(service as any, 'openAi').mockResolvedValue(JSON.stringify({ answers }));
+    await expect(service.answerQuestions(user, {
+      conversation_id: 'conversation-1', questions: answers.map(({ question }) => ({ question })),
+    })).resolves.toEqual({ answers });
+  });
+
+  it('blocks answers for an unfinished local generation', async () => {
+    const { service, prisma } = setup();
+    prisma.resumeConversation.findUnique.mockResolvedValue({
+      id: 'conversation-1', user_id: user.id, workspace_id: dto.workspace_id, profile_id: profile.id,
+      openai_conversation_id: 'local_unfinished', reference_context: null,
+    });
+    const openAi = jest.spyOn(service as any, 'openAi');
+    await expect(service.answerQuestions(user, {
+      conversation_id: 'conversation-1', questions: [{ question: 'Name' }],
+    })).rejects.toThrow('Generate a resume');
+    expect(openAi).not.toHaveBeenCalled();
   });
 
   it('does not allow another user to use a conversation id', async () => {
