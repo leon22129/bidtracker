@@ -41,6 +41,32 @@ function fixture(extensionVersion) {
   state.profile ||= { id: 'p1', workspace_id: 'w1', name: 'Candidate', personal_info: personal, education: [], certifications: [],
     auto_download: false, generate_cover_letter: false, save_in_folder: false, use_company_name: false, template: 'classic', cover_letter_template: 'classic' };
   state.downloads ||= [];
+  window.WebSocket = class {
+    constructor(url) {
+      if (String(url) !== 'wss://workflow.test/api/resume/jobs/events') throw Error('Wrong notification URL');
+      queueMicrotask(() => this.onopen?.());
+    }
+    send(raw) {
+      const input = JSON.parse(raw);
+      if (input.token !== 'fixture-token' || input.version !== extensionVersion) throw Error('Missing socket authentication');
+      const job = state.generationJobs[input.job_id];
+      const send = (message) => this.onmessage?.({ data: JSON.stringify(message) });
+      send({ type: 'subscribed', job_id: input.job_id });
+      const complete = () => {
+        if (job.kind === 'answers') {
+          state.answers = [{ question: 'Why this role?', answer: 'It fits my experience.' }];
+          job.result = { answers: state.answers };
+        }
+        job.complete = true;
+        send({ type: 'status', job_id: input.job_id, status: 'completed' });
+      };
+      if (job.kind === 'answers' && state.holdAnswers) {
+        state.answersWaiting = true;
+        state.releaseAnswers = () => { state.holdAnswers = false; state.answersWaiting = false; complete(); };
+      } else setTimeout(complete, 100);
+    }
+    close() {}
+  };
   state.profileUpdates ||= [];
   const rawResume = (job) => ({ summary: `${job.company} summary`, skills: ['TypeScript'], workexperience: [], annual_salary: job.salary, hourly_rate: '$72.12', rate_in_jd: false,
     coverletter: `Dear Hiring Team,\n\nI would like to join ${job.company}. My engineering experience fits this role.\n\nSincerely,` });
@@ -134,7 +160,7 @@ function fixture(extensionVersion) {
         state.releaseAnswers = () => { state.holdAnswers = false; state.answersWaiting = false; };
         return json({ job_id: id, status: 'running' });
       }
-      if (job.polls++ === 0) return json({ job_id: id, status: 'running' });
+      if (!job.complete && job.polls++ === 0) return json({ job_id: id, status: 'running' });
       if (job.kind === 'answers') {
         state.answers = [{ question: 'Why this role?', answer: 'It fits my experience.' }];
         job.result = { answers: state.answers };
@@ -194,8 +220,9 @@ function fixture(extensionVersion) {
       if (result.exceptionDetails) throw Error(result.exceptionDetails.text + ': ' + result.exceptionDetails.exception?.description);
       return result.result.value;
     };
-    const waitFor = async (expression) => {
-      for (let attempt = 0; attempt < 200; attempt++) {
+    const waitFor = async (expression, timeoutMs = 20_000) => {
+      const deadline = Date.now() + timeoutMs;
+      while (Date.now() < deadline) {
         try { if (await evaluate(expression)) return; } catch {}
         await pause(100);
       }
@@ -295,7 +322,7 @@ function fixture(extensionVersion) {
     assert.equal(await evaluate("activeProfileWorkspace.querySelector('[data-job-source]').innerText.includes('https://jobs.example.test/123')"), true);
     await evaluate('workflowTest.browserTabId = 74');
     await click('Generate Resume');
-    await waitFor("activeProfileWorkspace.querySelector('textarea').value === '' && activeProfileWorkspace.innerText.includes('Prepared job: Acme')");
+    await waitFor("activeProfileWorkspace.querySelector('textarea').value === '' && activeProfileWorkspace.innerText.includes('Prepared job: Acme')", 60_000);
     assert.equal(await evaluate('workflowTest.tableRows'), 0);
     assert.deepEqual(await evaluate('workflowTest.generationUrls'), ['https://jobs.example.test/123']);
     assert.equal(await evaluate("Object.values(workflowTest.pending).find(entry => entry.applicationId === 'd1').tabId"), 75);
@@ -424,7 +451,7 @@ function fixture(extensionVersion) {
     await click('Questions');
     await evaluate('workflowTest.holdAnswers = true');
     await click('Generate Answers');
-    await waitFor('workflowTest.answersWaiting');
+    await waitFor('workflowTest.answersWaiting', 60_000);
     assert.equal(await evaluate("[...activeProfileWorkspace.querySelectorAll('button')].find(el=>el.textContent.includes('Load Last Job')).disabled"), true);
     assert.equal(await evaluate("activeProfileWorkspace.querySelector('[data-submission-screenshot] button').disabled"), true);
     // The loading overlay blocks the mouse but does not prevent keyboard navigation.
@@ -466,7 +493,7 @@ function fixture(extensionVersion) {
     await waitFor("activeProfileWorkspace.querySelector('[data-job-source]').innerText.includes('https://jobs.example.test/456') && ![...activeProfileWorkspace.querySelectorAll('button')].find(el=>el.textContent.includes('Generate Resume')).disabled");
     await evaluate('workflowTest.browserTabId = 75');
     await click('Generate Resume');
-    await waitFor("activeProfileWorkspace.querySelector('textarea').value === '' && activeProfileWorkspace.innerText.includes('Prepared job: Beta')");
+    await waitFor("activeProfileWorkspace.querySelector('textarea').value === '' && activeProfileWorkspace.innerText.includes('Prepared job: Beta')", 60_000);
     assert.equal(await evaluate("activeProfileWorkspace.innerText.includes('$180,000')"), true);
     assert.deepEqual(await evaluate('workflowTest.generationUrls'), ['https://jobs.example.test/123', 'https://jobs.example.test/456']);
     assert.equal(await evaluate("document.querySelector('select[aria-label=\"Application to screenshot\"]')"), null);
@@ -587,7 +614,7 @@ function fixture(extensionVersion) {
     console.log('PASS: HTTP 426 displays the configured download button on login, during a session, and after reload; invalid links are rejected; existing login tokens are preserved');
     console.log('PASS: linked source URL stays with pasted JD across browser-tab switches and reload; changed/closed sources blocked before backend calls; reopened source used for capture; independent profile tabs, draft submission, retries, and success toast');
     console.log('PASS: generated and restored resumes keep the open-job button and disable linking; a new JD requires its own linked page');
-    console.log('PASS: a pending answer request blocks resume generation, job restoration, relinking, and submission until the answers are saved');
+    console.log('PASS: WebSocket completion fetches the saved result; a pending answer request blocks resume generation, job restoration, relinking, and submission until the answers are saved');
   } finally {
     if (page) page.close();
     if (browser) { await browser.send('Browser.close').catch(() => {}); browser.close(); }

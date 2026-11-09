@@ -198,19 +198,41 @@ Existing remote OpenAI runs with saved reference context also use local context.
 that context retain their OpenAI conversation path and require the original project's key. Provider
 cleanup still requires the owning admin's OpenAI key. Local context follows the same retention period.
 
-Resume Builder submits generation to `/api/resume/jobs/application`, `/profile`, or `/answers` and
-polls `/api/resume/jobs/:id`. These return short responses while the backend finishes provider work,
-avoiding Cloudflare's read timeout on a single long HTTP request. Apply the
-`20261109010000_add_generation_jobs` migration and rebuild/reload the Resume Builder extension as
-well as restarting the API. Older synchronous endpoints remain available for compatibility.
-Jobs are stored in PostgreSQL, limited to four concurrent jobs per API process and three pending
+Resume Builder submits generation to `/api/resume/jobs/application`, `/profile`, or `/answers`,
+then subscribes to `/api/resume/jobs/events` over WebSocket. The backend sends completion/failure
+notifications, and the extension fetches the saved result once through `/api/resume/jobs/:id`.
+There is no regular status polling while the socket is healthy. It reconnects after a dropped
+connection; if WebSockets remain unavailable, fallback polling starts after 50 seconds from
+submission and continues every 3 seconds. Neither transport starts another paid generation.
+The socket authenticates with the existing JWT and extension version in its first message, checks
+job ownership, and carries only job IDs/statuses. Tokens are never put in WebSocket URLs. Results
+use the normal authenticated HTTP endpoint so current workspace access is checked again.
+
+Apply `20261109010000_add_generation_jobs` and `20261109020000_notify_generation_job_status`, then
+rebuild/reload the Resume Builder extension and restart both API and frontend. PostgreSQL
+`LISTEN/NOTIFY` distributes committed status changes across API processes using one dedicated
+connection per process. The database connection must support session-level `LISTEN` (not a
+transaction-pooling endpoint). Missing notification migrations or listener failures automatically
+disable the socket path and let clients fall back to polling. Heartbeats keep sockets alive and
+detect broken connections. Older synchronous endpoints remain available for compatibility.
+
+Use `npm run start` in `frontend` (or `node server.cjs -p 3000`) so the same public hostname forwards
+WebSocket upgrades to the backend as well as normal HTTP. `npm run dev` supports the same path and
+Next's development HMR. The built-in `next start` command does not include this WebSocket proxy.
+Reverse proxies in front of this server must pass WebSocket upgrades for `/api/resume/jobs/events`.
+Cloudflare Tunnel supports WebSockets; Quick Tunnel's SSE restriction does not require a different
+provider request or removal of the HTTP timeout.
+Jobs are stored in PostgreSQL, limited to 30 concurrent jobs per API process and three pending
 jobs per user. Submission retries reuse `X-Generation-Id` so a lost response does not start another
 paid generation. Results are retained for 24 hours; prepared resumes and answers retain their usual
 storage lifecycle. A crashed worker's running jobs fail after their lease expires rather than being
 automatically replayed. Queued jobs can continue after restart. DeepSeek requests stream internally
 with a 15-minute timeout per attempt, allowing for the provider's documented queue and inference time.
-This timeout does not change Cloudflare's edge limits. Quick Tunnels cannot disable those limits;
-background jobs and polling work without an Enterprise plan or browser SSE support.
+This timeout does not change Cloudflare's edge limits. Background jobs with WebSocket notifications
+and polling fallback work without an Enterprise plan or browser SSE support. Run
+`npm run test:generation-notifications` in `backend` after building backend/frontend to check the
+actual migration, multi-process notifications, and production WebSocket proxy with synthetic data
+in an isolated PostgreSQL schema; no paid AI calls are made.
 
 All users can optionally save their **Slack member ID** in Account. Milestone notifications use the
 creating admin's webhook and mention the bidder's own ID (`<@U…>`), so Slack resolves their display
@@ -693,7 +715,7 @@ npm ci
 npm run build
 ```
 
-Start `backend/dist/main.js` on port 3001 and `next start` on port 3000 with your process manager.
+Start `backend/dist/main.js` on port 3001 and `frontend/server.cjs` on port 3000 with your process manager.
 Set `BACKEND_URL=http://127.0.0.1:3001` for the frontend service. The browser talks to the frontend,
 which proxies `/api/*` to the backend. The proxy is a Node route handler at
 [frontend/src/app/api/[...path]/route.ts](frontend/src/app/api/%5B...path%5D/route.ts) rather than a

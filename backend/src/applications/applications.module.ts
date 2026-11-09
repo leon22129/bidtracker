@@ -12,9 +12,13 @@ import { ApplicationDraftService } from './application-draft.service';
 import { AiSettingsModule } from '../ai/ai-settings.module';
 import { GenerationJobsService } from '../resume/generation-jobs.service';
 import { GenerationJobsController } from '../resume/generation-jobs.controller';
+import { AuthModule } from '../auth/auth.module';
+import { ExtensionReleaseModule } from '../extension-release/extension-release.module';
+import { GenerationJobNotificationsService } from '../resume/generation-job-notifications.service';
+import { GenerationSocketService } from '../resume/generation-socket.service';
 
 @Module({
-  imports: [AiSettingsModule],
+  imports: [AiSettingsModule, AuthModule, ExtensionReleaseModule],
   controllers: [ApplicationsController, GenerationJobsController],
   providers: [
     ApplicationsService, NumberingService, DuplicateService, BannedUrlService,
@@ -22,6 +26,8 @@ import { GenerationJobsController } from '../resume/generation-jobs.controller';
     ApplicationScreenshotCleanupService,
     ApplicationDraftService,
     GenerationJobsService,
+    GenerationJobNotificationsService,
+    GenerationSocketService,
   ],
   exports: [ApplicationsService, NumberingService, DuplicateService, BannedUrlService, ApplicationGenerationService],
 })

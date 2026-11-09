@@ -1,5 +1,6 @@
 'use client';
 
+import { useEffect } from 'react';
 import type { ResumeArtifact } from '@/lib/types';
 
 export function ApplicationAnswersModal({
@@ -9,6 +10,17 @@ export function ApplicationAnswersModal({
   artifact: ResumeArtifact;
   onClose: () => void;
 }) {
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        onClose();
+      }
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [onClose]);
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"

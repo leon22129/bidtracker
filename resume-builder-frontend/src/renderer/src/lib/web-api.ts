@@ -136,6 +136,8 @@ const webAiProfiles: AiProfilesApi = {
   async generate(input: GenerateResumeInput): Promise<GenerateResumeResult> {
     const conversationAnswers = input.kind === "applicationAnswers" && Boolean(input.conversationId)
     const applicationGeneration = !conversationAnswers && Boolean(input.url && input.workspaceId)
+    const apiBaseUrl = await getApiBaseUrl()
+    const token = await authStorage.getToken() || ""
     const path = conversationAnswers
       ? "/resume/jobs/answers"
       : applicationGeneration
@@ -151,7 +153,7 @@ const webAiProfiles: AiProfilesApi = {
             kind: input.kind,
             ...(!applicationGeneration ? { questions: input.questions } : {}),
             resume: input.resume,
-          }, `${await getApiBaseUrl()}\n${await authStorage.getToken()}`) as { tailored_resume?: string; full_name?: string; conversation_id?: string; job_description?: string; error?: string; message?: string; eligible?: boolean; reason?: string; banned?: boolean; resume?: unknown; answers?: unknown; application?: GenerateResumeResult["application"]; draft?: GenerateResumeResult["draft"]; duplicate?: boolean; duplicate_type?: string | null; cooldown_days?: number; company_name?: string; existing_application?: GenerateResumeResult["existingApplication"] } | null
+          }, `${apiBaseUrl}\n${token}`, { apiBaseUrl, token, version: __APP_VERSION__ }) as { tailored_resume?: string; full_name?: string; conversation_id?: string; job_description?: string; error?: string; message?: string; eligible?: boolean; reason?: string; banned?: boolean; resume?: unknown; answers?: unknown; application?: GenerateResumeResult["application"]; draft?: GenerateResumeResult["draft"]; duplicate?: boolean; duplicate_type?: string | null; cooldown_days?: number; company_name?: string; existing_application?: GenerateResumeResult["existingApplication"] } | null
     if (conversationAnswers) {
       if (!Array.isArray(data?.answers)) throw new Error("The AI provider returned an empty response.")
       return { tailored_resume: JSON.stringify({ answers: data.answers }) }

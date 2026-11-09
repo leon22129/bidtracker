@@ -118,6 +118,34 @@ describe('background generation jobs', () => {
     await expect(service.submit(user, 'application', dto)).rejects.toThrow('wait');
   });
 
+  it('runs 30 jobs across users and starts the next queued job only when a slot is free', async () => {
+    const finish: Array<() => void> = [];
+    generation.generate.mockImplementation(() => new Promise((resolve) => {
+      finish.push(() => resolve({ eligible: true }));
+    }));
+    prisma.user.findUnique.mockImplementation(async ({ where }) => ({ ...user, id: where.id, is_active: true }));
+    for (let index = 0; index < 31; index++) {
+      await service.submit({ ...user, id: `user-${Math.floor(index / 3)}` }, 'application', dto);
+    }
+    await service.dispatch();
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(generation.generate).toHaveBeenCalledTimes(30);
+    expect([...rows.values()].filter((row) => row.status === 'queued')).toHaveLength(1);
+    await service.dispatch();
+    expect(generation.generate).toHaveBeenCalledTimes(30);
+
+    const firstTask = [...(service as any).active.values()][0];
+    finish[0]();
+    await firstTask;
+    await service.dispatch();
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(generation.generate).toHaveBeenCalledTimes(31);
+    expect((service as any).active.size).toBe(30);
+    expect([...rows.values()].filter((row) => row.status === 'queued')).toHaveLength(0);
+    finish.slice(1).forEach((complete) => complete());
+    await settle();
+  });
+
   it('preserves provider error messages while hiding unexpected internal errors', async () => {
     generation.generate.mockRejectedValueOnce(new BadGatewayException('DeepSeek is temporarily unavailable (HTTP 524).'));
     const first = await service.submit(user, 'application', dto);

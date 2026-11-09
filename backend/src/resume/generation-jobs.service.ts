@@ -17,7 +17,7 @@ type JobKind = 'application' | 'profile' | 'answers';
 type JobInput = GenerateApplicationDto | GenerateProfilePromptDto | AnswerApplicationQuestionsDto;
 const LEASE_MS = 120_000;
 const RETENTION_MS = 24 * 60 * 60 * 1000;
-const MAX_CONCURRENT = 4;
+const MAX_CONCURRENT = 30;
 
 @Injectable()
 export class GenerationJobsService implements OnModuleDestroy {
@@ -59,10 +59,22 @@ export class GenerationJobsService implements OnModuleDestroy {
   }
 
   async get(user: AuthUser, id: string) {
-    const job = await this.prisma.generationJob.findUnique({ where: { id } });
+    const job = await this.prisma.generationJob.findUnique({ where: { id }, select: {
+      id: true, user_id: true, workspace_id: true, status: true,
+      result_json: true, error_message: true, error_status: true,
+    } });
     if (!job || job.user_id !== user.id) throw new NotFoundException('Generation job not found');
     await this.access.assertCanView(user, job.workspace_id);
     return this.view(job);
+  }
+
+  async getStatus(user: AuthUser, id: string) {
+    const job = await this.prisma.generationJob.findUnique({ where: { id }, select: {
+      id: true, user_id: true, workspace_id: true, status: true,
+    } });
+    if (!job || job.user_id !== user.id) throw new NotFoundException('Generation job not found');
+    await this.access.assertCanView(user, job.workspace_id);
+    return { job_id: job.id, status: job.status };
   }
 
   private async existing(user: AuthUser, job: GenerationJob, hash: string) {
@@ -72,7 +84,7 @@ export class GenerationJobsService implements OnModuleDestroy {
     return this.view(job);
   }
 
-  private view(job: GenerationJob) {
+  private view(job: Pick<GenerationJob, 'id' | 'status' | 'result_json' | 'error_message' | 'error_status'>) {
     return {
       job_id: job.id,
       status: job.status,

@@ -159,7 +159,7 @@ function BulkSelect({
   return (
     <select
       className="rounded border border-gray-600 bg-gray-900 px-1.5 py-1 text-2xs text-white
-        disabled:opacity-50"
+        [color-scheme:dark] disabled:opacity-50"
       value=""
       disabled={disabled}
       aria-label={`Set ${label} for selected rows`}
@@ -169,9 +169,9 @@ function BulkSelect({
         if (value) onPick(value);
       }}
     >
-      <option value="">{label}…</option>
+      <option value="" className="bg-gray-900 text-white">{label}…</option>
       {options.map((o) => (
-        <option key={o} value={o} className="text-gray-900 dark:text-gray-100">
+        <option key={o} value={o} className="bg-gray-900 text-white">
           {o}
         </option>
       ))}
