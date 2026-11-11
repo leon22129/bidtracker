@@ -10,7 +10,6 @@ export default function ExtensionReleasePage() {
   const { user } = useAuth();
   const toast = useToast();
   const [release, setRelease] = useState<ExtensionRelease | null>(null);
-  const [version, setVersion] = useState('');
   const [downloadUrl, setDownloadUrl] = useState('');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -22,7 +21,6 @@ export default function ExtensionReleasePage() {
     void api.extensionRelease().then((result) => {
       if (cancelled) return;
       setRelease(result);
-      setVersion(result.latest_version);
       setDownloadUrl(result.download_url ?? '');
     }).catch((cause) => {
       if (!cancelled) setError(cause instanceof Error ? cause.message : 'Could not load extension settings.');
@@ -39,11 +37,10 @@ export default function ExtensionReleasePage() {
     setSaving(true);
     setError('');
     try {
-      const result = await api.updateExtensionRelease({ latest_version: version.trim(), download_url: downloadUrl.trim() });
+      const result = await api.updateExtensionRelease({ download_url: downloadUrl.trim() });
       setRelease(result);
-      setVersion(result.latest_version);
       setDownloadUrl(result.download_url ?? '');
-      toast.success('Extension release saved. Older versions will now show the update alert.');
+      toast.success('Extension download link saved.');
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Could not save extension settings.');
     } finally {
@@ -55,15 +52,15 @@ export default function ExtensionReleasePage() {
     <main className="mx-auto max-w-2xl px-4 py-6">
       <h1 className="text-lg font-semibold">Extension updates</h1>
       <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-        Publish the latest Resume Builder version and its download link. Users with an older version must update before signing in or continuing to use the extension.
+        Manage the Resume Builder download link. Users with an older version must update before signing in or continuing to use the extension.
       </p>
       {error && <p role="alert" className="mt-4 rounded-md border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-950 p-3 text-sm text-red-800 dark:text-red-200">{error}</p>}
       {loading ? <p className="mt-5 text-sm text-gray-500 dark:text-gray-400">Loading extension settings...</p> : release && (
         <form className="card mt-5 space-y-5 p-5" onSubmit={save}>
           <div>
-            <label className="mb-1 block text-sm font-medium" htmlFor="extension-version">Latest version</label>
-            <input id="extension-version" className="input w-full" value={version} onChange={(event) => setVersion(event.target.value)} required maxLength={23} placeholder="0.9.4" disabled={saving} aria-describedby="extension-version-help" />
-            <p id="extension-version-help" className="mt-1 text-xs text-gray-500 dark:text-gray-400">Use the version shown in the extension, such as 0.9.4. This becomes the minimum required version.</p>
+            <label className="mb-1 block text-sm font-medium" htmlFor="extension-version">Required version</label>
+            <input id="extension-version" className="input w-full" value={release.latest_version} readOnly aria-describedby="extension-version-help" />
+            <p id="extension-version-help" className="mt-1 text-xs text-gray-500 dark:text-gray-400">Updated automatically with each server release. Keep the download link below pointed at this version or newer.</p>
           </div>
           <div>
             <label className="mb-1 block text-sm font-medium" htmlFor="extension-download">Download URL</label>
@@ -71,7 +68,7 @@ export default function ExtensionReleasePage() {
             <p id="extension-download-help" className="mt-1 text-xs text-gray-500 dark:text-gray-400">The download button in the update alert opens this link. Make sure users can access it before saving.</p>
           </div>
           <div className="flex flex-wrap items-center gap-3">
-            <button className="btn-primary" type="submit" disabled={saving || !version.trim() || !downloadUrl.trim()}>{saving ? 'Saving...' : 'Save extension release'}</button>
+            <button className="btn-primary" type="submit" disabled={saving || !downloadUrl.trim()}>{saving ? 'Saving...' : 'Save download link'}</button>
             {release.download_url && <a className="text-sm text-blue-700 dark:text-blue-300 hover:underline" href={release.download_url} target="_blank" rel="noopener noreferrer">Open saved download link</a>}
           </div>
         </form>

@@ -109,7 +109,7 @@ function qs(params: Record<string, unknown>): string {
 
 export const api = {
   extensionRelease: () => request<import('./types').ExtensionRelease>('/extension-release'),
-  updateExtensionRelease: (data: { latest_version: string; download_url: string }) =>
+  updateExtensionRelease: (data: { download_url: string }) =>
     request<import('./types').ExtensionRelease>('/extension-release', { method: 'PATCH', body: JSON.stringify(data) }),
   aiSettings: () => request<import('./ai-types').AiSettings>('/ai-settings'),
   updateAiSettings: (data: {

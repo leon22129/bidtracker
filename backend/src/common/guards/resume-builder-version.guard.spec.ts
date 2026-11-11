@@ -28,19 +28,13 @@ function context(headers: Record<string, string | string[] | undefined> = {}, re
 }
 
 describe('ResumeBuilderVersionGuard', () => {
-  const previousMinimum = process.env.RESUME_BUILDER_MIN_VERSION;
   let guard: ResumeBuilderVersionGuard;
   const release = { get: jest.fn() };
 
   beforeEach(() => {
-    delete process.env.RESUME_BUILDER_MIN_VERSION;
     release.get.mockReset();
     release.get.mockResolvedValue({ latest_version: '0.9.3', download_url: 'https://downloads.example.com/extension.zip' });
     guard = new ResumeBuilderVersionGuard(new Reflector(), release as unknown as ExtensionReleaseService);
-  });
-  afterAll(() => {
-    if (previousMinimum === undefined) delete process.env.RESUME_BUILDER_MIN_VERSION;
-    else process.env.RESUME_BUILDER_MIN_VERSION = previousMinimum;
   });
 
   it.each(['0.9.3', '0.9.3.0', '0.9.3.1', '0.9.10', '0.10.0', '1.0.0'])(
@@ -82,7 +76,7 @@ describe('ResumeBuilderVersionGuard', () => {
     await expect(guard.canActivate(context(headers, false))).rejects.toThrow(HttpException);
   });
 
-  it('honors a changed release on the next request without a restart', async () => {
+  it('compares against the required server version and returns its download link', async () => {
     await expect(guard.canActivate(context({ 'x-resume-builder-version': '0.9.10' }))).resolves.toBe(true);
     release.get.mockResolvedValue({ latest_version: '0.10.0', download_url: 'https://downloads.example.com/new.zip' });
     await expect(guard.canActivate(context({ 'x-resume-builder-version': '0.9.10' }))).rejects.toMatchObject({
@@ -95,11 +89,9 @@ describe('ResumeBuilderVersionGuard', () => {
 describe('Resume Builder version enforcement over HTTP', () => {
   let app: INestApplication;
   let baseUrl: string;
-  const previousMinimum = process.env.RESUME_BUILDER_MIN_VERSION;
   const generate = jest.fn(() => ({ success: true }));
 
   beforeAll(async () => {
-    process.env.RESUME_BUILDER_MIN_VERSION = '0.9.3';
     const module = await Test.createTestingModule({
       controllers: [ResumeController, ApplicationsController, WorkspacesController],
       providers: [
@@ -121,8 +113,6 @@ describe('Resume Builder version enforcement over HTTP', () => {
 
   afterAll(async () => {
     await app?.close();
-    if (previousMinimum === undefined) delete process.env.RESUME_BUILDER_MIN_VERSION;
-    else process.env.RESUME_BUILDER_MIN_VERSION = previousMinimum;
   });
 
   it.each([

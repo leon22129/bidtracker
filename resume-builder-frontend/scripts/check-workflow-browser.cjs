@@ -295,6 +295,21 @@ function fixture(extensionVersion) {
     assert.deepEqual(await evaluate("chrome.runtime.sendMessage({ type: 'GET_SCREENSHOT_APPLICATIONS' }).then(result => result.items)"), []);
     assert.equal(await evaluate("document.querySelector('select[aria-label=\"Application to screenshot\"]')"), null);
     const firstTabId = await evaluate("activeProfileWorkspace.dataset.profileTabId");
+    const savedTab = (tabId) => evaluate(`JSON.parse(localStorage.getItem(Object.keys(localStorage).find(key => key.endsWith(':profile-tab:' + ${JSON.stringify(tabId)}))))`);
+    const assertCompletedJobCleared = async (tabId, nextJob = { jobDescription: '', jobSource: null }) => {
+      const saved = await savedTab(tabId);
+      assert.equal(saved.jobDescription, nextJob.jobDescription, 'Submission clears only the completed JD');
+      assert.deepEqual(saved.jobSource, nextJob.jobSource, 'Submission unlinks only the completed job page');
+      assert.equal(saved.preparedJob, null);
+      assert.equal(saved.resumeData, null);
+      assert.equal(saved.conversationId, null);
+      assert.equal(saved.coverLetterText, null);
+      assert.equal(saved.applicationQuestions, '');
+      assert.deepEqual(saved.scannedQuestions, []);
+      assert.deepEqual(saved.applicationAnswers, []);
+      assert.equal(saved.answersReadOnly, false);
+      assert.equal(saved.workflowTab, 'resume');
+    };
     const firstJd = await evaluate("chrome.tabs.sendMessage(73, {}).then(context => context.jobDescription)");
     await evaluate("activeProfileWorkspace.querySelector('textarea').focus()");
     await page.send('Input.insertText', { text: firstJd });
@@ -322,7 +337,10 @@ function fixture(extensionVersion) {
     assert.equal(await evaluate("activeProfileWorkspace.querySelector('[data-job-source]').innerText.includes('https://jobs.example.test/123')"), true);
     await evaluate('workflowTest.browserTabId = 74');
     await click('Generate Resume');
-    await waitFor("activeProfileWorkspace.querySelector('textarea').value === '' && activeProfileWorkspace.innerText.includes('Prepared job: Acme')", 60_000);
+    await waitFor("activeProfileWorkspace.innerText.includes('Prepared job: Acme') && ![...activeProfileWorkspace.querySelectorAll('button')].find(el=>el.textContent.includes('Load Last Job')).disabled", 60_000);
+    assert.equal(await evaluate("activeProfileWorkspace.querySelector('textarea').value"), firstJd, 'Generation keeps the original JD in the editor');
+    assert.equal((await savedTab(firstTabId)).jobDescription, firstJd);
+    assert.equal(await evaluate("[...activeProfileWorkspace.querySelectorAll('button')].find(el=>el.textContent.includes('Generate Resume')).disabled"), true, 'The prepared job does not need another generation');
     assert.equal(await evaluate('workflowTest.tableRows'), 0);
     assert.deepEqual(await evaluate('workflowTest.generationUrls'), ['https://jobs.example.test/123']);
     assert.equal(await evaluate("Object.values(workflowTest.pending).find(entry => entry.applicationId === 'd1').tabId"), 75);
@@ -338,6 +356,11 @@ function fixture(extensionVersion) {
         { text: 'Open linked job', disabled: false, visible: true },
       ], 'A generated resume keeps its open button and disables the visible link button');
     };
+    await assertPreparedJobLinks();
+    await evaluate('workflowTest.browserTabId = 73');
+    await reloadPage();
+    await waitFor("activeProfileWorkspace?.innerText.includes('Prepared job: Acme')");
+    assert.equal(await evaluate("activeProfileWorkspace.querySelector('textarea').value"), firstJd, 'The pending JD survives reopening the panel');
     await assertPreparedJobLinks();
     await click('Open linked job');
     await waitFor('workflowTest.browserTabId === 75');
@@ -440,8 +463,8 @@ function fixture(extensionVersion) {
     await waitFor("activeProfileWorkspace.querySelector('textarea').value === 'Why this role?'");
     // Keep a valid JD ready so the generation button is blocked by the pending answer request.
     await click('Resume');
-    await evaluate("activeProfileWorkspace.querySelector('textarea').focus(); workflowTest.browserTabId = 75");
-    await page.send('Input.insertText', { text: firstJd });
+    await evaluate("activeProfileWorkspace.querySelector('textarea').select(); workflowTest.browserTabId = 75");
+    await page.send('Input.insertText', { text: firstJd + '\nAdditional requirement: SQL experience.' });
     assert.equal(await evaluate("[...activeProfileWorkspace.querySelectorAll('button')].find(el=>el.textContent.includes('Link current page')).disabled"), false, 'A new JD enables linking again');
     assert.equal(await evaluate("[...activeProfileWorkspace.querySelectorAll('button')].find(el=>el.textContent.includes('Generate Resume')).disabled"), true, 'A new JD must be linked before generation');
     await click('Link current page');
@@ -473,7 +496,7 @@ function fixture(extensionVersion) {
     await click('Load Last Job');
     await waitFor("workflowTest.requests.some(path=>path.startsWith('/applications/drafts/latest')) && document.body.innerText.includes('Last application loaded')");
     await click('Resume');
-    await waitFor("activeProfileWorkspace.querySelector('textarea')?.value === ''");
+    await waitFor("activeProfileWorkspace.querySelector('textarea')?.value.includes('Expected Rate')");
     await assertPreparedJobLinks();
 
     // A second tab for the same profile starts empty and prepares a different job independently.
@@ -493,7 +516,8 @@ function fixture(extensionVersion) {
     await waitFor("activeProfileWorkspace.querySelector('[data-job-source]').innerText.includes('https://jobs.example.test/456') && ![...activeProfileWorkspace.querySelectorAll('button')].find(el=>el.textContent.includes('Generate Resume')).disabled");
     await evaluate('workflowTest.browserTabId = 75');
     await click('Generate Resume');
-    await waitFor("activeProfileWorkspace.querySelector('textarea').value === '' && activeProfileWorkspace.innerText.includes('Prepared job: Beta')", 60_000);
+    await waitFor("activeProfileWorkspace.innerText.includes('Prepared job: Beta') && ![...activeProfileWorkspace.querySelectorAll('button')].find(el=>el.textContent.includes('Load Last Job')).disabled", 60_000);
+    assert.equal(await evaluate("activeProfileWorkspace.querySelector('textarea').value"), pastedJd);
     assert.equal(await evaluate("activeProfileWorkspace.innerText.includes('$180,000')"), true);
     assert.deepEqual(await evaluate('workflowTest.generationUrls'), ['https://jobs.example.test/123', 'https://jobs.example.test/456']);
     assert.equal(await evaluate("document.querySelector('select[aria-label=\"Application to screenshot\"]')"), null);
@@ -513,23 +537,29 @@ function fixture(extensionVersion) {
     await reloadPage();
     await waitFor("document.querySelectorAll('[data-profile-tab-id]').length === 2 && activeProfileWorkspace.innerText.includes('Prepared job: Acme')");
     assert.equal(await evaluate('activeProfileWorkspace.dataset.profileTabId'), firstTabId);
-    assert.equal(await evaluate("activeProfileWorkspace.querySelector('textarea').value"), '');
+    const restoredJd = await evaluate("activeProfileWorkspace.querySelector('textarea').value");
+    assert.match(restoredJd, /Company: Acme/);
+    assert.match(restoredJd, /Expected Rate/);
     await assertPreparedJobLinks();
     await click('Questions');
     await waitFor("[...activeProfileWorkspace.querySelectorAll('textarea')].some(el => el.value === 'It fits my experience.')");
     await click('Resume');
     assert.equal(await evaluate("workflowTest.requests.filter(path => path.startsWith('/applications/drafts/latest')).length"), 1);
 
+    const beforeFailedUpload = await savedTab(firstTabId);
     await evaluate("activeProfileWorkspace.querySelector('input[type=checkbox]').click()");
     await waitFor("!activeProfileWorkspace.querySelector('[data-submission-screenshot] button').disabled");
     await click('Take screenshot');
     await waitFor("activeProfileWorkspace.querySelector('[data-submission-screenshot]').innerText.includes('Upload failed. Please retry.')");
     assert.equal(await evaluate('workflowTest.tableRows'), 0);
     assert.equal(await evaluate("Object.values(workflowTest.pending).some(entry => entry.applicationId === 'd1') && !activeProfileWorkspace.querySelector('[data-submission-screenshot] button').disabled"), true);
+    assert.deepEqual(await savedTab(firstTabId), beforeFailedUpload, 'Failed screenshot upload preserves the complete job for retry');
+    assert.equal(await evaluate("activeProfileWorkspace.querySelector('textarea').value"), restoredJd);
     await click('Take screenshot');
     await waitFor('workflowTest.uploadWaiting');
     assert.equal(await evaluate('workflowTest.tableRows'), 0);
     assert.equal(await evaluate("Object.values(workflowTest.pending).some(entry => entry.applicationId === 'd1')"), true);
+    assert.deepEqual(await savedTab(firstTabId), beforeFailedUpload, 'The workspace stays intact while the upload is in progress');
     assert.equal(await evaluate("[...activeProfileWorkspace.querySelectorAll('button')].find(el=>el.textContent.includes('Generate Resume')).disabled"), true);
     await click('Questions');
     await waitFor("[...activeProfileWorkspace.querySelectorAll('button')].some(el=>el.textContent.includes('Generate Answers'))");
@@ -538,9 +568,12 @@ function fixture(extensionVersion) {
     await click('Candidate - 2');
     await waitFor(`activeProfileWorkspace.dataset.profileTabId === ${JSON.stringify(secondTabId)}`);
     assert.equal(await evaluate("activeProfileWorkspace.innerText.includes('Prepared job: Beta') && !activeProfileWorkspace.querySelector('input[type=checkbox]').checked"), true);
+    const secondTabBeforeSubmission = await savedTab(secondTabId);
     await evaluate('workflowTest.releaseUpload()');
     await waitFor("workflowTest.tableRows === 1 && document.body.innerText.includes('Added to the application table') && !Object.values(workflowTest.pending).some(entry => entry.applicationId === 'd1')");
     assert.equal(await evaluate("activeProfileWorkspace.innerText.includes('Prepared job: Beta')"), true);
+    await assertCompletedJobCleared(firstTabId);
+    assert.deepEqual(await savedTab(secondTabId), secondTabBeforeSubmission, 'Saving one profile tab leaves the other profile tab intact');
     assert.equal(await evaluate("activeProfileWorkspace.querySelector('[data-submission-screenshot]').innerText.includes('Added to the application table')"), false);
     assert.equal(await evaluate("[...document.querySelectorAll('[data-state=\"open\"]')].some(el => el.innerText?.includes('Added to the application table. Screenshot saved for 8 days.'))"), true);
     assert.equal(await evaluate("activeProfileWorkspace.querySelector('[data-submission-screenshot] button').disabled"), true);
@@ -550,13 +583,28 @@ function fixture(extensionVersion) {
     assert.deepEqual(await evaluate('workflowTest.captures'), [75, 75]);
     await click('Candidate');
     await waitFor("activeProfileWorkspace.querySelector('[data-submission-screenshot] button').disabled && !activeProfileWorkspace.querySelector('[data-submission-screenshot] input')");
+    assert.equal(await evaluate("activeProfileWorkspace.querySelector('textarea').value"), '');
+    assert.equal(await evaluate("activeProfileWorkspace.innerText.includes('Prepared job:')"), false);
+    assert.equal(await evaluate("[...activeProfileWorkspace.querySelectorAll('button')].some(el=>el.textContent.includes('Open linked job'))"), false);
+    assert.equal(await evaluate("[...activeProfileWorkspace.querySelectorAll('button')].find(el=>el.textContent.includes('Link current page')).disabled"), false);
+    assert.equal(await evaluate("[...activeProfileWorkspace.querySelectorAll('button')].find(el=>el.textContent.includes('Preview Resume')).disabled"), true);
     await evaluate('workflowTest.browserTabId = 73');
     await reloadPage();
-    await waitFor("document.querySelectorAll('[data-profile-tab-id]').length === 2 && activeProfileWorkspace.innerText.includes('Prepared job: Acme')");
+    await waitFor("document.querySelectorAll('[data-profile-tab-id]').length === 2 && Boolean(activeProfileWorkspace.querySelector('textarea'))");
+    await assertCompletedJobCleared(firstTabId);
+    assert.equal(await evaluate("activeProfileWorkspace.innerText.includes('Prepared job:')"), false, 'Completed work stays cleared after reload');
     assert.equal(await evaluate("activeProfileWorkspace.querySelector('[data-submission-screenshot] button').disabled"), true);
     assert.equal(await evaluate("activeProfileWorkspace.querySelector('[data-submission-screenshot] input')"), null);
     await click('Candidate - 2');
     await waitFor("activeProfileWorkspace.querySelector('[data-submission-screenshot] input') && activeProfileWorkspace.innerText.includes('Prepared job: Beta')");
+    assert.equal(await evaluate("activeProfileWorkspace.querySelector('textarea').value"), pastedJd);
+    // Starting the next JD must not lose that work when the prepared job's screenshot is saved.
+    await evaluate("activeProfileWorkspace.querySelector('textarea').select(); workflowTest.browserTabId = 73");
+    await page.send('Input.insertText', { text: firstJd });
+    await click('Link current page');
+    await waitFor("![...activeProfileWorkspace.querySelectorAll('button')].find(el=>el.textContent.includes('Generate Resume')).disabled");
+    const nextJob = { jobDescription: firstJd, jobSource: (await savedTab(secondTabId)).jobSource };
+    assert.equal(nextJob.jobSource.url, 'https://jobs.example.test/123');
     await evaluate(`(async () => {
       const stored = await chrome.storage.local.get('resume_ai_pending_screenshots');
       const entry = Object.values(stored.resume_ai_pending_screenshots).find(entry => entry.applicationId === 'd2');
@@ -572,11 +620,18 @@ function fixture(extensionVersion) {
     await waitFor('workflowTest.tableRows === 2 && Object.values(workflowTest.pending).length === 0');
     await waitFor("activeProfileWorkspace.querySelector('[data-submission-screenshot] button').disabled");
     await waitFor("document.body.innerText.includes('Screenshot saved and application added. Some form answers could not be recorded.')");
+    await assertCompletedJobCleared(secondTabId, nextJob);
+    assert.equal(await evaluate("activeProfileWorkspace.querySelector('textarea').value"), firstJd);
+    assert.equal(await evaluate("[...activeProfileWorkspace.querySelectorAll('button')].find(el=>el.textContent.includes('Generate Resume')).disabled"), false, 'The next linked JD is ready to generate');
     assert.deepEqual(await evaluate('workflowTest.added'), ['d1', 'd2']);
     assert.deepEqual(await evaluate('workflowTest.captures'), [75, 75, 74]);
     assert.equal(await evaluate("workflowTest.requests.includes('/applications/drafts/d2/form-capture')"), true);
     assert.equal(await evaluate("workflowTest.requests.includes('/applications/generated')"), false);
     assert.deepEqual(await evaluate('workflowTest.errors'), []);
+    await evaluate('workflowTest.browserTabId = 73');
+    await reloadPage();
+    await waitFor(`activeProfileWorkspace.dataset.profileTabId === ${JSON.stringify(secondTabId)}`);
+    await assertCompletedJobCleared(secondTabId, nextJob);
     const capture = await page.send('Page.captureScreenshot', { format: 'png' });
     fs.writeFileSync(path.join(profilePath, 'application-workflow-verified.png'), Buffer.from(capture.data, 'base64'));
     await evaluate('workflowTest.requireUpdate = true');
@@ -614,6 +669,8 @@ function fixture(extensionVersion) {
     console.log('PASS: HTTP 426 displays the configured download button on login, during a session, and after reload; invalid links are rejected; existing login tokens are preserved');
     console.log('PASS: linked source URL stays with pasted JD across browser-tab switches and reload; changed/closed sources blocked before backend calls; reopened source used for capture; independent profile tabs, draft submission, retries, and success toast');
     console.log('PASS: generated and restored resumes keep the open-job button and disable linking; a new JD requires its own linked page');
+    console.log('PASS: JDs stay visible after generation and reload; failed and pending uploads preserve all work; successful screenshot saves reset only the completed profile tab and persist the cleanup');
+    console.log('PASS: a new JD and its linked page survive submission of the previous job, including after reload');
     console.log('PASS: WebSocket completion fetches the saved result; a pending answer request blocks resume generation, job restoration, relinking, and submission until the answers are saved');
   } finally {
     if (page) page.close();

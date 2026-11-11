@@ -212,7 +212,9 @@ export function ProfileWorkspace({
   const [error, setError] = useState("");
   const [applicationError, setApplicationError] = useState("");
   const isJobBusy = isGenerating || isGeneratingAnswers || isSubmitting || isLoadingLastApplication || isLinkingJob;
-  const isPreparedJobActive = Boolean(preparedJob) && !jobDescription.trim();
+  const isPreparedJobActive = Boolean(preparedJob) && jobSource?.url === preparedJob?.url
+    && (!jobDescription.trim()
+      || jobDescription.trim() === (preparedJob?.sourceDescription ?? preparedJob?.description)?.trim());
 
   // UI state
   const [previewOpen, setPreviewOpen] = useState(false);
@@ -307,7 +309,7 @@ export function ProfileWorkspace({
   };
 
   const handleGenerate = async () => {
-    if (isJobBusy) return;
+    if (isJobBusy || isPreparedJobActive) return;
     if (!jobDescription.trim()) {
       setError("Please enter a job description");
       return;
@@ -437,14 +439,13 @@ export function ProfileWorkspace({
       setConversationId(data.conversationId);
       setApplicationAnswers(data.answers ?? []);
       setAnswersReadOnly(false);
-      // Keep the generated resume's description for downloads after the editor is cleared.
+      // Downloads use the generated description, which may include added salary details.
       resumeJobDescription.current = data.jobDescription?.trim() || sourceDescription;
       if (!data.draft?.id) throw new Error("The server did not save the prepared job.");
-      setPreparedJob({ applicationId: data.draft.id, url: tabUrl, companyName: generatedCompanyName, jobTitle: generatedJobTitle, description: resumeJobDescription.current });
+      setPreparedJob({ applicationId: data.draft.id, url: tabUrl, companyName: generatedCompanyName, jobTitle: generatedJobTitle, description: resumeJobDescription.current, sourceDescription });
       setApplicationQuestions("");
       setScannedQuestions([]);
       setApplicationAnswers(data.answers ?? []);
-      setJobDescription((current) => current.trim() === sourceDescription ? "" : current);
 
       if (data.draft?.id) {
         try {
@@ -501,7 +502,7 @@ export function ProfileWorkspace({
         });
       }
 
-      setJobDescription("");
+      setJobDescription(saved.job_description ?? "");
       setJobSource((current) => current?.url === saved.url ? current : { url: saved.url });
       setPreparedJob({ applicationId: saved.draft_id || saved.id, submittedAt: saved.submitted_at,
         url: saved.url, companyName: saved.company_name || "", jobTitle: saved.job_title || "", description: saved.job_description || "" });
@@ -576,6 +577,32 @@ export function ProfileWorkspace({
     } finally {
       setIsLoadingLastApplication(false);
     }
+  };
+
+  const handleApplicationSaved = (applicationId: string) => {
+    if (preparedJob?.applicationId !== applicationId) return;
+    // A new JD may already be in the editor while the prepared job awaits submission.
+    if (isPreparedJobActive) {
+      setJobDescription("");
+      setJobSource(null);
+    }
+    setPreparedJob(null);
+    setResumeData(null);
+    resumeJobDescription.current = "";
+    setConversationId(null);
+    setCoverLetterText(null);
+    setCompanyName("");
+    setApplicationQuestions("");
+    setScannedQuestions([]);
+    setApplicationAnswers([]);
+    setAnswersReadOnly(false);
+    setError("");
+    setApplicationError("");
+    setPreviewOpen(false);
+    setPreviewEditable(false);
+    setDownloadLocationPromptOpen(false);
+    setWorkflowTab("resume");
+    syncFromProfile(profile);
   };
 
   const handleGenerateAnswers = async () => {
@@ -794,11 +821,7 @@ export function ProfileWorkspace({
         jobTitle={preparedJob?.jobTitle}
         busy={isJobBusy}
         onCapturingChange={setIsSubmitting}
-        onSaved={(applicationId) => {
-          setPreparedJob((current) => current?.applicationId === applicationId
-            ? { ...current, submittedAt: new Date().toISOString() } : current);
-          setAnswersReadOnly(true);
-        }}
+        onSaved={handleApplicationSaved}
       />
     <div className="relative flex min-h-0 flex-1 overflow-hidden">
       <WorkspaceSidebar
@@ -880,7 +903,7 @@ export function ProfileWorkspace({
                 Job Description & Resume
               </CardTitle>
               <CardDescription className="mt-2">
-                Paste a new JD. Generated jobs are saved separately and added to the table after submission and screenshot capture.
+                Keep the JD and linked page while you apply. This workspace resets after the submission screenshot is saved and the application is added.
               </CardDescription>
             </div>
             <Tooltip>
@@ -989,7 +1012,7 @@ export function ProfileWorkspace({
 
         <div className="space-y-3">
           <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap">
-            <Button disabled={isJobBusy || !jobDescription.trim() || jobSource?.tabId === undefined} onClick={() => void handleGenerate()}>
+            <Button disabled={isJobBusy || isPreparedJobActive || !jobDescription.trim() || jobSource?.tabId === undefined} onClick={() => void handleGenerate()}>
               {isGenerating ? "Generating..." : "Generate Resume"}
             </Button>
             <Button

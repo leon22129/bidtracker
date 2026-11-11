@@ -9,8 +9,8 @@ recruiting pipeline, settle weekly bid payments, and read conversion analytics.
 
 Resume Builder follows a draft workflow: scan the JD, check company/URL bans and duplicates, check
 eligibility, then generate the resume and expected rate. The URL, original JD, updated JD, resume,
-and generated answers are saved in `application_drafts`. The JD input is cleared after generation
-and stays empty when a prepared job is restored; the saved JD appears in a separate read-only panel.
+and generated answers are saved in `application_drafts`. The JD and linked job page stay available
+after generation and when a prepared job is restored.
 Blocked and ineligible jobs do not add table rows.
 
 Saved JDs and `jd.txt` downloads use separated headings, paragraphs, bullet lists, and wrapped text.
@@ -25,11 +25,17 @@ and excluded from payment. Preparing a draft never counts as an applied or payab
 Each profile tab keeps its own prepared draft, JD, resume, answers, and submission state, including
 when multiple tabs use the same profile. This state is restored when the panel is reopened. The
 screenshot button submits that tab's draft using its original browser page; there is no separate
-application dropdown. After a successful save, a toast confirms completion and capture is disabled
-for that job. Failed saves remain available for retry; saved screenshots stay with their applications.
+application dropdown. After a successful save, a toast confirms completion and the completed job's
+JD, page link, documents, and answers clear from that profile tab. Other tabs and a newly entered JD
+are preserved. Failed saves remain available for retry; saved screenshots stay with their applications.
 Scanning also links the JD to its source URL and browser tab, shown separately above the JD input.
 Generation always uses that linked URL when the bidder switches browser tabs. Pasted JDs require
 **Link current page** first; **Open linked job** returns to the posting if its tab was closed or changed.
+
+The backend takes its required extension version from `resume-builder-frontend/package.json`
+when it is built. Super admin **Extension** settings display that version and let you edit the
+download link. Publish the matching extension download before rebuilding and restarting the backend;
+older extensions will then receive an update prompt. No separate admin version entry is needed.
 
 To copy job links, check the desired rows and choose **Copy links**, or press **Ctrl+C**
 (**Cmd+C** on Mac) while the table is focused. Full URLs are copied one per line in table order.

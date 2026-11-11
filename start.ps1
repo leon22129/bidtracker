@@ -604,7 +604,10 @@ $BackendSourceChanged = Get-ChildItem (Join-Path $Backend "src") -Recurse -File 
     Select-Object -First 1
 $BackendConfigChanged = Get-Item (Join-Path $Backend "tsconfig.json"),
     (Join-Path $Backend "tsconfig.build.json"),
-    (Join-Path $Backend "package.json") |
+    (Join-Path $Backend "package.json"),
+    (Join-Path $Backend "scripts\sync-extension-version.cjs"),
+    (Join-Path $Root "resume-builder-frontend\package.json"),
+    (Join-Path $Root "resume-builder-frontend\src\renderer\public\manifest.json") |
     Where-Object { $_.LastWriteTimeUtc -gt $BackendBuildTime } |
     Select-Object -First 1
 

@@ -7,6 +7,7 @@ export type PreparedTabJob = {
   companyName: string;
   jobTitle: string;
   description: string;
+  sourceDescription?: string;
   submittedAt?: string | null;
 };
 

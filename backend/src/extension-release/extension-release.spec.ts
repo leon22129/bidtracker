@@ -1,4 +1,6 @@
 import { INestApplication, ValidationPipe } from '@nestjs/common';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { APP_GUARD } from '@nestjs/core';
 import { JwtService } from '@nestjs/jwt';
 import { Test } from '@nestjs/testing';
@@ -10,6 +12,7 @@ import { ResumeBuilderVersionGuard } from '../common/guards/resume-builder-versi
 import { PrismaService } from '../prisma/prisma.service';
 import { ExtensionReleaseModule } from './extension-release.module';
 import { ExtensionReleaseService } from './extension-release.service';
+import { RESUME_BUILDER_VERSION } from './extension-build-version.generated';
 
 describe('Extension release settings over HTTP', () => {
   let app: INestApplication;
@@ -29,10 +32,10 @@ describe('Extension release settings over HTTP', () => {
   const login = jest.fn(() => ({ access_token: 'supported-login-token' }));
   const jwt = new JwtService({ secret: process.env.JWT_SECRET || 'dev-only-insecure-secret-change-me' });
   const headers = (role: string) => ({ Authorization: `Bearer ${jwt.sign({ sub: role })}`, 'Content-Type': 'application/json' });
-  const release = { latest_version: '0.10.0', download_url: 'https://downloads.example.com/extension.zip' };
+  const release = { latest_version: RESUME_BUILDER_VERSION, download_url: 'https://downloads.example.com/extension.zip' };
 
   beforeAll(async () => {
-    process.env.RESUME_BUILDER_MIN_VERSION = '0.9.3';
+    process.env.RESUME_BUILDER_MIN_VERSION = '65535.0.0';
     const module = await Test.createTestingModule({
       imports: [ExtensionReleaseModule],
       controllers: [AuthController],
@@ -58,15 +61,31 @@ describe('Extension release settings over HTTP', () => {
     else process.env.RESUME_BUILDER_MIN_VERSION = previousMinimum;
   });
 
-  it('uses the environment minimum until a super admin publishes a release', async () => {
+  it('uses the extension code version before any admin settings are saved, ignoring the legacy environment override', async () => {
+    const extensionPackage = JSON.parse(readFileSync(resolve(process.cwd(), '../resume-builder-frontend/package.json'), 'utf8'));
+    expect(RESUME_BUILDER_VERSION).toBe(extensionPackage.version);
     const response = await fetch(`${baseUrl}/extension-release`, { headers: headers('super_admin') });
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ latest_version: '0.9.3', download_url: null, updated_at: null });
-    const service = new ExtensionReleaseService(prisma as any);
-    process.env.RESUME_BUILDER_MIN_VERSION = 'latest';
-    expect(() => new ExtensionReleaseService(prisma as any)).toThrow('RESUME_BUILDER_MIN_VERSION');
-    process.env.RESUME_BUILDER_MIN_VERSION = '0.9.3';
-    expect((await service.get()).latest_version).toBe('0.9.3');
+    expect(await response.json()).toEqual({ latest_version: extensionPackage.version, download_url: null, updated_at: null });
+    expect(prisma.extensionRelease.upsert).not.toHaveBeenCalled();
+  });
+
+  it.each(['0.1.0', '65535.0.0'])('ignores stored version %s while preserving the saved download link', async (version) => {
+    saved = { id: 'current', latest_version: version, download_url: release.download_url, updated_at: new Date() };
+    const response = await fetch(`${baseUrl}/extension-release`, { headers: headers('super_admin') });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ ...release, updated_at: saved.updated_at.toISOString() });
+    expect(prisma.extensionRelease.upsert).not.toHaveBeenCalled();
+  });
+
+  it.each(['0.1.0', '65535.0.0'])('a legacy admin request cannot override the code version with %s', async (version) => {
+    const response = await fetch(`${baseUrl}/extension-release`, {
+      method: 'PATCH', headers: headers('super_admin'),
+      body: JSON.stringify({ latest_version: version, download_url: release.download_url }),
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject(release);
+    expect(saved.latest_version).toBe(RESUME_BUILDER_VERSION);
   });
 
   it.each([undefined, 'admin', 'bidder_manager', 'bidder'])('denies settings access to %s', async (role) => {
@@ -80,28 +99,28 @@ describe('Extension release settings over HTTP', () => {
     expect(prisma.extensionRelease.upsert).not.toHaveBeenCalled();
   });
 
-  it('persists a release and immediately enforces it at login and during an existing session', async () => {
-    const before = await fetch(`${baseUrl}/auth/me`, { headers: { ...headers('bidder'), 'X-Resume-Builder-Version': '0.9.3' } });
+  it('enforces the code version at login and during an existing session, with an editable download link', async () => {
+    const before = await fetch(`${baseUrl}/auth/me`, { headers: { ...headers('bidder'), 'X-Resume-Builder-Version': RESUME_BUILDER_VERSION } });
     expect(before.status).toBe(200);
     const response = await fetch(`${baseUrl}/extension-release`, {
       method: 'PATCH', headers: headers('super_admin'),
-      body: JSON.stringify({ latest_version: ` ${release.latest_version} `, download_url: ` ${release.download_url} ` }),
+      body: JSON.stringify({ download_url: ` ${release.download_url} ` }),
     });
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject(release);
     expect(await new ExtensionReleaseService(prisma as any).get()).toMatchObject(release);
     const blockedRequests: Array<RequestInit & { path: string }> = [
-      { path: '/auth/login', method: 'POST', headers: { 'X-Resume-Builder-Version': '0.9.10' } },
+      { path: '/auth/login', method: 'POST', headers: { 'X-Resume-Builder-Version': '0.0.0' } },
       { path: '/auth/login', method: 'POST', headers: { Origin: 'chrome-extension://legacy' } },
-      { path: '/auth/me', method: 'GET', headers: { ...headers('bidder'), 'X-Resume-Builder-Version': '0.9.3' } },
+      { path: '/auth/me', method: 'GET', headers: { ...headers('bidder'), 'X-Resume-Builder-Version': '0.0.0' } },
     ];
     for (const request of blockedRequests) {
       const blocked = await fetch(`${baseUrl}${request.path}`, request);
       expect(blocked.status).toBe(426);
-      expect(await blocked.json()).toMatchObject({ code: 'RESUME_BUILDER_UPDATE_REQUIRED', minimum_version: '0.10.0', ...release });
+      expect(await blocked.json()).toMatchObject({ code: 'RESUME_BUILDER_UPDATE_REQUIRED', minimum_version: RESUME_BUILDER_VERSION, ...release });
     }
     expect(login).not.toHaveBeenCalled();
-    for (const version of ['0.10.0', '0.10.0.1', '1.0.0']) {
+    for (const version of [RESUME_BUILDER_VERSION, `${Number(RESUME_BUILDER_VERSION.split('.')[0]) + 1}.0.0`]) {
       const allowed = await fetch(`${baseUrl}/auth/login`, {
         method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Resume-Builder-Version': version },
         body: JSON.stringify({ email: 'bidder@example.com', password: 'password' }),
@@ -110,16 +129,16 @@ describe('Extension release settings over HTTP', () => {
     }
     const dashboard = await fetch(`${baseUrl}/auth/me`, { headers: headers('bidder') });
     expect(dashboard.status).toBe(200);
-    const changed = { latest_version: '0.10.1', download_url: 'https://downloads.example.com/new.zip' };
+    const changed = { download_url: 'https://downloads.example.com/new.zip' };
     expect((await fetch(`${baseUrl}/extension-release`, { method: 'PATCH', headers: headers('super_admin'), body: JSON.stringify(changed) })).status).toBe(200);
-    const next = await fetch(`${baseUrl}/auth/me`, { headers: { ...headers('bidder'), 'X-Resume-Builder-Version': '0.10.0' } });
+    const next = await fetch(`${baseUrl}/auth/me`, { headers: { ...headers('bidder'), 'X-Resume-Builder-Version': '0.0.0' } });
     expect(next.status).toBe(426);
-    expect(await next.json()).toMatchObject(changed);
+    expect(await next.json()).toMatchObject({ ...changed, latest_version: RESUME_BUILDER_VERSION });
+    expect((await fetch(`${baseUrl}/auth/me`, { headers: { ...headers('bidder'), 'X-Resume-Builder-Version': RESUME_BUILDER_VERSION } })).status).toBe(200);
   });
 
   it.each([
-    { latest_version: '' }, { latest_version: '0.10' }, { latest_version: 'latest' }, { latest_version: '65536.0.0' },
-    { latest_version: null }, { latest_version: 12 }, { download_url: '' }, { download_url: null },
+    { download_url: '' }, { download_url: null },
     { download_url: 'javascript:alert(1)' }, { download_url: 'data:text/html,download' },
     { download_url: 'file:///extension.zip' }, { download_url: '/extension.zip' },
     { download_url: 'https://user:password@example.com/extension.zip' },

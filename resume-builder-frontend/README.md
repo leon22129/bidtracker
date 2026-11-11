@@ -42,44 +42,49 @@ Downloads filenames, disabled options, and failed downloads.
 
 ## Required extension version
 
-The backend requires Resume Builder **0.9.3 or newer** by default. Every extension API
-request, including login and screenshot uploads, sends `X-Resume-Builder-Version`.
+The backend requires the Resume Builder version in `resume-builder-frontend/package.json`
+or newer. Every extension API request, including login and screenshot uploads, sends `X-Resume-Builder-Version`.
 Older, missing, or invalid versions receive HTTP 426 with an update-required message.
 Resume generation, answers, draft restoration/submission, profile settings, and screenshot
 uploads require this header even when the client sends no extension origin. Shared dashboard
 routes continue to support normal web requests.
 
-Super admins can open **Extension** in BidTracker to save the latest version and an HTTP(S)
-download URL. That version becomes the minimum immediately, including for existing sessions.
-Outdated clients receive the release version and download URL in the HTTP 426 response. The
+Super admins can open **Extension** in BidTracker to view the required version and save an HTTP(S)
+download URL. The required version is read-only and comes from the deployed backend build.
+Outdated clients receive that version and download URL in the HTTP 426 response. The
 extension shows an update alert with **Download latest version** below it on login or the next
 API request. The button opens the configured link in a new tab and preserves the login token.
-Without a saved release, `RESUME_BUILDER_MIN_VERSION` remains the server's fallback minimum.
+Previously saved version values and `RESUME_BUILDER_MIN_VERSION` are ignored; saved download links remain available.
 
 Deploy the `20261104000000_extension_release` database migration with the backend. Existing
 extension installations need the build containing the download button installed once; older
-builds can show only their existing text alert. Publish a link users can access before saving
-the release settings.
+builds can show only their existing text alert. Make the matching extension download available
+before deploying the backend that requires it.
 
 To release a version, update `package.json`, the root package entries
 in `package-lock.json`, and `src/renderer/public/manifest.json` together; the build checks that
 the package and manifest versions match. Run `npm run build`, distribute `dist-web`, and reload
-the extension in Chrome. Deploying the backend check is required to reject older installations.
+the extension in Chrome. Then rebuild and restart the backend to require that version; no manual
+version entry in super admin is needed. Backend build, development startup, type-check, and test
+commands generate their version metadata automatically. The Windows launcher rebuilds the backend
+when the extension package or manifest changes. Compiled backend deployments include the version
+and do not need the extension source files at runtime.
 
 ## Submission screenshots
 
-The Chrome extension keeps a **Submission screenshots** section below the profile tabs. After
-generating an application, select it there and click **Take screenshot** while its confirmation
-page is still open. The button is always in the same place and does not depend on a toast or
-automatic submission detection. Saved status and upload errors appear in the section; retry with
-the same button. Multiple applications remain selectable when generated in the same browser tab.
+Each profile tab has a **Submission screenshot** section. Generating a resume keeps the JD,
+linked job page, and prepared documents available while you apply. After submitting successfully,
+keep the confirmation page open, check the confirmation box, and click **Take screenshot & add
+application**. Only after the screenshot and application are saved does that profile tab clear
+the completed JD, page link, documents, and answers. A failed save keeps the work available for
+retry. Other profile tabs and a new JD already entered for the next job are preserved.
 
 Form answers are optional. The extension saves captured answers when possible and continues
 adding the application and screenshot if form capture or answer syncing fails. Saved answers
 are retained, and a successful save shows a brief notice when some answers could not be recorded.
 
-Recent applications and saved status are retained locally for eight days and restored when the
-side panel is reopened. Uploaded images are available in BidTracker for eight days. Refresh the
+Pending jobs are restored when the side panel is reopened. Completed jobs can be restored with
+**Load Last Job**. Uploaded images are available in BidTracker for eight days. Refresh the
 workspace table and click **View screenshot** in the pinned **Screenshot** column beside **#**.
 In the viewer, use **Right Arrow** for the next screenshot and **Left Arrow** for the previous one,
 following the table's current filters and sort order and skipping applications without active
