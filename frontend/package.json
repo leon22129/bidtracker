@@ -6,6 +6,8 @@
     "dev": "node server.cjs --dev -p 3000",
     "build": "next build",
     "build:icons": "node scripts/generate-icons.cjs",
+    "test:production": "node --test scripts/production-snapshot.test.cjs",
+    "test:chunk-recovery": "node scripts/check-chunk-recovery.cjs --start",
     "start": "node server.cjs -p 3000",
     "lint": "next lint",
     "typecheck": "tsc --noEmit"

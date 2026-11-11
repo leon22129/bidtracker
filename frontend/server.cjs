@@ -1,12 +1,23 @@
 const { createServer } = require('node:http');
 const next = require('next');
 const { GENERATION_SOCKET_PATH, proxyGenerationSocket } = require('./scripts/generation-socket-proxy.cjs');
+const { createProductionSnapshot } = require('./scripts/production-snapshot.cjs');
 
 const dev = process.argv.includes('--dev');
 process.env.NODE_ENV ||= dev ? 'development' : 'production';
 const portIndex = process.argv.findIndex((arg) => arg === '-p' || arg === '--port');
 const port = Number(portIndex >= 0 ? process.argv[portIndex + 1] : process.env.PORT || 3000);
 const hostname = process.env.HOSTNAME_BIND || '0.0.0.0';
+if (!dev) {
+  try {
+    const snapshot = createProductionSnapshot(__dirname);
+    process.env.BIDTRACKER_RUNTIME_DIST_DIR = snapshot.distDir;
+    process.on('exit', snapshot.cleanup);
+  } catch (error) {
+    console.error(error.message);
+    process.exit(1);
+  }
+}
 // Next installs its own upgrade listener for development HMR. Give it a separate HTTP server
 // object so it only sees upgrades we explicitly forward, never the API's WebSocket frames.
 const nextUpgrades = createServer();

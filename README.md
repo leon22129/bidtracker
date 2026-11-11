@@ -113,6 +113,20 @@ them when Windows permits the launcher to create a process job; otherwise the sc
 The launcher reports occupied ports instead of stopping unrelated programs.
 The backend regenerates its Prisma client before compiling so schema updates are available to TypeScript.
 
+The production frontend serves a private copy of its completed build from
+`frontend/.next-runtime/`. Running `npm run build` writes to `frontend/.next` and
+does not replace chunks used by a running server. Restart the app after a build
+to publish it; the launcher still needs its old instance stopped before restarting.
+Development uses the separate `frontend/.next-dev/` directory.
+Each production build also gives scripts a deployment-specific cache key, and
+page documents are not cached. If a script fails to load, an early recovery script
+checks that the site is reachable and reloads once. Repeated failures show a reload
+button; entering form data disables automatic reload to preserve unsaved input.
+After building, run `npm --prefix frontend run test:chunk-recovery` to check this
+behavior in headless Chrome with simulated script and tunnel failures. It uses
+fixture API data and a temporary server on port 3100. Set `CHROME_BIN` if Chrome
+is installed outside its default location.
+
 Use [http://127.0.0.1:3000](http://127.0.0.1:3000) for BidTracker and
 [http://127.0.0.1:3002](http://127.0.0.1:3002) for Resume Builder. `--local` is an alias for
 `--no-cloudflare`.

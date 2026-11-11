@@ -34,6 +34,7 @@ backend/tsconfig.build.tsbuildinfo
 backend/prisma/generated/
 backend/src/extension-release/extension-build-version.generated.ts
 frontend/.next-dev/
+frontend/.next-runtime/
 frontend/tsconfig.tsbuildinfo
 
 # Temporary test artifacts and local runtime logs.
