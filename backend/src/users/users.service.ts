@@ -13,6 +13,7 @@ const PUBLIC_SELECT = {
   username: true,
   email: true,
   role: true,
+  created_by_user_id: true,
   manager_user_id: true,
   manager: { select: { id: true, username: true } },
   is_active: true,

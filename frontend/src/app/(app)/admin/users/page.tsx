@@ -45,6 +45,22 @@ function groupUsersByManager(users: User[]): UserRow[] {
   return rows;
 }
 
+function findAdmin(user: User, usersById: Map<string, User>): User | undefined {
+  if (user.role === 'admin') return user;
+  if (user.role === 'super_admin') return undefined;
+  const creator = user.created_by_user_id ? usersById.get(user.created_by_user_id) : undefined;
+  if (user.role === 'bidder') {
+    const manager = user.manager_user_id ? usersById.get(user.manager_user_id) : undefined;
+    const managerAdmin = manager?.created_by_user_id ? usersById.get(manager.created_by_user_id) : undefined;
+    if (managerAdmin?.role === 'admin') return managerAdmin;
+    if (creator?.role === 'bidder_manager') {
+      const creatorAdmin = creator.created_by_user_id ? usersById.get(creator.created_by_user_id) : undefined;
+      if (creatorAdmin?.role === 'admin') return creatorAdmin;
+    }
+  }
+  return creator?.role === 'admin' ? creator : undefined;
+}
+
 /**
  * User administration. Admins manage their account; bidder managers manage their own bidders.
  *
@@ -60,6 +76,7 @@ export default function UsersPage() {
   const [showCreate, setShowCreate] = useState(false);
   const [resetting, setResetting] = useState<User | null>(null);
   const [statusFilter, setStatusFilter] = useState<UserStatusFilter>('active');
+  const [adminFilter, setAdminFilter] = useState('all');
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -94,12 +111,22 @@ export default function UsersPage() {
 
   const bidderManagers = users.filter((u) => u.role === 'bidder_manager' && u.is_active);
   const isManager = me?.role === 'bidder_manager';
+  const isSuperAdmin = me?.role === 'super_admin';
+  const admins = users.filter((u) => u.role === 'admin');
+  // Resolve ownership from all accounts, even when a status filter hides the admin or manager.
+  const usersById = new Map(users.map((u) => [u.id, u]));
+  const adminsByUserId = new Map(users.map((u) => [u.id, findAdmin(u, usersById)]));
+  const scopedUsers = !isSuperAdmin || adminFilter === 'all' ? users : users.filter((u) => (
+    adminFilter === 'unassigned'
+      ? (u.role === 'bidder_manager' || u.role === 'bidder') && !adminsByUserId.get(u.id)
+      : adminsByUserId.get(u.id)?.id === adminFilter
+  ));
   const userCounts = {
-    active: users.filter((u) => u.is_active).length,
-    deactivated: users.filter((u) => !u.is_active).length,
-    all: users.length,
+    active: scopedUsers.filter((u) => u.is_active).length,
+    deactivated: scopedUsers.filter((u) => !u.is_active).length,
+    all: scopedUsers.length,
   };
-  const filteredUsers = users.filter((u) => (
+  const filteredUsers = scopedUsers.filter((u) => (
     statusFilter === 'all'
     || (statusFilter === 'active' ? u.is_active : !u.is_active)
   ));
@@ -142,12 +169,14 @@ export default function UsersPage() {
   }
 
   return (
-    <main className="mx-auto max-w-5xl px-4 py-6">
+    <main className={`mx-auto px-4 py-6 ${isSuperAdmin ? 'max-w-7xl' : 'max-w-5xl'}`}>
       <div className="mb-5 flex items-start justify-between gap-4">
         <div>
           <h1 className="text-lg font-semibold">Users</h1>
           <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
-            {isManager
+            {isSuperAdmin
+              ? 'See which admin owns each bidder manager and their team. Filter by admin to view their accounts.'
+              : isManager
               ? 'Add bidders to your team and deactivate access when needed.'
               : 'Roles decide what a person can do; profile ownership decides which workspace they use.'}
           </p>
@@ -157,33 +186,49 @@ export default function UsersPage() {
         </button>
       </div>
 
-      <div className="mb-4 flex flex-wrap gap-1.5" role="group" aria-label="Filter users by status">
-        {([
-          ['active', 'Active'],
-          ['deactivated', 'Deactivated'],
-          ['all', 'All'],
-        ] as const).map(([value, label]) => (
-          <button
-            key={value}
-            type="button"
-            className={statusFilter === value ? 'btn-primary btn-xs' : 'btn-secondary btn-xs'}
-            onClick={() => setStatusFilter(value)}
-            aria-pressed={statusFilter === value}
-          >
-            {label} ({userCounts[value]})
-          </button>
-        ))}
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap gap-1.5" role="group" aria-label="Filter users by status">
+          {([
+            ['active', 'Active'],
+            ['deactivated', 'Deactivated'],
+            ['all', 'All'],
+          ] as const).map(([value, label]) => (
+            <button
+              key={value}
+              type="button"
+              className={statusFilter === value ? 'btn-primary btn-xs' : 'btn-secondary btn-xs'}
+              onClick={() => setStatusFilter(value)}
+              aria-pressed={statusFilter === value}
+            >
+              {label} ({userCounts[value]})
+            </button>
+          ))}
+        </div>
+        {isSuperAdmin && (
+          <label className="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-400">
+            Admin
+            <select className="input w-56 py-1.5 text-xs" value={adminFilter}
+              aria-label="Filter users by admin" onChange={(event) => setAdminFilter(event.target.value)}>
+              <option value="all">All admins</option>
+              {admins.map((admin) => (
+                <option key={admin.id} value={admin.id}>{admin.username}{admin.is_active ? '' : ' (deactivated)'}</option>
+              ))}
+              <option value="unassigned">No admin assigned</option>
+            </select>
+          </label>
+        )}
       </div>
 
       {loading ? (
         <p className="text-sm text-gray-500 dark:text-gray-400">Loading…</p>
       ) : (
-        <div className="card overflow-hidden">
+        <div className="card overflow-x-auto">
           <table className="w-full text-xs">
             <thead className="bg-gray-50 dark:bg-gray-800 text-left text-2xs uppercase tracking-wide text-gray-500 dark:text-gray-400">
               <tr>
                 <th className="px-3 py-2 font-medium">User</th>
                 <th className="px-3 py-2 font-medium">Role</th>
+                {isSuperAdmin && <th className="px-3 py-2 font-medium">Admin</th>}
                 <th className="px-3 py-2 font-medium">Workspaces</th>
                 <th className="px-3 py-2 font-medium">Manager</th>
                 <th className="px-3 py-2 font-medium">Status</th>
@@ -195,6 +240,7 @@ export default function UsersPage() {
                 const isMe = u.id === me?.id;
                 const lastAdmin = u.role === 'admin' && adminCount <= 1;
                 const roleOptions = [...new Set([u.role, ...addableRoles])];
+                const owningAdmin = adminsByUserId.get(u.id);
                 return (
                   <tr
                     key={u.id}
@@ -231,6 +277,21 @@ export default function UsersPage() {
                         ))}
                       </select>
                     </td>
+                    {isSuperAdmin && (
+                      <td className="px-3 py-2">
+                        {u.role === 'admin' || u.role === 'super_admin' ? (
+                          <span className="text-gray-400">—</span>
+                        ) : owningAdmin ? (
+                          <div className="min-w-36">
+                            <div className="font-medium">{owningAdmin.username}</div>
+                            <div className="text-2xs text-gray-500 dark:text-gray-400">{owningAdmin.email}</div>
+                            {!owningAdmin.is_active && <div className="text-2xs text-gray-500 dark:text-gray-400">Deactivated</div>}
+                          </div>
+                        ) : (
+                          <span className="text-gray-500 dark:text-gray-400">No admin assigned</span>
+                        )}
+                      </td>
+                    )}
                     <td className="px-3 py-2 tabular-nums text-gray-600 dark:text-gray-400">
                       {u.owned_workspace_count ?? 0} owned
                     </td>
