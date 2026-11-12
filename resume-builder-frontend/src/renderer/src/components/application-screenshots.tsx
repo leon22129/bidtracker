@@ -36,13 +36,14 @@ type ApplicationScreenshotsProps = {
   applicationId: string | null;
   companyName?: string;
   jobTitle?: string;
+  manual?: boolean;
   busy: boolean;
   onCapturingChange: (capturing: boolean) => void;
   onSaved: (applicationId: string) => void;
 };
 
 export function ApplicationScreenshots({
-  profileTabId, applicationId, companyName, jobTitle, busy, onCapturingChange, onSaved,
+  profileTabId, applicationId, companyName, jobTitle, manual = false, busy, onCapturingChange, onSaved,
 }: ApplicationScreenshotsProps) {
   const [application, setApplication] = useState<ScreenshotApplication | null>(null);
   const [isCapturing, setIsCapturing] = useState(false);
@@ -57,7 +58,7 @@ export function ApplicationScreenshots({
     setError("");
     setApplication(null);
     setConfirmedId("");
-    if (!api?.runtime || !applicationId) return;
+    if (manual || !api?.runtime || !applicationId) return;
     let mounted = true;
     const refresh = async () => {
       try {
@@ -79,27 +80,29 @@ export function ApplicationScreenshots({
       mounted = false;
       api.storage?.onChanged?.removeListener(onStorageChanged);
     };
-  }, [applicationId, profileTabId]);
+  }, [applicationId, profileTabId, manual]);
 
   const selected = application?.applicationId === applicationId && application.profileTabId === profileTabId ? application : null;
+  const ready = Boolean(applicationId && (manual || selected));
+  const confirmed = Boolean(selected?.submitted || confirmedId === applicationId);
   const takeScreenshot = async () => {
-    if (!selected || captureRunning.current || busy) return;
+    if (!ready || !confirmed || captureRunning.current || busy) return;
     captureRunning.current = true;
     setIsCapturing(true);
     onCapturingChange(true);
     setError("");
     try {
       const result = await chromeApi()?.runtime?.sendMessage({
-        type: "CAPTURE_APPLICATION_SCREENSHOT",
-        tabId: selected.tabId,
-        applicationId: selected.applicationId,
+        type: manual ? "CAPTURE_MANUAL_APPLICATION_SCREENSHOT" : "CAPTURE_APPLICATION_SCREENSHOT",
+        tabId: selected?.tabId,
+        applicationId,
         profileTabId,
-        confirmed: selected.submitted || confirmedId === selected.applicationId,
+        confirmed,
       });
       if (!result?.ok) throw new Error(result?.error || "Unable to save the screenshot.");
       setApplication(null);
       setConfirmedId("");
-      onSaved(selected.applicationId);
+      onSaved(applicationId!);
       toast({
         title: "Application added",
         description: result.captureWarning
@@ -122,12 +125,12 @@ export function ApplicationScreenshots({
           <h2 id={titleId} className="flex items-center gap-2 text-xs font-semibold">
             <Camera className="size-4" aria-hidden="true" /> Submission screenshot
           </h2>
-          <Button type="button" size="sm" disabled={!available || !selected || isCapturing || busy || (!selected.submitted && confirmedId !== selected.applicationId)} onClick={() => void takeScreenshot()}>
+          <Button type="button" size="sm" disabled={!available || !ready || isCapturing || busy || !confirmed} onClick={() => void takeScreenshot()}>
             {isCapturing ? <RefreshCw className="size-4 animate-spin" /> : <Camera className="size-4" />}
             {isCapturing ? "Saving…" : "Take screenshot & add application"}
           </Button>
         </div>
-        {selected && (
+        {ready && (
           <p className="text-xs font-medium">{[companyName, jobTitle].filter(Boolean).join(" · ")}</p>
         )}
         {selected?.captureActive && (
@@ -141,16 +144,17 @@ export function ApplicationScreenshots({
         {selected?.captureWarning && (
           <p role="status" className="text-xs text-muted-foreground">{selected.captureWarning}</p>
         )}
-        {selected && !selected.submitted && (
+        {ready && !selected?.submitted && (
           <label className="flex items-center gap-2 text-xs">
-            <input type="checkbox" checked={confirmedId === selected.applicationId}
-              onChange={(event) => setConfirmedId(event.target.checked ? selected.applicationId : "")} />
+            <input type="checkbox" checked={confirmedId === applicationId}
+              onChange={(event) => setConfirmedId(event.target.checked ? applicationId! : "")} />
             I submitted this application successfully and the confirmation page is open.
           </label>
         )}
         <p role={error ? "alert" : "status"} className={`flex items-start gap-1.5 text-xs leading-5 ${error ? "text-destructive" : "text-muted-foreground"}`}>
           {error || (!available ? "Screenshot capture is available in the Chrome extension."
-            : !selected ? "No application is waiting for a screenshot in this profile tab. Generate a resume or load a prepared job here."
+            : !ready ? "No application is waiting for a screenshot in this profile tab. Generate a resume or load a prepared job here."
+              : manual ? "Open this application's confirmation page in the active browser tab. Its screenshot and page URL will be saved when you add the application."
               : "After submitting, keep the confirmation page open and take its screenshot here.")}
         </p>
       </div>

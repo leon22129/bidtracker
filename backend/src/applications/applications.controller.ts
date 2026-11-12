@@ -82,16 +82,17 @@ export class ApplicationsController {
 
   @Get('drafts/latest')
   @RequireResumeBuilderVersion()
-  latestDraft(@CurrentUser() user: AuthUser, @Query('workspace_id') workspaceId: string) {
-    return this.drafts.latest(user, workspaceId);
+  latestDraft(@CurrentUser() user: AuthUser, @Query('workspace_id') workspaceId: string, @Query('mode') mode?: string) {
+    return this.drafts.latest(user, workspaceId, mode);
   }
 
   @Post('drafts/:draftId/submit')
   @RequireResumeBuilderVersion()
   @UseInterceptors(FileInterceptor('screenshot', { limits: { fileSize: 5 * 1024 * 1024, files: 1 } }))
   submitDraft(@CurrentUser() user: AuthUser, @Param('draftId') draftId: string,
-    @Body('submitted') submitted: string, @UploadedFile() file?: Express.Multer.File) {
-    return this.drafts.submit(user, draftId, file, submitted === 'true');
+    @Body('submitted') submitted: string, @UploadedFile() file?: Express.Multer.File,
+    @Body('submission_url') submissionUrl?: string) {
+    return this.drafts.submit(user, draftId, file, submitted === 'true', submissionUrl);
   }
 
   @Patch('drafts/:draftId/form-capture')

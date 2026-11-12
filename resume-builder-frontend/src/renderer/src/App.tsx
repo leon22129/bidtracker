@@ -292,6 +292,8 @@ export default function Home() {
 
   const handleCloseTab = (tabId: string) => {
     localStorage.removeItem(`${storagePrefix}:profile-tab:${tabId}`);
+    localStorage.removeItem(`${storagePrefix}:profile-tab:${tabId}:manual`);
+    localStorage.removeItem(`${storagePrefix}:profile-tab:${tabId}:mode`);
     void clearProfileTabScreenshot(tabId).catch(() => undefined);
     const closingTab = tabs.find((t) => t.tabId === tabId);
     if (closingTab) {

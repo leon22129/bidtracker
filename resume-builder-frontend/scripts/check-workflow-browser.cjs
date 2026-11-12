@@ -33,8 +33,9 @@ function fixture(extensionVersion) {
   const jobs = [
     { id: 'd1', browserTabId: 73, company: 'Acme', salary: '$150,000', url: 'https://jobs.example.test/123' },
     { id: 'd2', browserTabId: 74, company: 'Beta', salary: '$180,000', url: 'https://jobs.example.test/456' },
+    { id: 'manual-1', company: 'Manual Company', salary: '$160,000', url: '' },
   ];
-  state.browserTabs ||= Object.fromEntries(jobs.map((job) => [job.browserTabId, job.url]));
+  state.browserTabs ||= Object.fromEntries(jobs.filter((job) => job.browserTabId).map((job) => [job.browserTabId, job.url]));
   state.nextBrowserTabId ||= 75;
   const jd = (job) => `Job Information\nTitle: Engineer\nCompany: ${job.company}\n\nJob Description\nRemote US role for an engineer.`;
   const personal = { fullName: 'Test Candidate', title: 'Engineer', email: 'candidate@example.test', location: 'Chicago, IL' };
@@ -139,10 +140,13 @@ function fixture(extensionVersion) {
     if (endpoint === '/resume/jobs/application') {
       const input = JSON.parse(init.body);
       if (input.workspace_id !== 'w1') throw Error('Profile settings lost the assigned workspace');
-      const job = jobs.find((job) => job.url === input.url);
+      const job = jobs.find((job) => input.mode === 'manual' ? job.id === 'manual-1' : job.url === input.url);
       if (!job || input.job_description !== jd(job)) throw Error('Wrong JD was sent');
+      if (input.mode === 'manual' && Object.hasOwn(input, 'url')) throw Error('Manual generation must omit the URL');
+      (state.generationInputs ||= []).push(input);
       (state.generationUrls ||= []).push(input.url);
-      state.latestDraft = job.id;
+      if (input.mode === 'manual') state.latestManualDraft = job.id;
+      else state.latestDraft = job.id;
       const id = new Headers(init.headers).get('X-Generation-Id');
       (state.generationJobs ||= {})[id] = { kind: 'application', polls: 0, result: { success: true, eligible: true, draft: { id: job.id, url: job.url, company_name: job.company, job_title: 'Engineer' }, resume: rawResume(job), conversation_id: job.id + '-conversation', job_description: updated(job) } };
       return json({ job_id: id, status: 'queued' });
@@ -168,7 +172,7 @@ function fixture(extensionVersion) {
       return json({ job_id: id, status: 'completed', result: job.result });
     }
     if (endpoint.startsWith('/applications/drafts/latest')) {
-      const job = jobs.find((job) => job.id === state.latestDraft);
+      const job = jobs.find((job) => job.id === (endpoint.includes('mode=manual') ? state.latestManualDraft : state.latestDraft));
       return json({ id: job.id, draft_id: job.id, submitted_at: state.added.includes(job.id) ? new Date().toISOString() : null, url: job.url, company_name: job.company, job_title: 'Engineer', resume: snapshot(job), template: 'classic', job_description: updated(job), conversation_id: job.id + '-conversation', questions: state.answers.map((answer) => ({ question: answer.question, options: [] })), answers: state.answers });
     }
     if (endpoint === '/applications/drafts/d2/form-capture') {
@@ -176,9 +180,14 @@ function fixture(extensionVersion) {
         status: 400, headers: { 'Content-Type': 'application/json' },
       });
     }
-    if (/^\/applications\/drafts\/d[12]\/submit$/.test(endpoint)) {
+    if (/^\/applications\/drafts\/(d[12]|manual-1)\/submit$/.test(endpoint)) {
       const draftId = endpoint.split('/')[3];
       if (!(init.body instanceof FormData) || init.body.get('submitted') !== 'true' || !init.body.get('screenshot')?.size) throw Error('Missing screenshot or submission confirmation');
+      if (draftId === 'manual-1') {
+        const url = init.body.get('submission_url');
+        if (url !== 'https://www.linkedin.com/jobs/') throw Error('Manual screenshot used the wrong confirmation page');
+        (state.manualSubmissionUrls ||= []).push(url);
+      }
       if (state.failNextUpload) {
         state.failNextUpload = false;
         return new Response(JSON.stringify({ message: 'Upload failed. Please retry.' }), { status: 503, headers: { 'Content-Type': 'application/json' } });
@@ -634,6 +643,86 @@ function fixture(extensionVersion) {
     await assertCompletedJobCleared(secondTabId, nextJob);
     const capture = await page.send('Page.captureScreenshot', { format: 'png' });
     fs.writeFileSync(path.join(profilePath, 'application-workflow-verified.png'), Buffer.from(capture.data, 'base64'));
+
+    // Manual mode needs neither a valid browser page nor a URL, and keeps a separate draft.
+    await click('Manual');
+    await waitFor("!activeProfileWorkspace.querySelector('[data-job-source]') && activeProfileWorkspace.querySelector('textarea')?.value === ''");
+    assert.equal(await evaluate("activeProfileWorkspace.querySelector('[data-submission-screenshot] button').disabled"), true);
+    await evaluate('workflowTest.browserTabId = 999');
+    const manualJd = 'Job Information\nTitle: Engineer\nCompany: Manual Company\n\nJob Description\nRemote US role for an engineer.';
+    await evaluate("activeProfileWorkspace.querySelector('textarea').focus()");
+    await page.send('Input.insertText', { text: manualJd });
+    await click('Current workflow');
+    await waitFor("Boolean(activeProfileWorkspace.querySelector('[data-job-source]'))");
+    assert.equal(await evaluate("activeProfileWorkspace.querySelector('textarea').value"), firstJd, 'Switching mode preserves the linked JD');
+    assert.equal((await savedTab(secondTabId)).jobSource.url, nextJob.jobSource.url);
+    await click('Manual');
+    await waitFor("activeProfileWorkspace.querySelector('textarea')?.value.includes('Manual Company')");
+    await click('Generate Resume');
+    await waitFor("activeProfileWorkspace.innerText.includes('Prepared job: Manual Company')");
+    assert.equal(await evaluate('workflowTest.generationInputs.at(-1).mode'), 'manual');
+    assert.equal(await evaluate("Object.hasOwn(workflowTest.generationInputs.at(-1), 'url')"), false);
+    assert.deepEqual(await evaluate('Object.values(workflowTest.pending)'), []);
+    assert.equal(await evaluate('workflowTest.tableRows'), 2);
+    assert.equal(await evaluate("activeProfileWorkspace.querySelector('[data-submission-screenshot] button').disabled"), true, 'Manual submission requires confirmation');
+    await evaluate("activeProfileWorkspace.querySelector('[data-submission-screenshot] input').click()");
+    await click('Take screenshot');
+    await waitFor("activeProfileWorkspace.querySelector('[data-submission-screenshot]').innerText.includes('Open the application confirmation page')");
+    assert.equal(await evaluate('workflowTest.tableRows'), 2, 'An unavailable page cannot submit the manual application');
+    const downloadsBeforeManual = await evaluate('workflowTest.downloads.length');
+    await click('Preview Resume');
+    await waitFor("document.querySelector('[role=dialog]')?.textContent.includes('Manual Company summary')");
+    await click('Download PDF');
+    await waitFor(`workflowTest.downloads.length > ${downloadsBeforeManual}`);
+    assert.equal(await evaluate(`workflowTest.downloads[${downloadsBeforeManual}].header`), '%PDF-');
+    await click('Close');
+    await click('Questions');
+    await evaluate("activeProfileWorkspace.querySelector('textarea').focus()");
+    await page.send('Input.insertText', { text: 'Why this role?' });
+    await evaluate('workflowTest.holdAnswers = true');
+    await click('Generate Answers');
+    await waitFor('workflowTest.answersWaiting === true');
+    assert.equal(await evaluate("[...activeProfileWorkspace.querySelectorAll('[aria-label=\"Application mode\"] button')].every(button => button.disabled)"), true, 'Mode switches cannot discard pending requests');
+    await evaluate('workflowTest.releaseAnswers()');
+    await waitFor("[...activeProfileWorkspace.querySelectorAll('textarea')].some(el => el.value === 'It fits my experience.')");
+    // Profile tabs are scoped to the browser tab that originally opened the panel.
+    await evaluate('workflowTest.browserTabId = 73');
+    await reloadPage();
+    await waitFor("[...activeProfileWorkspace.querySelectorAll('textarea')].some(el => el.value === 'It fits my experience.')");
+    assert.equal(await evaluate("activeProfileWorkspace.querySelector('[aria-label=\"Application mode\"] [data-state=active]').textContent"), 'Manual');
+    await click('Resume');
+    await click('New manual job');
+    await waitFor("activeProfileWorkspace.querySelector('textarea').value === ''");
+    await click('Load Last Job');
+    await waitFor("[...activeProfileWorkspace.querySelectorAll('textarea')].some(el => el.value === 'It fits my experience.')");
+    assert.equal(await evaluate("workflowTest.requests.at(-1).includes('mode=manual')"), true);
+    assert.equal(await evaluate("activeProfileWorkspace.querySelector('[data-submission-screenshot] button').disabled"), true);
+    assert.equal(await evaluate("Boolean(activeProfileWorkspace.querySelector('[data-submission-screenshot] input'))"), true, 'Restored manual drafts are ready for screenshot submission');
+    await click('Resume');
+    await page.send('Emulation.setDeviceMetricsOverride', { width: 420, height: 768, deviceScaleFactor: 1, mobile: false });
+    assert.equal(await evaluate('document.documentElement.scrollWidth <= window.innerWidth'), true);
+    const manualCapture = await page.send('Page.captureScreenshot', { format: 'png' });
+    fs.writeFileSync(path.join(profilePath, 'manual-workflow-verified.png'), Buffer.from(manualCapture.data, 'base64'));
+    await page.send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false });
+    await evaluate("workflowTest.browserTabs[777] = 'https://www.linkedin.com/jobs/'; workflowTest.browserTabId = 777; workflowTest.failNextUpload = true; activeProfileWorkspace.querySelector('[data-submission-screenshot] input').click()");
+    await click('Take screenshot');
+    await waitFor("activeProfileWorkspace.querySelector('[data-submission-screenshot]').innerText.includes('Upload failed. Please retry.')");
+    assert.equal(await evaluate('workflowTest.tableRows'), 2);
+    assert.equal((await savedTab(`${secondTabId}:manual`)).preparedJob.applicationId, 'manual-1', 'A failed manual screenshot preserves the prepared job');
+    await click('Take screenshot');
+    await waitFor("workflowTest.tableRows === 3 && activeProfileWorkspace.querySelector('textarea').value === ''");
+    await assertCompletedJobCleared(`${secondTabId}:manual`);
+    assert.deepEqual(await evaluate('workflowTest.manualSubmissionUrls'), ['https://www.linkedin.com/jobs/', 'https://www.linkedin.com/jobs/']);
+    assert.deepEqual(await evaluate('workflowTest.captures.slice(-2)'), [777, 777]);
+    assert.equal(await evaluate("activeProfileWorkspace.querySelector('[data-submission-screenshot] button').disabled"), true);
+    await click('Current workflow');
+    await waitFor("Boolean(activeProfileWorkspace.querySelector('[data-job-source]'))");
+    assert.equal(await evaluate("activeProfileWorkspace.querySelector('textarea').value"), firstJd);
+    assert.equal((await savedTab(secondTabId)).jobSource.url, nextJob.jobSource.url);
+    assert.equal(await evaluate('workflowTest.tableRows'), 3);
+    assert.deepEqual(await evaluate('workflowTest.errors'), []);
+    await evaluate('workflowTest.browserTabId = 73');
+    console.log('PASS: manual generation without a browser page or URL, PDF downloads, Q&A, isolated mode state, reload, job restoration, screenshot submission from the active page, retries, and clearing only the completed manual job');
     await evaluate('workflowTest.requireUpdate = true');
     const updateError = await evaluate('window.aiProfiles.list().then(() => null, error => error.message)');
     assert.match(updateError, /Update Resume Builder to version 0\.9\.5/);

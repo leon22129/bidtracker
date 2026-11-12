@@ -53,6 +53,7 @@ export type ApplicationQuestionInput = {
 
 export type GenerateResumeInput = {
   profileId: string
+  mode?: "linked" | "manual"
   workspaceId?: string
   url?: string
   prompt?: string
@@ -127,6 +128,6 @@ export type AiProfilesApi = {
   update: (input: UpdateAiProfileInput) => Promise<AiProfile>
   delete: (profileId: string) => Promise<void>
   generate: (input: GenerateResumeInput) => Promise<GenerateResumeResult>
-  loadLastApplication: (workspaceId: string) => Promise<SavedGeneratedApplication>
+  loadLastApplication: (workspaceId: string, mode?: "linked" | "manual") => Promise<SavedGeneratedApplication>
   loadConversationAnswers: (conversationId: string) => Promise<SavedConversationAnswers>
 }

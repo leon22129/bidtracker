@@ -17,7 +17,7 @@ function setup(local = {}, session = {}, frameStates = [{ frameId: 0, helpers: t
   const uploads = [];
   const injections = [];
   const frames = structuredClone(frameStates);
-  const tabs = new Map([[7, { id: 7, windowId: 1 }], [8, { id: 8, windowId: 1 }]]);
+  const tabs = new Map([[7, { id: 7, windowId: 1, url: 'https://www.linkedin.com/jobs/' }], [8, { id: 8, windowId: 1, url: 'https://jobs.example.test/confirmation' }]]);
   let activeTabId = 7;
   local.resume_ai_access_token ??= 'test-token';
   local.resume_ai_api_url ??= 'https://api.example.com/api';
@@ -63,7 +63,7 @@ function setup(local = {}, session = {}, frameStates = [{ frameId: 0, helpers: t
           return tabs.get(id);
         },
         update: async (id) => { activeTabId = id; return tabs.get(id); },
-        query: async ({ windowId }) => [...tabs.values()].filter((tab) => tab.id === activeTabId && tab.windowId === windowId),
+        query: async ({ windowId }) => [...tabs.values()].filter((tab) => tab.id === activeTabId && (windowId === undefined || tab.windowId === windowId)),
         captureVisibleTab: async (windowId) => {
           captures.push(windowId);
           return 'data:image/png;base64,iVBORw0KGgo=';
@@ -92,6 +92,7 @@ function setup(local = {}, session = {}, frameStates = [{ frameId: 0, helpers: t
     list: () => send({ type: 'GET_SCREENSHOT_APPLICATIONS' }),
     capture: (applicationId, tabId = 7, confirmed = true) => send({ type: 'CAPTURE_APPLICATION_SCREENSHOT', applicationId, tabId, confirmed }),
     setUploadStatus: (value) => { uploadStatus = value; },
+    setActiveTab: (value) => { activeTabId = value; },
     setFormResponse: (value) => { formResponse = value; },
     drain: () => vm.runInContext('Promise.allSettled([...captureSyncs.values()])', context),
     retry: () => vm.runInContext('pendingEntries().then(entries => Promise.allSettled(Object.keys(entries).map(syncCapturedSteps)))', context),
@@ -105,6 +106,43 @@ test('the stable button can load an application before any submission signal', a
   assert.equal(items.length, 1);
   assert.equal(items[0].companyName, 'Company one');
   assert.equal(items[0].submitted, false);
+});
+
+const manualCapture = (app, confirmed = true) => app.send({
+  type: 'CAPTURE_MANUAL_APPLICATION_SCREENSHOT', applicationId: 'manual-1', profileTabId: 'profile-1', confirmed,
+});
+
+test('manual capture uses the active confirmation page without arming or replacing the linked draft', async () => {
+  const app = setup();
+  await app.send({ type: 'ARM_APPLICATION_SCREENSHOT', applicationId: 'linked', draftId: 'linked', profileTabId: 'profile-1', tabId: 7 });
+  const before = (await app.list()).items;
+  app.setActiveTab(8);
+  assert.equal((await manualCapture(app)).ok, true);
+  assert.deepEqual((await app.list()).items, before);
+  assert.equal(app.uploads.length, 1);
+  assert.match(app.uploads[0].url, /drafts\/manual-1\/submit$/);
+  assert.equal(app.uploads[0].options.body.get('submission_url'), 'https://jobs.example.test/confirmation');
+  assert.equal(app.uploads[0].options.body.get('submitted'), 'true');
+  assert.ok(app.uploads[0].options.body.get('screenshot').size);
+});
+
+test('manual capture requires confirmation and a readable application page', async () => {
+  const app = setup();
+  assert.match((await manualCapture(app, false)).error, /Confirm/);
+  app.tabs.get(7).url = 'chrome://newtab';
+  assert.match((await manualCapture(app)).error, /confirmation page/);
+  assert.equal(app.captures.length, 0);
+  assert.equal(app.uploads.length, 0);
+});
+
+test('manual upload can retry the same draft after failure or a worker restart', async () => {
+  const app = setup();
+  app.setUploadStatus(503);
+  assert.match((await manualCapture(app)).error, /Upload unavailable/);
+  const restarted = setup(app.local, {});
+  assert.equal((await manualCapture(restarted)).ok, true);
+  assert.equal(app.uploads[0].url, restarted.uploads[0].url);
+  assert.equal(restarted.uploads[0].options.body.get('submission_url'), 'https://www.linkedin.com/jobs/');
 });
 
 const formSender = { tab: { id: 7 }, url: 'https://jobs.example.test/apply' };

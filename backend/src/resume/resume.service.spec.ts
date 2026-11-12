@@ -143,6 +143,40 @@ describe('ApplicationGenerationService application metadata eligibility', () => 
     expect(drafts.prepare).toHaveBeenCalledWith(user, expect.objectContaining({ conversation_id: 'conversation-local' }));
   });
 
+  it('generates a manual resume and answer context without a URL or application row', async () => {
+    const { service, drafts, prisma, duplicates, bannedUrls, applications, access } = setup();
+    const generateText = jest.spyOn(service as any, 'generateText')
+      .mockResolvedValueOnce(eligible())
+      .mockResolvedValueOnce(JSON.stringify({ summary: 'Manual resume', annual_salary: '$150,000', hourly_rate: '$72.12' }));
+    await expect(service.generate(user, { ...dto, mode: 'manual', url: undefined })).resolves.toMatchObject({
+      success: true, draft: { url: '', company_name: 'Acme' }, conversation_id: 'conversation-1',
+    });
+    expect(access.assertCanEdit).toHaveBeenCalledWith(user, dto.workspace_id);
+    expect(duplicates.classifyBatch).not.toHaveBeenCalled();
+    expect(bannedUrls.matches).not.toHaveBeenCalled();
+    expect(bannedUrls.matchesJob).toHaveBeenCalledWith('', 'Acme');
+    expect(duplicates.findRecentCompanyMatch).toHaveBeenCalledWith(dto.workspace_id, 'Acme');
+    expect(generateText.mock.calls[0][0]).toContain('Not provided (manual application)');
+    expect(drafts.prepare).toHaveBeenCalledWith(user, expect.objectContaining({ url: '', normalized_url: '', conversation_id: 'conversation-1' }));
+    expect(prisma.resumeConversation.update.mock.calls[0][0].data.reference_context).toContain('Manual resume');
+    expect(applications.createGenerated).not.toHaveBeenCalled();
+  });
+
+  it('still blocks a banned company in manual mode before generating', async () => {
+    const { service, bannedUrls, drafts } = setup();
+    bannedUrls.matchesJob.mockResolvedValue(true);
+    const generateText = jest.spyOn(service as any, 'generateText');
+    await expect(service.generate(user, { ...dto, mode: 'manual', url: undefined })).resolves.toMatchObject({ banned: true });
+    expect(generateText).not.toHaveBeenCalled();
+    expect(drafts.prepare).not.toHaveBeenCalled();
+  });
+
+  it('does not treat a missing linked URL as manual mode', async () => {
+    const { service, drafts } = setup();
+    await expect(service.generate(user, { ...dto, url: undefined })).rejects.toThrow('Job URL is required');
+    expect(drafts.prepare).not.toHaveBeenCalled();
+  });
+
   it('uses the owning admin\'s custom prompt and preserves the resume output contract', async () => {
     const { service, aiSettings } = setup();
     const config = await aiSettings.forWorkspace();

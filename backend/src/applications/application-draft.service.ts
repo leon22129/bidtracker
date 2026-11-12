@@ -34,11 +34,12 @@ export class ApplicationDraftService {
     });
   }
 
-  async latest(user: AuthUser, workspaceId: string) {
+  async latest(user: AuthUser, workspaceId: string, mode = 'linked') {
     if (!workspaceId?.trim()) throw new BadRequestException('workspace_id is required');
+    if (mode !== 'linked' && mode !== 'manual') throw new BadRequestException('Unknown application mode');
     await this.access.assertCanView(user, workspaceId);
     const draft = await this.prisma.applicationDraft.findFirst({
-      where: { workspace_id: workspaceId, created_by_user_id: user.id }, orderBy: { created_at: 'desc' },
+      where: { workspace_id: workspaceId, created_by_user_id: user.id, url: mode === 'manual' ? '' : { not: '' } }, orderBy: { created_at: 'desc' },
     });
     if (!draft) throw new NotFoundException('No prepared job found');
     const history = draft.submitted_at ? capturedFormHistory(draft.application_form_json)
@@ -72,7 +73,7 @@ export class ApplicationDraftService {
   }
 
   /** The application, its screenshot, and the draft receipt are committed together. */
-  async submit(user: AuthUser, draftId: string, file?: Express.Multer.File, submitted = false) {
+  async submit(user: AuthUser, draftId: string, file?: Express.Multer.File, submitted = false, submissionUrl?: string) {
     if (!submitted) throw new BadRequestException('Confirm successful application submission before capturing its screenshot.');
     assertScreenshotFile(file);
     const owned = await this.prisma.applicationDraft.findFirst({
@@ -90,17 +91,33 @@ export class ApplicationDraftService {
         if (!application) throw new ConflictException('This prepared job was already submitted');
         return { saved: true, already_added: true, application };
       }
-      if (await this.banned.matchesJob(draft.url, draft.company_name, db)) {
+      let url = draft.url;
+      if (!url) {
+        try {
+          if (typeof submissionUrl !== 'string' || submissionUrl.length > 2000) throw new Error();
+          const page = new URL(submissionUrl);
+          if (!['http:', 'https:'].includes(page.protocol)) throw new Error();
+          url = page.href;
+        } catch {
+          throw new BadRequestException('Open the application confirmation page before taking its screenshot.');
+        }
+      }
+      if (await this.banned.matchesJob(url, draft.company_name, db)) {
         throw new ConflictException('This company or job URL is now banned. The application was not added.');
       }
-      const [urlMatch] = await this.duplicates.classifyBatch(draft.workspace_id, [draft.url], undefined, db);
-      if (urlMatch.is_duplicate) throw new ConflictException('This job URL is already in the application table.');
+      if (draft.url) {
+        const [urlMatch] = await this.duplicates.classifyBatch(draft.workspace_id, [url], undefined, db);
+        if (urlMatch.is_duplicate) throw new ConflictException('This job URL is already in the application table.');
+      }
       const companyMatch = await this.duplicates.findRecentCompanyMatch(draft.workspace_id, draft.company_name, undefined, db);
       const date = toDayStart(new Date());
       const application = await this.numbering.withNextNumber(draft.workspace_id, date, (number) => db.jobApplication.create({
         data: {
-          workspace_id: draft.workspace_id, date, number, url: draft.url, normalized_url: normalizeUrl(draft.url),
-          company_name: draft.company_name, job_title: draft.job_title, job_source: detectJobSource(draft.url),
+          workspace_id: draft.workspace_id, date, number, url,
+          // Manual confirmation pages can share a URL across different openings.
+          // Keep each draft unique; company cooldowns still classify repeat applications.
+          normalized_url: draft.url ? normalizeUrl(url) : `manual:${draft.id}`,
+          company_name: draft.company_name, job_title: draft.job_title, job_source: detectJobSource(url),
           job_fingerprint: createJobFingerprint(draft.company_name, draft.job_title),
           application_status: companyMatch ? 'Duplicated' : 'Applied', created_by_user_id: user.id,
           note: companyMatch ? `Company duplicate within ${this.duplicates.companyCooldownDays()}-day cooldown.` : null,

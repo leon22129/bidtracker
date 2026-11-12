@@ -9,6 +9,7 @@ import {
   IsUrl,
   MaxLength,
   MinLength,
+  ValidateIf,
   ValidateNested,
 } from 'class-validator';
 
@@ -34,8 +35,13 @@ export class GenerateApplicationDto {
   @IsString()
   profile_id?: string;
 
+  @IsOptional()
+  @IsIn(['linked', 'manual'])
+  mode?: 'linked' | 'manual';
+
+  @ValidateIf((input: GenerateApplicationDto) => input.mode !== 'manual' || input.url !== undefined)
   @IsUrl({ require_protocol: true })
-  url: string;
+  url?: string;
 
   @Transform(({ value }) => typeof value === 'string' ? value.trim() : value)
   @IsString()

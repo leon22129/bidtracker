@@ -110,6 +110,22 @@ async function main() {
   const callsBeforeReuse = calls.length;
   await generation.answerQuestions(user, { conversation_id: prepared.conversation_id, questions: [{ question: 'Name' }, { question: 'Why this role?' }] });
   assert.equal(calls.length, callsBeforeReuse, 'profile fields and cached answers need no model request');
+
+  const manual = await generation.generate(user, { ...input('Manual Company'), mode: 'manual', url: undefined });
+  assert.equal(manual.success, true);
+  assert.equal(manual.draft.url, '');
+  assert.equal((await drafts.latest(user, workspace.id)).id, prepared.draft.id, 'Linked history excludes manual drafts');
+  assert.equal((await drafts.latest(user, workspace.id, 'manual')).id, manual.draft.id);
+  await generation.answerQuestions(user, { conversation_id: manual.conversation_id, questions: [{ question: 'Why this role?' }] });
+  assert.equal((await drafts.latest(user, workspace.id, 'manual')).answers[0].answer, 'It fits my experience.');
+  await assert.rejects(drafts.latest(other, workspace.id, 'manual'), (error) => error.getStatus() === 404);
+  await assert.rejects(drafts.submit(user, manual.draft.id, undefined, true), /valid PNG/);
+  await assert.rejects(drafts.submit(user, manual.draft.id, file, false), /Confirm successful/);
+  for (const url of [undefined, 'javascript:alert(1)', 'not a URL']) {
+    await assert.rejects(drafts.submit(user, manual.draft.id, file, true, url), /confirmation page/);
+  }
+  assert.equal(await count(), 0, 'Manual preparation does not add an application');
+  assert.equal(await pay(), 0);
   const capturedStep = (key, answer, time) => ({ key, step: key, url: source.url, captured_at: time,
     fields: [{ id: 'why', question: 'Why this role?', answer, section: '', field_type: 'textarea' }] });
   const capturedAt = Date.now();
@@ -184,6 +200,36 @@ async function main() {
   await assert.rejects(drafts.submit(user, urlDrafts[1].draft.id, file, true), /already in the application table/);
   assert.equal(await db.applicationScreenshot.count(), 4);
   assert.equal(await count(), 4);
+
+  const confirmationUrl = 'https://www.linkedin.com/jobs/';
+  await assert.rejects(failingDrafts.submit(user, manual.draft.id, file, true, confirmationUrl), /simulated screenshot failure/);
+  assert.equal(await count(), 4, 'Manual submission rolls back when the screenshot cannot be saved');
+  const manualRepeat = await generation.generate(user, { ...input('Manual Company'), mode: 'manual', url: undefined });
+  const manualOther = await generation.generate(user, { ...input('Another Manual Company'), mode: 'manual', url: undefined });
+  const manualSaved = await Promise.all([
+    drafts.submit(user, manual.draft.id, file, true, confirmationUrl),
+    drafts.submit(user, manual.draft.id, file, true, confirmationUrl),
+  ]);
+  assert.equal(manualSaved.filter((result) => result.already_added).length, 1);
+  assert.equal(manualSaved[0].application.id, manualSaved[1].application.id);
+  const manualRow = await db.jobApplication.findUniqueOrThrow({ where: { id: manualSaved[0].application.id } });
+  assert.equal(manualRow.url, confirmationUrl);
+  assert.equal(manualRow.job_source, 'LinkedIn');
+  assert.equal(manualRow.application_status, 'Applied');
+  assert.equal(manualRow.company_name, 'Manual Company');
+  assert.equal(JSON.parse(manualRow.application_answers_json)[0].answer, 'It fits my experience.');
+  assert.equal((await drafts.submit(user, manualRepeat.draft.id, file, true, confirmationUrl)).application.application_status, 'Duplicated');
+  assert.equal((await drafts.submit(user, manualOther.draft.id, file, true, confirmationUrl)).application.application_status, 'Applied');
+  const manualRows = await db.jobApplication.findMany({ where: { url: confirmationUrl } });
+  assert.equal(new Set(manualRows.map((row) => row.normalized_url)).size, 3, 'Shared confirmation pages are not treated as the same job URL');
+  assert.equal(await db.applicationScreenshot.count(), 7);
+  assert.equal(await count(), 7);
+  assert.equal(await pay(), 5, 'Manual applied rows count toward payment; company duplicates do not');
+  assert.ok((await drafts.latest(user, workspace.id, 'manual')).submitted_at);
+  const manualBanned = await generation.generate(user, { ...input('Manual Ban'), mode: 'manual', url: undefined });
+  await banned.create('Manual Ban', user.id);
+  await assert.rejects(drafts.submit(user, manualBanned.draft.id, file, true, confirmationUrl), /now banned/);
+  console.log('PASS: manual screenshot submission, saved page URL/source/documents, rollback, idempotent retries, shared confirmation pages, company duplicates, and payment counts');
   let finishGeneration;
   let backgroundCalls = 0;
   const delayedGeneration = { generate: async () => {

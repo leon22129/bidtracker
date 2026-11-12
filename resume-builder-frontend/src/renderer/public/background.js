@@ -185,6 +185,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  if (message?.type === "CAPTURE_MANUAL_APPLICATION_SCREENSHOT") {
+    captureManualApplication(message.applicationId, message.confirmed === true, message.profileTabId)
+      .then((result) => sendResponse({ ok: true, ...result }))
+      .catch((error) => sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error) }));
+    return true;
+  }
+
   if (message?.type === "APPLICATION_FORM_SUBMITTED" && sender.tab?.id !== undefined) {
     (async () => {
       let updated = false;
@@ -352,16 +359,27 @@ async function flushFormCapture(tabId) {
   await storageChanges;
 }
 
-async function captureAndUpload(tabId, applicationId, confirmed, profileTabId) {
-  const entries = await pendingEntries();
-  const pending = entries[pendingKey(applicationId, profileTabId)];
+async function captureManualApplication(applicationId, confirmed, profileTabId) {
+  if (!applicationId || !profileTabId) throw new Error('Generate or load a prepared job before taking its screenshot.');
+  if (!confirmed) throw new Error('Confirm that the application was submitted successfully first.');
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (tab?.id === undefined || !/^https?:\/\//i.test(tab.url || '')) {
+    throw new Error('Open the application confirmation page in the active browser tab before taking its screenshot.');
+  }
+  return captureAndUpload(tab.id, applicationId, confirmed, profileTabId, {
+    applicationId, draftId: applicationId, profileTabId, tabId: tab.id, url: tab.url, manual: true,
+  });
+}
+
+async function captureAndUpload(tabId, applicationId, confirmed, profileTabId, manualContext) {
+  const pending = manualContext || (await pendingEntries())[pendingKey(applicationId, profileTabId)];
   if (!pending || pending.tabId !== tabId) throw new Error("This application is no longer available for capture.");
   if (!pending.submitted && !confirmed) throw new Error("Confirm that the application was submitted successfully first.");
-  if (pending.sessionId !== await currentBrowserSession()) {
+  if (!pending.manual && pending.sessionId !== await currentBrowserSession()) {
     throw new Error('Reopen the confirmation page and use Load Last Job to select it again after restarting or reloading the extension.');
   }
   let captureWarning = pending.captureWarning;
-  if (pending.draftId) {
+  if (pending.draftId && !pending.manual) {
     try {
       await flushFormCapture(tabId);
       const key = pendingKey(applicationId, profileTabId);
@@ -382,11 +400,13 @@ async function captureAndUpload(tabId, applicationId, confirmed, profileTabId) {
   const tab = await chrome.tabs.get(tabId).catch(() => null);
   if (!tab) throw new Error("The original application tab is closed. Reopen the confirmation page and load the application again.");
   if (tab.windowId === undefined) throw new Error("The application tab is no longer available.");
+  if (pending.manual && tab.url !== pending.url) throw new Error('The confirmation page changed before capture. Try again when the page is ready.');
   await chrome.tabs.update(tabId, { active: true });
   await new Promise((resolve) => setTimeout(resolve, 200));
   const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: "png" });
   const [activeTab] = await chrome.tabs.query({ active: true, windowId: tab.windowId });
   if (activeTab?.id !== tabId) throw new Error("The active tab changed during capture. Return to the confirmation page and try again.");
+  if (pending.manual && activeTab.url !== tab.url) throw new Error('The confirmation page changed during capture. Try again when the page is ready.');
   const image = await fetch(dataUrl).then((response) => response.blob());
   const settings = await chrome.storage.local.get([TOKEN_KEY, API_URL_KEY]);
   const token = settings[TOKEN_KEY];
@@ -395,6 +415,7 @@ async function captureAndUpload(tabId, applicationId, confirmed, profileTabId) {
   const body = new FormData();
   body.append("screenshot", image, "application-submitted.png");
   body.append("submitted", "true");
+  if (pending.manual) body.append("submission_url", tab.url);
   const endpoint = pending.draftId
     ? `/applications/drafts/${encodeURIComponent(pending.draftId)}/submit`
     : `/applications/${encodeURIComponent(applicationId)}/screenshot`;

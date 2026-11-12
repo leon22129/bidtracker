@@ -32,6 +32,16 @@ Scanning also links the JD to its source URL and browser tab, shown separately a
 Generation always uses that linked URL when the bidder switches browser tabs. Pasted JDs require
 **Link current page** first; **Open linked job** returns to the posting if its tab was closed or changed.
 
+Each profile also has a **Manual** tab alongside **Current workflow**. Manual mode accepts a pasted
+JD without a job link and supports the same resume, cover letter, downloads, salary expectations,
+and application Q&A. After applying on LinkedIn or another site, users open the confirmation page
+and choose **Take screenshot & add application**. Manual mode captures the active browser page
+and saves its URL, source, screenshot, and prepared documents to the application table.
+Each mode remembers its own work, and **Load Last Job** restores the latest job from that mode.
+Manual jobs start as drafts with no URL and count as applications only after screenshot submission.
+Shared confirmation-page URLs do not cause URL duplicates in Manual mode. Company bans, company
+cooldowns, career-history checks, and eligibility still apply.
+
 The backend takes its required extension version from `resume-builder-frontend/package.json`
 when it is built. Super admin **Extension** settings display that version and let you edit the
 download link. Publish the matching extension download before rebuilding and restarting the backend;

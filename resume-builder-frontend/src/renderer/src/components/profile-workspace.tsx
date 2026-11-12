@@ -134,7 +134,39 @@ function comparableJobUrl(raw: string): string {
   }
 }
 
-export function ProfileWorkspace({
+type ApplicationMode = "linked" | "manual";
+
+export function ProfileWorkspace(props: ProfileWorkspaceProps) {
+  const [mode, setMode] = useState<ApplicationMode>(() => {
+    try { return localStorage.getItem(`${props.tabStorageKey}:mode`) === "manual" ? "manual" : "linked"; }
+    catch { return "linked"; }
+  });
+  const [busy, setBusy] = useState(false);
+
+  return (
+    <Tabs value={mode} onValueChange={(value) => {
+      if (busy) return;
+      const next = value as ApplicationMode;
+      setMode(next);
+      try { localStorage.setItem(`${props.tabStorageKey}:mode`, next); } catch { /* Keep the workspace usable. */ }
+    }} className="flex h-full min-h-0 flex-col gap-0">
+      <div className="shrink-0 border-b border-border px-4 py-3 sm:px-8">
+        <TabsList aria-label="Application mode" className="grid w-full grid-cols-2">
+          <TabsTrigger value="linked" disabled={busy}><Link2 className="size-4" />Current workflow</TabsTrigger>
+          <TabsTrigger value="manual" disabled={busy}><Pencil className="size-4" />Manual</TabsTrigger>
+        </TabsList>
+      </div>
+      {(["linked", "manual"] as const).map((value) => (
+        <TabsContent key={value} value={value} className="mt-0 min-h-0 flex-1 overflow-hidden">
+          <ProfileWorkspaceContent {...props} mode={value} onBusyChange={setBusy}
+            tabStorageKey={value === "manual" ? `${props.tabStorageKey}:manual` : props.tabStorageKey} />
+        </TabsContent>
+      ))}
+    </Tabs>
+  );
+}
+
+function ProfileWorkspaceContent({
   profile,
   profileTabId,
   tabStorageKey,
@@ -147,7 +179,10 @@ export function ProfileWorkspace({
   onPreviewTriggered,
   settingsOpen,
   isActive,
-}: ProfileWorkspaceProps) {
+  mode,
+  onBusyChange,
+}: ProfileWorkspaceProps & { mode: ApplicationMode; onBusyChange: (busy: boolean) => void }) {
+  const isManual = mode === "manual";
   const [savedTab] = useState(() => readProfileTabState(tabStorageKey, profile.id));
   // Operational settings synced from profile
   const [selectedTemplate, setSelectedTemplate] =
@@ -192,7 +227,7 @@ export function ProfileWorkspace({
   // Per-generation data
   const [jobDescription, setJobDescription] = useState(savedTab?.jobDescription ?? "");
   const resumeJobDescription = useRef(savedTab?.preparedJob?.description ?? "");
-  const [jobSource, setJobSource] = useState<JobPageSource | null>(savedTab?.jobSource
+  const [jobSource, setJobSource] = useState<JobPageSource | null>(isManual ? null : savedTab?.jobSource
     ?? (savedTab?.scannedJobUrl ? { url: savedTab.scannedJobUrl } : null)
     ?? (!savedTab?.jobDescription.trim() && savedTab?.preparedJob ? { url: savedTab.preparedJob.url } : null));
   const [preparedJob, setPreparedJob] = useState<PreparedTabJob | null>(savedTab?.preparedJob ?? null);
@@ -212,7 +247,7 @@ export function ProfileWorkspace({
   const [error, setError] = useState("");
   const [applicationError, setApplicationError] = useState("");
   const isJobBusy = isGenerating || isGeneratingAnswers || isSubmitting || isLoadingLastApplication || isLinkingJob;
-  const isPreparedJobActive = Boolean(preparedJob) && jobSource?.url === preparedJob?.url
+  const isPreparedJobActive = Boolean(preparedJob) && (isManual || jobSource?.url === preparedJob?.url)
     && (!jobDescription.trim()
       || jobDescription.trim() === (preparedJob?.sourceDescription ?? preparedJob?.description)?.trim());
 
@@ -274,6 +309,10 @@ export function ProfileWorkspace({
   }, [isGenerating]);
 
   useEffect(() => {
+    onBusyChange(isJobBusy || isDownloading);
+  }, [isJobBusy, isDownloading, onBusyChange]);
+
+  useEffect(() => {
     if (triggerPreview) {
       setPreviewOpen(true);
       onPreviewTriggered();
@@ -314,7 +353,7 @@ export function ProfileWorkspace({
       setError("Please enter a job description");
       return;
     }
-    if (!jobSource || jobSource.tabId === undefined) {
+    if (!isManual && (!jobSource || jobSource.tabId === undefined)) {
       setError("Use Link current page to select the URL for this JD before generating.");
       return;
     }
@@ -329,15 +368,16 @@ export function ProfileWorkspace({
     const shouldAutoDownload = profile.autoDownload ?? autoDownload;
     const shouldSaveInFolder = profile.saveInFolder ?? saveInFolder;
     try {
-      const sourceTab = await getBrowserTabContext(jobSource.tabId);
-      const tabUrl = jobSource.url;
-      if (comparableJobUrl(sourceTab.url) !== comparableJobUrl(tabUrl)) {
+      const sourceTab = !isManual && jobSource?.tabId !== undefined ? await getBrowserTabContext(jobSource.tabId) : null;
+      const tabUrl = isManual ? "" : jobSource!.url;
+      if (sourceTab && comparableJobUrl(sourceTab.url) !== comparableJobUrl(tabUrl)) {
         throw new Error("The linked browser tab has changed to another page. Open linked job to return to this posting, or paste a new JD and link its job page.");
       }
       const data = await window.aiProfiles.generate({
         profileId: profile.id,
         workspaceId: profile.workspaceId,
-        url: tabUrl,
+        mode,
+        url: isManual ? undefined : tabUrl,
         jobDescription: sourceDescription,
         kind: "resume",
       });
@@ -447,7 +487,7 @@ export function ProfileWorkspace({
       setScannedQuestions([]);
       setApplicationAnswers(data.answers ?? []);
 
-      if (data.draft?.id) {
+      if (data.draft?.id && sourceTab) {
         try {
           await armApplicationScreenshot(data.draft.id, {
             companyName: generatedCompanyName, jobTitle: generatedJobTitle,
@@ -489,13 +529,13 @@ export function ProfileWorkspace({
     setIsLoadingLastApplication(true);
     setError("");
     try {
-      const saved = await window.aiProfiles.loadLastApplication(profile.workspaceId);
+      const saved = await window.aiProfiles.loadLastApplication(profile.workspaceId, mode);
       const loadedResume = saved.resume as ResumeData;
       if (!loadedResume || typeof loadedResume !== "object" || !loadedResume.personalInfo) {
         throw new Error("The saved resume is not valid.");
       }
 
-      if (!saved.submitted_at) {
+      if (!isManual && !saved.submitted_at) {
         await armApplicationScreenshot(saved.draft_id || saved.id, {
           companyName: saved.company_name || undefined, jobTitle: saved.job_title || undefined,
           draft: Boolean(saved.draft_id), url: saved.url, profileTabId,
@@ -503,7 +543,7 @@ export function ProfileWorkspace({
       }
 
       setJobDescription(saved.job_description ?? "");
-      setJobSource((current) => current?.url === saved.url ? current : { url: saved.url });
+      setJobSource((current) => isManual ? null : current?.url === saved.url ? current : { url: saved.url });
       setPreparedJob({ applicationId: saved.draft_id || saved.id, submittedAt: saved.submitted_at,
         url: saved.url, companyName: saved.company_name || "", jobTitle: saved.job_title || "", description: saved.job_description || "" });
       resumeJobDescription.current = saved.job_description ?? "";
@@ -549,8 +589,10 @@ export function ProfileWorkspace({
 
       let mismatch = false;
       try {
-        const currentUrl = await getCurrentBrowserTabUrl();
-        mismatch = comparableJobUrl(currentUrl) !== comparableJobUrl(saved.url);
+        if (!isManual) {
+          const currentUrl = await getCurrentBrowserTabUrl();
+          mismatch = comparableJobUrl(currentUrl) !== comparableJobUrl(saved.url);
+        }
       } catch {
         // Standalone mode has no active browser tab to compare.
       }
@@ -819,6 +861,7 @@ export function ProfileWorkspace({
         applicationId={preparedJob?.submittedAt ? null : preparedJob?.applicationId ?? null}
         companyName={preparedJob?.companyName}
         jobTitle={preparedJob?.jobTitle}
+        manual={isManual}
         busy={isJobBusy}
         onCapturingChange={setIsSubmitting}
         onSaved={handleApplicationSaved}
@@ -903,7 +946,9 @@ export function ProfileWorkspace({
                 Job Description & Resume
               </CardTitle>
               <CardDescription className="mt-2">
-                Keep the JD and linked page while you apply. This workspace resets after the submission screenshot is saved and the application is added.
+                {isManual
+                  ? "Paste the job description, including the company and role, to generate your resume and answers without a job link. After applying, open the confirmation page and take its screenshot above to add the application."
+                  : "Keep the JD and linked page while you apply. This workspace resets after the submission screenshot is saved and the application is added."}
               </CardDescription>
             </div>
             <Tooltip>
@@ -937,7 +982,7 @@ export function ProfileWorkspace({
           </div>
         </CardHeader>
         <CardContent className="space-y-5 px-0">
-        <div data-job-source className="space-y-2 rounded-lg border border-border bg-card p-3 text-sm">
+        {!isManual && <div data-job-source className="space-y-2 rounded-lg border border-border bg-card p-3 text-sm">
           <p className="font-medium">Job page for this JD · {tabLabel}</p>
           {jobSource ? (
             <>
@@ -962,7 +1007,7 @@ export function ProfileWorkspace({
               </Button>
             )}
           </div>
-        </div>
+        </div>}
         <Textarea
           disabled={isJobBusy}
           placeholder={`Paste the job description here...
@@ -978,7 +1023,9 @@ export function ProfileWorkspace({
           value={jobDescription}
           onChange={(e) => {
             setJobDescription(e.target.value);
-            if (!e.target.value.trim()) {
+            if (isManual) {
+              setJobSource(null);
+            } else if (!e.target.value.trim()) {
               setJobSource((current) => preparedJob
                 ? current?.url === preparedJob.url ? current : { url: preparedJob.url }
                 : null);
@@ -998,7 +1045,7 @@ export function ProfileWorkspace({
         {preparedJob && (
           <details className="rounded-lg border border-border bg-card p-3 text-sm">
             <summary className="cursor-pointer font-medium">Prepared job: {preparedJob.companyName} · {preparedJob.jobTitle}</summary>
-            <a className="mt-2 block break-all text-primary underline" href={preparedJob.url} target="_blank" rel="noreferrer">Open job posting</a>
+            {!isManual && <a className="mt-2 block break-all text-primary underline" href={preparedJob.url} target="_blank" rel="noreferrer">Open job posting</a>}
             <pre className="mt-3 max-h-64 overflow-auto whitespace-pre-wrap font-sans text-xs text-muted-foreground">{preparedJob.description}</pre>
           </details>
         )}
@@ -1012,7 +1059,7 @@ export function ProfileWorkspace({
 
         <div className="space-y-3">
           <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap">
-            <Button disabled={isJobBusy || isPreparedJobActive || !jobDescription.trim() || jobSource?.tabId === undefined} onClick={() => void handleGenerate()}>
+            <Button disabled={isJobBusy || isPreparedJobActive || !jobDescription.trim() || (!isManual && jobSource?.tabId === undefined)} onClick={() => void handleGenerate()}>
               {isGenerating ? "Generating..." : "Generate Resume"}
             </Button>
             <Button
@@ -1029,6 +1076,13 @@ export function ProfileWorkspace({
                 Continue to Application Questions
                 <MessagesSquare className="h-4 w-4" />
               </Button>
+            )}
+            {isManual && preparedJob && (
+              <Button variant="outline" disabled={isJobBusy || isDownloading} onClick={() => {
+                handleApplicationSaved(preparedJob.applicationId);
+                setJobDescription("");
+                setJobSource(null);
+              }}>New manual job</Button>
             )}
           </div>
         </div>

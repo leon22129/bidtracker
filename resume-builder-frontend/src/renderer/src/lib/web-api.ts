@@ -135,7 +135,7 @@ const webAiProfiles: AiProfilesApi = {
   },
   async generate(input: GenerateResumeInput): Promise<GenerateResumeResult> {
     const conversationAnswers = input.kind === "applicationAnswers" && Boolean(input.conversationId)
-    const applicationGeneration = !conversationAnswers && Boolean(input.url && input.workspaceId)
+    const applicationGeneration = !conversationAnswers && Boolean(input.workspaceId && (input.mode === "manual" || input.url))
     const apiBaseUrl = await getApiBaseUrl()
     const token = await authStorage.getToken() || ""
     const path = conversationAnswers
@@ -146,7 +146,7 @@ const webAiProfiles: AiProfilesApi = {
     const data = await generateWithJob(apiFetch, path, conversationAnswers
         ? { conversation_id: input.conversationId, questions: input.questions }
         : {
-            ...(applicationGeneration ? { workspace_id: input.workspaceId } : {}),
+            ...(applicationGeneration ? { workspace_id: input.workspaceId, mode: input.mode } : {}),
             url: input.url,
             profile_id: input.profileId,
             job_description: input.jobDescription,
@@ -188,9 +188,9 @@ const webAiProfiles: AiProfilesApi = {
     if (!data?.tailored_resume) throw new Error("The AI provider returned an empty response.")
     return { tailored_resume: data.tailored_resume, full_name: data.full_name, conversationId: data.conversation_id }
   },
-  async loadLastApplication(workspaceId: string): Promise<SavedGeneratedApplication> {
-    let response = await apiFetch(`/applications/drafts/latest?workspace_id=${encodeURIComponent(workspaceId)}`)
-    if (response.status === 404) response = await apiFetch(`/applications/latest-generated?workspace_id=${encodeURIComponent(workspaceId)}`)
+  async loadLastApplication(workspaceId: string, mode = "linked"): Promise<SavedGeneratedApplication> {
+    let response = await apiFetch(`/applications/drafts/latest?workspace_id=${encodeURIComponent(workspaceId)}${mode === "manual" ? "&mode=manual" : ""}`)
+    if (response.status === 404 && mode !== "manual") response = await apiFetch(`/applications/latest-generated?workspace_id=${encodeURIComponent(workspaceId)}`)
     const data = await response.json().catch(() => null) as (SavedGeneratedApplication & { message?: string }) | null
     if (!response.ok || !data) throw new Error(data?.message || "Unable to load the last application.")
     return data
