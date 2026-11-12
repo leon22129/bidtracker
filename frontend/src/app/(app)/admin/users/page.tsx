@@ -8,10 +8,11 @@ import { ROLES, type Role, type User } from '@/lib/types';
 import { useToast } from '@/components/ui/toast';
 
 type UserStatusFilter = 'active' | 'deactivated' | 'all';
-type UserRow = { user: User; isManagedBidder: boolean };
+type UserRow = { user: User; depth: number; startsAdminGroup?: boolean };
 
-function groupUsersByManager(users: User[]): UserRow[] {
-  const visibleUserIds = new Set(users.map((user) => user.id));
+function groupUsersByManager(users: User[], depth = 0): UserRow[] {
+  const managers = users.filter((user) => user.role === 'bidder_manager');
+  const visibleManagerIds = new Set(managers.map((user) => user.id));
   const biddersByManager = new Map<string, User[]>();
   const groupedBidderIds = new Set<string>();
 
@@ -19,7 +20,7 @@ function groupUsersByManager(users: User[]): UserRow[] {
     if (
       user.role !== 'bidder'
       || !user.manager_user_id
-      || !visibleUserIds.has(user.manager_user_id)
+      || !visibleManagerIds.has(user.manager_user_id)
     ) continue;
 
     const managerBidders = biddersByManager.get(user.manager_user_id) ?? [];
@@ -29,20 +30,58 @@ function groupUsersByManager(users: User[]): UserRow[] {
   }
 
   const rows: UserRow[] = [];
-  for (const manager of users.filter((user) => user.role === 'bidder_manager')) {
-    rows.push({ user: manager, isManagedBidder: false });
+  for (const manager of managers) {
+    rows.push({ user: manager, depth });
     for (const bidder of biddersByManager.get(manager.id) ?? []) {
-      rows.push({ user: bidder, isManagedBidder: true });
+      rows.push({ user: bidder, depth: depth + 1 });
     }
   }
 
   for (const user of users) {
     if (user.role !== 'bidder_manager' && !groupedBidderIds.has(user.id)) {
-      rows.push({ user, isManagedBidder: false });
+      rows.push({ user, depth });
     }
   }
 
   return rows;
+}
+
+function groupUsersByAdmin(
+  users: User[],
+  admins: User[],
+  adminsByUserId: Map<string, User | undefined>,
+): UserRow[] {
+  const usersByAdmin = new Map<string, User[]>();
+  const unassigned: User[] = [];
+  const rows: UserRow[] = [];
+
+  for (const user of users) {
+    const admin = adminsByUserId.get(user.id);
+    if (user.role === 'super_admin') {
+      rows.push({ user, depth: 0 });
+    } else if (admin) {
+      const team = usersByAdmin.get(admin.id) ?? [];
+      team.push(user);
+      usersByAdmin.set(admin.id, team);
+    } else {
+      unassigned.push(user);
+    }
+  }
+
+  for (const admin of admins) {
+    const team = usersByAdmin.get(admin.id);
+    if (!team) continue;
+    const adminVisible = team.some((user) => user.id === admin.id);
+    const teamRows: UserRow[] = adminVisible ? [{ user: admin, depth: 0 }] : [];
+    // Keep filtered teams together without nesting them beneath another visible admin.
+    teamRows.push(...groupUsersByManager(team.filter((user) => user.id !== admin.id), adminVisible ? 1 : 0));
+    teamRows[0].startsAdminGroup = true;
+    rows.push(...teamRows);
+  }
+
+  const unassignedRows = groupUsersByManager(unassigned);
+  if (unassignedRows.length > 0) unassignedRows[0].startsAdminGroup = true;
+  return [...rows, ...unassignedRows];
 }
 
 function findAdmin(user: User, usersById: Map<string, User>): User | undefined {
@@ -130,7 +169,9 @@ export default function UsersPage() {
     statusFilter === 'all'
     || (statusFilter === 'active' ? u.is_active : !u.is_active)
   ));
-  const userRows = groupUsersByManager(filteredUsers);
+  const userRows = isSuperAdmin
+    ? groupUsersByAdmin(filteredUsers, admins, adminsByUserId)
+    : groupUsersByManager(filteredUsers);
 
   async function patch(u: User, data: Partial<{
     role: Role;
@@ -175,7 +216,7 @@ export default function UsersPage() {
           <h1 className="text-lg font-semibold">Users</h1>
           <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
             {isSuperAdmin
-              ? 'See which admin owns each bidder manager and their team. Filter by admin to view their accounts.'
+              ? 'Grouped by admin, with bidder managers and their bidders listed underneath. Filter by admin to view their team.'
               : isManager
               ? 'Add bidders to your team and deactivate access when needed.'
               : 'Roles decide what a person can do; profile ownership decides which workspace they use.'}
@@ -236,7 +277,7 @@ export default function UsersPage() {
               </tr>
             </thead>
             <tbody>
-              {userRows.map(({ user: u, isManagedBidder }) => {
+              {userRows.map(({ user: u, depth, startsAdminGroup }) => {
                 const isMe = u.id === me?.id;
                 const lastAdmin = u.role === 'admin' && adminCount <= 1;
                 const roleOptions = [...new Set([u.role, ...addableRoles])];
@@ -244,13 +285,13 @@ export default function UsersPage() {
                 return (
                   <tr
                     key={u.id}
-                    className={`border-t border-gray-100 dark:border-gray-800 ${
+                    className={`${startsAdminGroup ? 'border-t-2 border-slate-200 dark:border-slate-700' : 'border-t border-gray-100 dark:border-gray-800'} ${
                       u.is_active ? '' : 'bg-gray-50 dark:bg-gray-800 text-gray-500 dark:text-gray-400'
-                    } ${u.role === 'bidder_manager' ? 'bg-slate-50/60 dark:bg-slate-800/60' : ''}`}
+                    } ${isSuperAdmin && u.role === 'admin' ? 'bg-slate-100 dark:bg-slate-800' : u.role === 'bidder_manager' ? 'bg-slate-50/60 dark:bg-slate-800/60' : ''}`}
                   >
                     <td className="px-3 py-2">
-                      <div className={isManagedBidder ? 'flex items-start pl-5' : ''}>
-                        {isManagedBidder && (
+                      <div className={depth > 0 ? `flex items-start ${depth === 1 ? 'pl-5' : 'pl-10'}` : ''}>
+                        {depth > 0 && (
                           <span className="mr-2 text-gray-300 dark:text-gray-500" aria-hidden="true">&#8627;</span>
                         )}
                         <div>
