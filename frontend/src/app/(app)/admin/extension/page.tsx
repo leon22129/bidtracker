@@ -1,6 +1,7 @@
 'use client';
 
 import { FormEvent, useEffect, useState } from 'react';
+import Link from 'next/link';
 import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 import type { ExtensionRelease } from '@/lib/types';
@@ -65,7 +66,7 @@ export default function ExtensionReleasePage() {
           <div>
             <label className="mb-1 block text-sm font-medium" htmlFor="extension-download">Download URL</label>
             <input id="extension-download" type="url" className="input w-full" value={downloadUrl} onChange={(event) => setDownloadUrl(event.target.value)} required maxLength={2048} placeholder="https://example.com/resume-builder.zip" disabled={saving} aria-describedby="extension-download-help" />
-            <p id="extension-download-help" className="mt-1 text-xs text-gray-500 dark:text-gray-400">The download button in the update alert opens this link. Make sure users can access it before saving.</p>
+            <p id="extension-download-help" className="mt-1 text-xs text-gray-500 dark:text-gray-400">The website download page and extension update alert open this link. Make sure all users can access it before saving.</p>
           </div>
           <div className="flex flex-wrap items-center gap-3">
             <button className="btn-primary" type="submit" disabled={saving || !downloadUrl.trim()}>{saving ? 'Saving...' : 'Save download link'}</button>
@@ -73,6 +74,7 @@ export default function ExtensionReleasePage() {
           </div>
         </form>
       )}
+      <Link href="/extension" className="btn-secondary mt-4">View download page</Link>
     </main>
   );
 }

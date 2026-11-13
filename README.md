@@ -56,8 +56,13 @@ Manual jobs start as drafts with no URL and count as applications only after scr
 Shared confirmation-page URLs do not cause URL duplicates in Manual mode. Company bans, company
 cooldowns, career-history checks, and eligibility still apply.
 
+All signed-in users, including bidders, bidder managers, and admins, can open **Download extension**
+in the website navigation to see the current version and download Resume Builder. The page uses the
+same saved download URL as the extension update alert. Super admins can choose **Manage download link**
+on that page to update the URL; other users can download but cannot edit the release settings.
+
 The backend takes its required extension version from `resume-builder-frontend/package.json`
-when it is built. Super admin **Extension** settings display that version and let you edit the
+when it is built. Super admin extension settings display that version and let you edit the
 download link. Publish the matching extension download before rebuilding and restarting the backend;
 older extensions will then receive an update prompt. No separate admin version entry is needed.
 

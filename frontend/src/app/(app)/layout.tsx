@@ -40,7 +40,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     { href: '/admin/analytics', label: 'Analytics', show: canViewAnalytics(user) },
     { href: '/admin/users', label: 'Users', show: canManageUsers(user) },
     { href: '/admin/banned-urls', label: 'Banned URLs', show: isAdmin(user) },
-    { href: '/admin/extension', label: 'Extension', show: user.role === 'super_admin' },
+    { href: '/extension', label: 'Download extension', show: true },
   ].filter((n) => n.show);
 
   return (
@@ -53,7 +53,8 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
         <nav className="flex flex-wrap items-center gap-1">
           {nav.map((item) => {
-            const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
+            const active = pathname === item.href || pathname.startsWith(`${item.href}/`)
+              || (item.href === '/extension' && pathname === '/admin/extension');
             return (
               <Link
                 key={item.href}

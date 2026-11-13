@@ -88,15 +88,27 @@ describe('Extension release settings over HTTP', () => {
     expect(saved.latest_version).toBe(RESUME_BUILDER_VERSION);
   });
 
-  it.each([undefined, 'admin', 'bidder_manager', 'bidder'])('denies settings access to %s', async (role) => {
-    for (const method of ['GET', 'PATCH']) {
-      const response = await fetch(`${baseUrl}/extension-release`, {
-        method, headers: role ? headers(role) : { 'Content-Type': 'application/json' },
-        ...(method === 'PATCH' ? { body: JSON.stringify(release) } : {}),
-      });
-      expect(response.status).toBe(role ? 403 : 401);
-    }
+  it.each(['super_admin', 'admin', 'bidder_manager', 'bidder'])('lets %s read the extension download without changing it', async (role) => {
+    saved = { id: 'current', ...release, updated_at: new Date() };
+    const response = await fetch(`${baseUrl}/extension-release`, { headers: headers(role) });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ ...release, updated_at: saved.updated_at.toISOString() });
     expect(prisma.extensionRelease.upsert).not.toHaveBeenCalled();
+  });
+
+  it.each([undefined, 'admin', 'bidder_manager', 'bidder'])('denies settings changes to %s', async (role) => {
+    const response = await fetch(`${baseUrl}/extension-release`, {
+      method: 'PATCH', headers: role ? headers(role) : { 'Content-Type': 'application/json' },
+      body: JSON.stringify(release),
+    });
+    expect(response.status).toBe(role ? 403 : 401);
+    expect(prisma.extensionRelease.upsert).not.toHaveBeenCalled();
+  });
+
+  it('requires authentication to read the extension download', async () => {
+    const response = await fetch(`${baseUrl}/extension-release`);
+    expect(response.status).toBe(401);
+    expect(prisma.extensionRelease.findUnique).not.toHaveBeenCalled();
   });
 
   it('enforces the code version at login and during an existing session, with an editable download link', async () => {

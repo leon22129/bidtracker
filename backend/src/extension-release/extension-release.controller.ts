@@ -12,6 +12,7 @@ export class ExtensionReleaseController {
   constructor(private readonly release: ExtensionReleaseService) {}
 
   @Get()
+  @Roles('super_admin', 'admin', 'bidder_manager', 'bidder')
   get() { return this.release.get(); }
 
   @Patch()
