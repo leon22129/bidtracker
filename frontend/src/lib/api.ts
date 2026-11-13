@@ -147,7 +147,7 @@ export const api = {
     request<User>('/users', { method: 'POST', body: JSON.stringify(data) }),
   updateUser: (
     id: string,
-    data: Partial<{ username: string; email: string; role: Role; is_active: boolean; manager_user_id: string | null }>,
+    data: Partial<{ username: string; email: string; role: Role; is_active: boolean; manager_user_id: string | null; can_continue_after_eligibility_failure: boolean }>,
   ) => request<User>(`/users/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   resetUserPassword: (id: string, newPassword: string) =>
     request<{ success: boolean }>(`/users/${id}/reset-password`, {

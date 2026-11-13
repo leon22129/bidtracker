@@ -1,5 +1,5 @@
 import {
-  IsBoolean, IsEmail, IsIn, IsOptional, IsString, Matches, MaxLength, MinLength,
+  IsBoolean, IsEmail, IsIn, IsOptional, IsString, Matches, MaxLength, MinLength, ValidateIf,
 } from 'class-validator';
 import { ROLES, Role } from '../../common/constants';
 
@@ -47,6 +47,10 @@ export class UpdateUserDto {
   @IsOptional()
   @IsBoolean()
   is_active?: boolean;
+
+  @ValidateIf((_, value) => value !== undefined)
+  @IsBoolean()
+  can_continue_after_eligibility_failure?: boolean;
 
   @IsOptional()
   @IsString()

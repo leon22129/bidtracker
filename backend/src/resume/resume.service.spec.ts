@@ -1,4 +1,8 @@
 import { ApplicationGenerationService } from './resume.service';
+import { ForbiddenException } from '@nestjs/common';
+import { plainToInstance } from 'class-transformer';
+import { validateSync } from 'class-validator';
+import { GenerateApplicationDto, GenerateProfilePromptDto } from './dto/generate.dto';
 import { DEFAULT_RESUME_PROMPT, RESUME_OUTPUT_INSTRUCTIONS } from '../ai/resume-prompt';
 
 describe('ApplicationGenerationService application metadata eligibility', () => {
@@ -30,6 +34,7 @@ describe('ApplicationGenerationService application metadata eligibility', () => 
 
   function setup() {
     const prisma = {
+      user: { findUnique: jest.fn().mockResolvedValue({ ...user, is_active: true, can_continue_after_eligibility_failure: false }) },
       $transaction: jest.fn(async (operations) => Promise.all(operations)),
       workspace: { findUnique: jest.fn().mockResolvedValue({
         id: dto.workspace_id,
@@ -124,6 +129,92 @@ describe('ApplicationGenerationService application metadata eligibility', () => 
     requires_onsite_onboarding: false,
     reason: '',
     ...overrides,
+  });
+
+  it.each(['bidder', 'bidder_manager'] as const)('offers Continue only when the %s account is enabled', async (role) => {
+    const { service, prisma, drafts } = setup();
+    const actor = { ...user, role };
+    const generateText = jest.spyOn(service as any, 'generateText').mockResolvedValue(eligible({ requires_clearance: true }));
+    await expect(service.generate(actor, dto)).resolves.toMatchObject({ eligible: false, can_continue: false });
+    prisma.user.findUnique.mockResolvedValue({ ...actor, is_active: true, can_continue_after_eligibility_failure: true });
+    await expect(service.generate(actor, dto)).resolves.toMatchObject({ eligible: false, can_continue: true });
+    expect(generateText).toHaveBeenCalledTimes(2);
+    expect(drafts.prepare).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['bidder', 'linked'], ['bidder_manager', 'linked'], ['bidder', 'manual'], ['bidder_manager', 'manual'],
+  ] as const)('lets an enabled %s explicitly continue a %s eligibility rejection', async (role, mode) => {
+    const { service, prisma, drafts } = setup();
+    const actor = { ...user, role };
+    prisma.user.findUnique.mockResolvedValue({ ...actor, is_active: true, can_continue_after_eligibility_failure: true });
+    jest.spyOn(service as any, 'generateText')
+      .mockResolvedValueOnce(eligible({ requires_clearance: true, requires_public_trust: true, is_us_job: false,
+        work_arrangement_is_remote_only: false, requires_in_person_interview: true, requires_onsite_onboarding: true }))
+      .mockResolvedValueOnce(JSON.stringify({ summary: 'Continued resume', annual_salary: '$150,000', hourly_rate: '$72.12' }));
+    await expect(service.generate(actor, { ...dto, mode, url: mode === 'manual' ? undefined : dto.url,
+      continue_after_eligibility_failure: true })).resolves.toMatchObject({ success: true, draft: { id: 'draft-1' } });
+    expect(drafts.prepare).toHaveBeenCalledTimes(1);
+  });
+
+  it('denies Continue when permission is revoked after the eligibility failure', async () => {
+    const { service, prisma, drafts } = setup();
+    prisma.user.findUnique.mockResolvedValueOnce({ ...user, is_active: true, can_continue_after_eligibility_failure: true });
+    const generateText = jest.spyOn(service as any, 'generateText').mockResolvedValue(eligible({ is_us_job: false }));
+    await expect(service.generate(user, dto)).resolves.toMatchObject({ can_continue: true });
+    await expect(service.generate(user, { ...dto, continue_after_eligibility_failure: true })).rejects.toBeInstanceOf(ForbiddenException);
+    expect(generateText).toHaveBeenCalledTimes(1);
+    expect(drafts.prepare).not.toHaveBeenCalled();
+  });
+
+  it.each(['disabled', 'inactive', 'missing', 'admin'])("denies a forged Continue request for a %s account before calling AI", async (state) => {
+    const { service, prisma, drafts } = setup();
+    prisma.user.findUnique.mockResolvedValue(state === 'missing' ? null : {
+      ...user, role: state === 'admin' ? 'admin' : 'bidder', is_active: state !== 'inactive',
+      can_continue_after_eligibility_failure: state !== 'disabled',
+    });
+    const generateText = jest.spyOn(service as any, 'generateText');
+    await expect(service.generate(user, { ...dto, continue_after_eligibility_failure: true })).rejects.toBeInstanceOf(ForbiddenException);
+    expect(generateText).not.toHaveBeenCalled();
+    expect(drafts.prepare).not.toHaveBeenCalled();
+  });
+
+  it.each(['url ban', 'company ban', 'url duplicate', 'company cooldown', 'career history', 'missing identity', 'missing eligibility identity'])(
+    'keeps %s enforced when Continue is enabled', async (block) => {
+      const { service, prisma, duplicates, bannedUrls, drafts } = setup();
+      prisma.user.findUnique.mockResolvedValue({ ...user, is_active: true, can_continue_after_eligibility_failure: true });
+      const generateText = jest.spyOn(service as any, 'generateText').mockResolvedValue(eligible({ company_name: '' }));
+      if (block === 'url ban') bannedUrls.matches.mockResolvedValue(true);
+      if (block === 'company ban') bannedUrls.matchesJob.mockResolvedValue(true);
+      if (block === 'url duplicate') duplicates.classifyBatch.mockResolvedValue([{ is_duplicate: true }]);
+      if (block === 'company cooldown') duplicates.findRecentCompanyMatch.mockResolvedValue({ id: 'existing' });
+      if (block === 'career history') prisma.workspace.findUnique.mockResolvedValue({ id: dto.workspace_id,
+        resumeProfile: { ...profile, career_path: 'Company: Acme\nRole: Engineer' } });
+      if (block === 'missing identity') (service as any).extractJobIdentity.mockResolvedValue({ company_name: '', job_title: '' });
+      const result = await service.generate(user, { ...dto, continue_after_eligibility_failure: true });
+      expect(result.success).toBe(false);
+      expect(result).not.toHaveProperty('can_continue', true);
+      expect(drafts.prepare).not.toHaveBeenCalled();
+      expect(generateText).toHaveBeenCalledTimes(block === 'missing eligibility identity' ? 1 : 0);
+    },
+  );
+
+  it('forwards Continue through the profile generation endpoint', async () => {
+    const { service } = setup();
+    jest.spyOn(service as any, 'findAccessibleProfile').mockResolvedValue(profile);
+    const generate = jest.spyOn(service, 'generate').mockResolvedValue({ success: true } as any);
+    await service.generateProfilePrompt(user, { profile_id: profile.id, url: dto.url,
+      job_description: dto.job_description, kind: 'resume', continue_after_eligibility_failure: true });
+    expect(generate).toHaveBeenCalledWith(user, expect.objectContaining({ continue_after_eligibility_failure: true }));
+  });
+
+  it.each([null, 'true', 1])('rejects a non-boolean Continue value: %s', (value) => {
+    for (const Type of [GenerateApplicationDto, GenerateProfilePromptDto]) {
+      const errors = validateSync(plainToInstance(Type as typeof GenerateApplicationDto, {
+        ...dto, continue_after_eligibility_failure: value,
+      }));
+      expect(errors.some((error) => error.property === 'continue_after_eligibility_failure')).toBe(true);
+    }
   });
 
   it('creates a local session before eligibility without a provider conversation request', async () => {

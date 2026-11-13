@@ -22,6 +22,7 @@ model User {
   password_hash        String
   role                 String    @default("bidder") // super_admin | admin | bidder_manager | bidder
   is_active            Boolean   @default(true)
+  can_continue_after_eligibility_failure Boolean @default(false)
   created_at           DateTime  @default(now())
   updated_at           DateTime  @updatedAt
   created_by_user_id   String?

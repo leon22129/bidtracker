@@ -46,6 +46,14 @@ profiles allocated to them and choose either themselves or an active bidder on t
 workspace owner. A workspace has one owner and one resume profile; changing the owner transfers current access
 but does not rewrite historical application/payment attribution.
 
+Admins (and super admins) may set `can_continue_after_eligibility_failure` on bidders and bidder managers
+within their user-management scope. The permission defaults to false, belongs to the individual account,
+and cannot be changed by a bidder manager. Failed eligibility responses expose `can_continue` only for
+enabled accounts. An explicit `continue_after_eligibility_failure: true` generation request rechecks
+the current account permission server-side, including queued jobs; revocation applies to the next run.
+This bypass covers only eligibility rejection reasons. Bans, duplicates, career history, missing job
+identity, and workspace access remain enforced.
+
 ## 3.2 (B) Workspace scope resolution
 
 ```ts

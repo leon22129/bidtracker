@@ -37,6 +37,7 @@ export interface User {
   email: string;
   role: Role;
   is_active: boolean;
+  can_continue_after_eligibility_failure: boolean;
   created_at: string;
   updated_at: string;
   owned_workspace_count?: number;

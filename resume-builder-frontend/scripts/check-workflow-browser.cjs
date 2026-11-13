@@ -117,8 +117,9 @@ function fixture(extensionVersion) {
   };
   const originalFetch = window.fetch.bind(window);
   window.fetch = async (url, init) => {
-    if (!String(url).startsWith('https://workflow.test/api')) return originalFetch(url, init);
-    const endpoint = String(url).slice('https://workflow.test/api'.length);
+    const apiBaseUrl = ['https://workflow.test/api', 'https://alternate.workflow.test/api'].find(base => String(url).startsWith(base));
+    if (!apiBaseUrl) return originalFetch(url, init);
+    const endpoint = String(url).slice(apiBaseUrl.length);
     state.requests.push(endpoint);
     const suppliedVersion = new Headers(init?.headers).get('X-Resume-Builder-Version');
     if (suppliedVersion !== extensionVersion) throw Error('Missing or incorrect extension version on ' + endpoint);
@@ -129,6 +130,13 @@ function fixture(extensionVersion) {
       download_url: state.downloadUrl ?? 'https://downloads.example.test/resume-builder.zip',
     }), { status: 426, headers: { 'Content-Type': 'application/json' } });
     const json = (body) => new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    if (endpoint === '/auth/login') {
+      (state.loginRequests ||= []).push({ url, authorization: new Headers(init.headers).get('Authorization') });
+      if (state.rejectLogin) return new Response(JSON.stringify({ message: 'Invalid email or password' }), {
+        status: 401, headers: { 'Content-Type': 'application/json' },
+      });
+      return json({ access_token: 'fixture-token', user: { username: 'Bidder' } });
+    }
     if (endpoint === '/auth/me') return json({ id: 'u1', username: 'Bidder', role: 'bidder', is_active: true });
     if (endpoint === '/workspaces/profiles/assigned') return json([state.profile]);
     if (endpoint === '/workspaces/profiles/p1' && init?.method === 'PATCH') {
@@ -144,6 +152,18 @@ function fixture(extensionVersion) {
       if (!job || input.job_description !== jd(job)) throw Error('Wrong JD was sent');
       if (input.mode === 'manual' && Object.hasOwn(input, 'url')) throw Error('Manual generation must omit the URL');
       (state.generationInputs ||= []).push(input);
+      if (input.continue_after_eligibility_failure && !state.allowEligibilityContinue) {
+        return new Response(JSON.stringify({ message: 'Your admin has not enabled Continue after an eligibility failure for your account.' }), {
+          status: 403, headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      if (state.rejectEligibility && !input.continue_after_eligibility_failure) {
+        const id = new Headers(init.headers).get('X-Generation-Id');
+        (state.generationJobs ||= {})[id] = { kind: 'application', polls: 0,
+          result: { success: false, eligible: false, can_continue: state.allowEligibilityContinue === true,
+            reason: 'Skipped because it requires clearance.' } };
+        return json({ job_id: id, status: 'queued' });
+      }
       (state.generationUrls ||= []).push(input.url);
       if (input.mode === 'manual') state.latestManualDraft = job.id;
       else state.latestDraft = job.id;
@@ -320,6 +340,38 @@ function fixture(extensionVersion) {
       assert.equal(saved.workflowTab, 'resume');
     };
     const firstJd = await evaluate("chrome.tabs.sendMessage(73, {}).then(context => context.jobDescription)");
+    const verifyEligibilityContinue = async () => {
+      const continueButton = "[...activeProfileWorkspace.querySelectorAll('button')].some(el => el.textContent === 'Continue')";
+      const generationIdle = "![...activeProfileWorkspace.querySelectorAll('button')].find(el => el.textContent.includes('Generate Resume'))?.disabled";
+      const rowsBefore = await evaluate('workflowTest.tableRows');
+      await evaluate('workflowTest.rejectEligibility = true; workflowTest.allowEligibilityContinue = false');
+      await click('Generate Resume');
+      await waitFor(`activeProfileWorkspace.innerText.includes('Skipped because it requires clearance.') && ${generationIdle}`);
+      assert.equal(await evaluate(continueButton), false, 'Disabled users cannot continue');
+      assert.equal(await evaluate('workflowTest.generationInputs.at(-1).continue_after_eligibility_failure === true'), false);
+      await evaluate('workflowTest.allowEligibilityContinue = true');
+      await click('Generate Resume');
+      await waitFor(continueButton);
+      assert.equal(await evaluate('workflowTest.tableRows'), rowsBefore, 'Eligibility failure never submits an application');
+      const jdBefore = await evaluate("activeProfileWorkspace.querySelector('textarea').value");
+      await evaluate("activeProfileWorkspace.querySelector('textarea').focus()");
+      await page.send('Input.insertText', { text: ' Changed job' });
+      await waitFor(`!(${continueButton})`);
+      await evaluate("activeProfileWorkspace.querySelector('textarea').select()");
+      await page.send('Input.insertText', { text: jdBefore });
+      await click('Generate Resume');
+      await waitFor(continueButton);
+      await evaluate('workflowTest.allowEligibilityContinue = false');
+      await click('Continue');
+      await waitFor(`activeProfileWorkspace.innerText.includes('Your admin has not enabled Continue') && ${generationIdle}`);
+      assert.equal(await evaluate(continueButton), false, 'Revocation removes Continue after the server rejects it');
+      await evaluate('workflowTest.allowEligibilityContinue = true');
+      await click('Generate Resume');
+      await waitFor(continueButton);
+      await click('Continue');
+      await waitFor('workflowTest.generationInputs.at(-1).continue_after_eligibility_failure === true');
+      await evaluate('workflowTest.rejectEligibility = false');
+    };
     await evaluate("activeProfileWorkspace.querySelector('textarea').focus()");
     await page.send('Input.insertText', { text: firstJd });
     await waitFor("activeProfileWorkspace.querySelector('textarea').value.includes('Company: Acme')");
@@ -345,8 +397,12 @@ function fixture(extensionVersion) {
     await waitFor("activeProfileWorkspace?.querySelector('textarea')?.value.includes('Company: Acme')");
     assert.equal(await evaluate("activeProfileWorkspace.querySelector('[data-job-source]').innerText.includes('https://jobs.example.test/123')"), true);
     await evaluate('workflowTest.browserTabId = 74');
-    await click('Generate Resume');
+    await verifyEligibilityContinue();
     await waitFor("activeProfileWorkspace.innerText.includes('Prepared job: Acme') && ![...activeProfileWorkspace.querySelectorAll('button')].find(el=>el.textContent.includes('Load Last Job')).disabled", 60_000);
+    const readyToast = "[...document.querySelectorAll('[data-slot=toast][data-state=open]')].some(el => el.textContent.includes('Resume Ready'))";
+    await waitFor(readyToast);
+    await waitFor(`!(${readyToast})`, 3500);
+    console.log('PASS: the resume-ready notification dismisses automatically after 2.5 seconds');
     assert.equal(await evaluate("activeProfileWorkspace.querySelector('textarea').value"), firstJd, 'Generation keeps the original JD in the editor');
     assert.equal((await savedTab(firstTabId)).jobDescription, firstJd);
     assert.equal(await evaluate("[...activeProfileWorkspace.querySelectorAll('button')].find(el=>el.textContent.includes('Generate Resume')).disabled"), true, 'The prepared job does not need another generation');
@@ -658,7 +714,7 @@ function fixture(extensionVersion) {
     assert.equal((await savedTab(secondTabId)).jobSource.url, nextJob.jobSource.url);
     await click('Manual');
     await waitFor("activeProfileWorkspace.querySelector('textarea')?.value.includes('Manual Company')");
-    await click('Generate Resume');
+    await verifyEligibilityContinue();
     await waitFor("activeProfileWorkspace.innerText.includes('Prepared job: Manual Company')");
     assert.equal(await evaluate('workflowTest.generationInputs.at(-1).mode'), 'manual');
     assert.equal(await evaluate("Object.hasOwn(workflowTest.generationInputs.at(-1), 'url')"), false);
@@ -722,6 +778,7 @@ function fixture(extensionVersion) {
     assert.equal(await evaluate('workflowTest.tableRows'), 3);
     assert.deepEqual(await evaluate('workflowTest.errors'), []);
     await evaluate('workflowTest.browserTabId = 73');
+    console.log('PASS: Continue is permission controlled, clears when the JD changes, handles revocation, and generates resumes in linked and manual modes');
     console.log('PASS: manual generation without a browser page or URL, PDF downloads, Q&A, isolated mode state, reload, job restoration, screenshot submission from the active page, retries, and clearing only the completed manual job');
     await evaluate('workflowTest.requireUpdate = true');
     const updateError = await evaluate('window.aiProfiles.list().then(() => null, error => error.message)');
@@ -756,6 +813,39 @@ function fixture(extensionVersion) {
     const updateCapture = await page.send('Page.captureScreenshot', { format: 'png' });
     fs.writeFileSync(path.join(profilePath, 'extension-update-verified.png'), Buffer.from(updateCapture.data, 'base64'));
     console.log('PASS: HTTP 426 displays the configured download button on login, during a session, and after reload; invalid links are rejected; existing login tokens are preserved');
+    await evaluate('workflowTest.requireUpdate = false; workflowTest.rejectLogin = true');
+    await page.send('Page.reload');
+    await waitFor("document.getElementById('logged-out-backend-url')?.value === 'https://workflow.test/api'");
+    assert.equal(await evaluate("[...document.querySelectorAll('button')].some(el => el.textContent === 'Save')"), false);
+    const enterLogin = async () => {
+      await clickSelector('#logged-out-backend-url');
+      await evaluate("document.getElementById('logged-out-backend-url').select()");
+      await page.send('Input.insertText', { text: 'https://alternate.workflow.test/api/' });
+      await clickSelector('#web-username');
+      await page.send('Input.insertText', { text: 'bidder@example.test' });
+      await clickSelector('#web-password');
+      await page.send('Input.insertText', { text: 'password' });
+    };
+    await enterLogin();
+    assert.equal(await evaluate("chrome.storage.local.get('resume_ai_api_url').then(store => store.resume_ai_api_url)"), 'https://workflow.test/api');
+    await click('Sign in');
+    await waitFor("document.body.innerText.includes('Invalid email or password')");
+    assert.deepEqual(await evaluate('workflowTest.loginRequests.at(-1)'), { url: 'https://alternate.workflow.test/api/auth/login', authorization: null });
+    assert.equal(await evaluate("chrome.storage.local.get('resume_ai_api_url').then(store => store.resume_ai_api_url)"), 'https://workflow.test/api');
+    assert.equal(await evaluate("chrome.storage.local.get('resume_ai_access_token').then(store => store.resume_ai_access_token ?? null)"), null);
+    await page.send('Page.reload');
+    await waitFor("document.getElementById('logged-out-backend-url')?.value === 'https://workflow.test/api'");
+    await evaluate('workflowTest.rejectLogin = false');
+    await enterLogin();
+    await click('Sign in');
+    await waitFor('Boolean(window.activeProfileWorkspace)');
+    assert.equal(await evaluate("chrome.storage.local.get('resume_ai_api_url').then(store => store.resume_ai_api_url)"), 'https://alternate.workflow.test/api');
+    assert.equal(await evaluate("chrome.storage.local.get('resume_ai_access_token').then(store => store.resume_ai_access_token)"), 'fixture-token');
+    await reloadPage();
+    await evaluate('window.webAuth.logout()');
+    await page.send('Page.reload');
+    await waitFor("document.getElementById('logged-out-backend-url')?.value === 'https://alternate.workflow.test/api'");
+    console.log('PASS: login uses the entered URL without a Save button; failed login preserves the old URL; successful login saves the normalized URL across reload and logout');
     console.log('PASS: linked source URL stays with pasted JD across browser-tab switches and reload; changed/closed sources blocked before backend calls; reopened source used for capture; independent profile tabs, draft submission, retries, and success toast');
     console.log('PASS: generated and restored resumes keep the open-job button and disable linking; a new JD requires its own linked page');
     console.log('PASS: JDs stay visible after generation and reload; failed and pending uploads preserve all work; successful screenshot saves reset only the completed profile tab and persist the cleanup');

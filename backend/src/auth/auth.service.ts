@@ -155,6 +155,7 @@ export class AuthService {
   private toPublicUser(user: {
     id: string; username: string; email: string; role: string;
     is_active: boolean; created_at: Date; updated_at: Date;
+    can_continue_after_eligibility_failure: boolean;
   }) {
     return {
       id: user.id,
@@ -162,6 +163,7 @@ export class AuthService {
       email: user.email,
       role: user.role as Role,
       is_active: user.is_active,
+      can_continue_after_eligibility_failure: user.can_continue_after_eligibility_failure,
       created_at: user.created_at,
       updated_at: user.updated_at,
     };

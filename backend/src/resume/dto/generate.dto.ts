@@ -3,6 +3,7 @@ import {
   ArrayMaxSize,
   ArrayMinSize,
   IsArray,
+  IsBoolean,
   IsIn,
   IsOptional,
   IsString,
@@ -28,6 +29,10 @@ export class ApplicationQuestionDto {
 }
 
 export class GenerateApplicationDto {
+  @ValidateIf((_, value) => value !== undefined)
+  @IsBoolean()
+  continue_after_eligibility_failure?: boolean;
+
   @IsString()
   workspace_id: string;
 
@@ -51,6 +56,10 @@ export class GenerateApplicationDto {
 }
 
 export class GenerateProfilePromptDto {
+  @ValidateIf((_, value) => value !== undefined)
+  @IsBoolean()
+  continue_after_eligibility_failure?: boolean;
+
   @IsString()
   profile_id: string;
 

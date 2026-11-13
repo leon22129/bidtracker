@@ -59,7 +59,7 @@ import {
   getFriendlyErrorMessage,
   STORAGE_KEY_ACTIVE_TAB,
 } from "@/lib/profile-utils";
-import { clearProfileTabScreenshot, getApiBaseUrl, getCurrentBrowserTabKey, setApiBaseUrl } from "@/lib/extension-storage";
+import { clearProfileTabScreenshot, getApiBaseUrl, getCurrentBrowserTabKey } from "@/lib/extension-storage";
 import type { ExtensionUpdate } from "@/lib/extension-update";
 
 const STORAGE_KEY_OPEN_TABS = "resume_open_profile_tabs_v2";
@@ -112,7 +112,6 @@ export default function Home() {
   const [requiredUpdate, setRequiredUpdate] = useState<ExtensionUpdate | null>(null);
   const [isWebAuthRunning, setIsWebAuthRunning] = useState(false);
   const [backendUrl, setBackendUrl] = useState("");
-  const [backendUrlMessage, setBackendUrlMessage] = useState("");
   const [storagePrefix, setStoragePrefix] = useState("resume_ai:standalone");
   const [settingsOpen, setSettingsOpen] = useState(false);
 
@@ -178,7 +177,7 @@ export default function Home() {
   };
 
   useEffect(() => {
-    void getApiBaseUrl().then(setBackendUrl).catch(() => setBackendUrlMessage("Unable to load backend URL."));
+    void getApiBaseUrl().then(setBackendUrl).catch(() => setWebAuthMessage("Unable to load backend URL."));
     void getCurrentBrowserTabKey().then((tabKey) => {
       const prefix = `resume_ai:${tabKey}`;
       setStoragePrefix(prefix);
@@ -221,7 +220,7 @@ export default function Home() {
     setWebAuthMessage("");
     setIsWebAuthRunning(true);
     try {
-      const status = await window.webAuth.login(webUsername, webPassword);
+      const status = await window.webAuth.login(webUsername, webPassword, backendUrl);
       setWebAuthStatus(status);
       setWebPassword("");
       if (status.authenticated) await loadData(storagePrefix);
@@ -229,15 +228,6 @@ export default function Home() {
       setWebAuthMessage(getFriendlyErrorMessage(err, "Unable to sign in."));
     } finally {
       setIsWebAuthRunning(false);
-    }
-  };
-
-  const handleBackendUrlSave = async () => {
-    try {
-      await setApiBaseUrl(backendUrl);
-      setBackendUrlMessage("Backend URL saved.");
-    } catch (err) {
-      setBackendUrlMessage(err instanceof Error ? err.message : "Unable to save backend URL.");
     }
   };
 
@@ -386,7 +376,7 @@ export default function Home() {
     const { dismiss } = toast({
       title: `${tab?.label || profile?.name || "Profile"} — Resume Ready`,
       description: "Your resume is prepared. Apply first, then capture the confirmation screenshot to add the application.",
-      duration: Infinity,
+      duration: 2500,
       action: (
         <ToastAction
           altText="View"
@@ -472,27 +462,21 @@ export default function Home() {
               <CardDescription>Use the credentials provided for your account.</CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="mb-6 space-y-2 border-b pb-5">
-                <Field>
-                  <FieldLabel htmlFor="logged-out-backend-url">Backend API URL</FieldLabel>
-                  <div className="flex gap-2">
+              <form className="space-y-5" onSubmit={handleWebLogin}>
+                <div className="mb-6 space-y-2 border-b pb-5">
+                  <Field>
+                    <FieldLabel htmlFor="logged-out-backend-url">Backend API URL</FieldLabel>
                     <Input
                       id="logged-out-backend-url"
                       value={backendUrl}
                       onChange={(event) => setBackendUrl(event.target.value)}
                       placeholder="http://127.0.0.1:3001/api"
                       type="url"
+                      disabled={isWebAuthRunning}
+                      required
                     />
-                    <Button type="button" variant="outline" onClick={() => void handleBackendUrlSave()}>
-                      Save
-                    </Button>
-                  </div>
-                  {backendUrlMessage && (
-                    <p className="text-xs text-muted-foreground">{backendUrlMessage}</p>
-                  )}
-                </Field>
-              </div>
-              <form className="space-y-5" onSubmit={handleWebLogin}>
+                  </Field>
+                </div>
                 <Field>
                   <FieldLabel htmlFor="web-username">Username</FieldLabel>
                   <Input

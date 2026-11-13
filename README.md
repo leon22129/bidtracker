@@ -13,6 +13,20 @@ and generated answers are saved in `application_drafts`. The JD and linked job p
 after generation and when a prepared job is restored.
 Blocked and ineligible jobs do not add table rows.
 
+Admins can enable **Continue after eligibility failure** for individual bidders and bidder managers
+on **Users**. It is disabled by default and does not carry over from a manager to their bidders.
+An enabled user sees **Continue** beside a failed eligibility check in both linked and Manual modes;
+clicking it generates a resume draft despite the eligibility rejection. The server rechecks the user's
+current permission and all job checks. Company/URL bans, duplicates, career-history matches, missing
+company/title data, and workspace access still block generation. Changing the JD or linked URL clears
+the Continue action. Ordinary generation still checks eligibility and waits for the user's choice.
+Apply migration `20261112000000_add_eligibility_continue_permission` before starting this backend,
+rebuild the admin frontend, and distribute/reload Resume Builder **0.9.12**.
+
+The extension remembers the backend URL after a successful sign-in, with no separate Save button
+on the login form. Failed sign-ins leave the saved URL unchanged. Resume-ready notifications dismiss
+automatically after 2.5 seconds.
+
 Saved JDs and `jd.txt` downloads use separated headings, paragraphs, bullet lists, and wrapped text.
 Scanning preserves HTML paragraphs and lists; the untouched scanned JD is retained in the draft.
 Existing saved JDs receive the same readable formatting when downloaded.

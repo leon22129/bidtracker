@@ -6,6 +6,6 @@ export type WebAuthStatus = {
 
 export type WebAuthApi = {
   status: () => Promise<WebAuthStatus>
-  login: (username: string, password: string) => Promise<WebAuthStatus>
+  login: (username: string, password: string, apiUrl?: string) => Promise<WebAuthStatus>
   logout: () => Promise<void>
 }

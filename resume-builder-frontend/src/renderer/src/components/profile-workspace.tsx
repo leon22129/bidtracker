@@ -245,11 +245,22 @@ function ProfileWorkspaceContent({
   const [isLoadingLastApplication, setIsLoadingLastApplication] = useState(false);
   const [isLinkingJob, setIsLinkingJob] = useState(false);
   const [error, setError] = useState("");
+  const [eligibilityContinuation, setEligibilityContinuation] = useState<{
+    profileId: string; jobDescription: string; url: string;
+  } | null>(null);
   const [applicationError, setApplicationError] = useState("");
   const isJobBusy = isGenerating || isGeneratingAnswers || isSubmitting || isLoadingLastApplication || isLinkingJob;
   const isPreparedJobActive = Boolean(preparedJob) && (isManual || jobSource?.url === preparedJob?.url)
     && (!jobDescription.trim()
       || jobDescription.trim() === (preparedJob?.sourceDescription ?? preparedJob?.description)?.trim());
+  const canContinueEligibility = Boolean(eligibilityContinuation
+    && eligibilityContinuation.profileId === profile.id
+    && eligibilityContinuation.jobDescription === jobDescription.trim()
+    && eligibilityContinuation.url === (isManual ? "" : jobSource?.url));
+
+  useEffect(() => {
+    setEligibilityContinuation(null);
+  }, [profile.id, jobDescription, jobSource?.url]);
 
   // UI state
   const [previewOpen, setPreviewOpen] = useState(false);
@@ -347,8 +358,9 @@ function ProfileWorkspaceContent({
     }
   };
 
-  const handleGenerate = async () => {
+  const handleGenerate = async (continueAfterEligibilityFailure = false) => {
     if (isJobBusy || isPreparedJobActive) return;
+    if (continueAfterEligibilityFailure && !canContinueEligibility) return;
     if (!jobDescription.trim()) {
       setError("Please enter a job description");
       return;
@@ -358,6 +370,7 @@ function ProfileWorkspaceContent({
       return;
     }
     setError("");
+    setEligibilityContinuation(null);
     const sourceDescription = jobDescription.trim();
     setIsGenerating(true);
 
@@ -379,6 +392,7 @@ function ProfileWorkspaceContent({
         mode,
         url: isManual ? undefined : tabUrl,
         jobDescription: sourceDescription,
+        ...(continueAfterEligibilityFailure ? { continueAfterEligibilityFailure: true } : {}),
         kind: "resume",
       });
       if (data.duplicate) {
@@ -404,7 +418,8 @@ function ProfileWorkspaceContent({
       if (data.eligible === false) {
         const reason = data.reason || "This position did not pass the eligibility check.";
         setError(reason);
-        if (isActive) toast({ title: "Position skipped", description: reason });
+        if (data.canContinue) setEligibilityContinuation({ profileId: profile.id, jobDescription: sourceDescription, url: tabUrl });
+        if (isActive) toast({ title: data.canContinue ? "Eligibility check failed" : "Position skipped", description: reason });
         return;
       }
       const generatedContent = data.tailored_resume || "";
@@ -1053,7 +1068,18 @@ function ProfileWorkspaceContent({
         {error && (
           <Alert variant="destructive">
           <AlertCircle className="h-4 w-4" />
-          <AlertDescription>{error}</AlertDescription>
+          <AlertDescription>
+            {error}
+            {canContinueEligibility && (
+              <div className="mt-3 space-y-2">
+                <p>Your admin has enabled you to continue and generate a resume for this job.</p>
+                <Button type="button" disabled={isJobBusy || isPreparedJobActive}
+                  onClick={() => void handleGenerate(true)}>
+                  Continue
+                </Button>
+              </div>
+            )}
+          </AlertDescription>
           </Alert>
         )}
 

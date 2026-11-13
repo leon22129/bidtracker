@@ -26,6 +26,7 @@ creator, so reassignment cannot move earlier work to another bidder.
 | `role` | TEXT | `super_admin` \| `admin` \| `bidder_manager` \| `bidder` |
 | `manager_user_id` | TEXT FK nullable | For bidder rows, the assigned `bidder_manager`; deleting the manager clears the assignment |
 | `is_active` | BOOL | deactivation instead of delete when the user has payment history |
+| `can_continue_after_eligibility_failure` | BOOL default false | Admin-controlled, per-account permission for bidders and bidder managers to explicitly continue resume generation after an eligibility rejection |
 | `created_at` / `updated_at` | DATETIME | |
 
 ### Workspace

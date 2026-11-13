@@ -1,4 +1,7 @@
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
+import { plainToInstance } from 'class-transformer';
+import { validateSync } from 'class-validator';
+import { UpdateUserDto } from './dto/user.dto';
 import { UsersService } from './users.service';
 
 describe('UsersService bidder manager assignments', () => {
@@ -21,6 +24,52 @@ describe('UsersService bidder manager assignments', () => {
     );
     return { prisma, service };
   }
+
+  it.each(['bidder', 'bidder_manager'])('allows admins to grant and revoke Continue for a %s', async (role) => {
+    const { prisma, service } = setup();
+    prisma.user.findUnique.mockResolvedValue({ id: 'target', role });
+    prisma.user.findFirst.mockResolvedValue({ id: 'target' });
+    for (const enabled of [true, false]) {
+      await service.update('target', { can_continue_after_eligibility_failure: enabled }, admin);
+      expect(prisma.user.update).toHaveBeenLastCalledWith(expect.objectContaining({
+        data: expect.objectContaining({ can_continue_after_eligibility_failure: enabled }),
+        select: expect.objectContaining({ can_continue_after_eligibility_failure: true }),
+      }));
+    }
+  });
+
+  it('prevents a manager from granting Continue to their own bidder', async () => {
+    const { prisma, service } = setup();
+    prisma.user.findUnique.mockResolvedValue({ id: 'target', role: 'bidder' });
+    prisma.user.findFirst.mockResolvedValue({ id: 'target' });
+    await expect(service.update('target', { can_continue_after_eligibility_failure: true }, {
+      ...admin, role: 'bidder_manager',
+    })).rejects.toBeInstanceOf(ForbiddenException);
+    expect(prisma.user.update).not.toHaveBeenCalled();
+  });
+
+  it('prevents admins from enabling Continue outside their account', async () => {
+    const { prisma, service } = setup();
+    prisma.user.findUnique.mockResolvedValue({ id: 'target', role: 'bidder' });
+    prisma.user.findFirst.mockResolvedValue(null);
+    await expect(service.update('target', { can_continue_after_eligibility_failure: true }, admin))
+      .rejects.toBeInstanceOf(NotFoundException);
+    expect(prisma.user.update).not.toHaveBeenCalled();
+  });
+
+  it('does not grant the bidder permission to an admin account', async () => {
+    const { prisma, service } = setup();
+    prisma.user.findUnique.mockResolvedValue({ id: 'target', role: 'admin' });
+    await expect(service.update('target', { can_continue_after_eligibility_failure: true }, {
+      ...admin, role: 'super_admin',
+    })).rejects.toBeInstanceOf(BadRequestException);
+    expect(prisma.user.update).not.toHaveBeenCalled();
+  });
+
+  it.each([null, 'true', 1])('rejects a non-boolean Continue permission: %s', (value) => {
+    const errors = validateSync(plainToInstance(UpdateUserDto, { can_continue_after_eligibility_failure: value }));
+    expect(errors.some((error) => error.property === 'can_continue_after_eligibility_failure')).toBe(true);
+  });
 
   it('allows an admin to assign one of their active bidder managers to a bidder', async () => {
     const { prisma, service } = setup();

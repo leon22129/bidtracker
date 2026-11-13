@@ -17,6 +17,7 @@ const PUBLIC_SELECT = {
   manager_user_id: true,
   manager: { select: { id: true, username: true } },
   is_active: true,
+  can_continue_after_eligibility_failure: true,
   created_at: true,
   updated_at: true,
 } as const;
@@ -149,6 +150,10 @@ export class UsersService {
     await this.assertUnique(email, username, id);
 
     const effectiveRole = dto.role ?? user.role;
+    if (dto.can_continue_after_eligibility_failure !== undefined
+      && !['bidder', 'bidder_manager'].includes(effectiveRole)) {
+      throw new BadRequestException('Only bidders and bidder managers can be enabled to continue after an eligibility failure');
+    }
     const managerUserId = dto.manager_user_id !== undefined || effectiveRole !== 'bidder'
       ? await this.validateManagerAssignment(
         effectiveRole,
@@ -164,6 +169,11 @@ export class UsersService {
         ...(email !== undefined ? { email } : {}),
         ...(dto.role !== undefined ? { role: dto.role } : {}),
         ...(dto.is_active !== undefined ? { is_active: dto.is_active } : {}),
+        ...(!['bidder', 'bidder_manager'].includes(effectiveRole)
+          ? { can_continue_after_eligibility_failure: false }
+          : dto.can_continue_after_eligibility_failure !== undefined
+            ? { can_continue_after_eligibility_failure: dto.can_continue_after_eligibility_failure }
+            : {}),
         ...(managerUserId !== undefined ? { manager_user_id: managerUserId } : {}),
       },
       select: PUBLIC_SELECT,

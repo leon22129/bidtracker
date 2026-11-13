@@ -178,6 +178,7 @@ export default function UsersPage() {
     is_active: boolean;
     username: string;
     manager_user_id: string | null;
+    can_continue_after_eligibility_failure: boolean;
   }>) {
     try {
       await api.updateUser(u.id, data);
@@ -273,6 +274,7 @@ export default function UsersPage() {
                 <th className="px-3 py-2 font-medium">Workspaces</th>
                 <th className="px-3 py-2 font-medium">Manager</th>
                 <th className="px-3 py-2 font-medium">Status</th>
+                {!isManager && <th className="px-3 py-2 font-medium">Continue after eligibility failure</th>}
                 <th className="px-3 py-2 text-right font-medium">Actions</th>
               </tr>
             </thead>
@@ -370,6 +372,18 @@ export default function UsersPage() {
                         {u.is_active ? 'active' : 'deactivated'}
                       </span>
                     </td>
+                    {!isManager && (
+                      <td className="px-3 py-2">
+                        {(u.role === 'bidder' || u.role === 'bidder_manager') && (
+                          <label className="flex items-center gap-2 whitespace-nowrap">
+                            <input type="checkbox" checked={u.can_continue_after_eligibility_failure ?? false}
+                              aria-label={`Allow ${u.username} to continue after eligibility failure`}
+                              onChange={(e) => void patch(u, { can_continue_after_eligibility_failure: e.target.checked })} />
+                            {u.can_continue_after_eligibility_failure ? 'Enabled' : 'Disabled'}
+                          </label>
+                        )}
+                      </td>
+                    )}
                     <td className="px-3 py-2">
                       <div className="flex justify-end gap-1.5">
                         {!isManager && (

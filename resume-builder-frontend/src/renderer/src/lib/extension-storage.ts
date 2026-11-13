@@ -45,12 +45,16 @@ export async function getApiBaseUrl(): Promise<string> {
   return getValue(API_URL_KEY, env?.VITE_BIDTRACKER_API_URL || DEFAULT_API_URL);
 }
 
-export async function setApiBaseUrl(value: string): Promise<void> {
+export function normalizeApiBaseUrl(value: string): string {
   const normalized = value.trim().replace(/\/+$/, "");
   if (!/^https?:\/\/[^\s]+$/i.test(normalized)) {
     throw new Error("Enter a valid HTTP or HTTPS backend URL.");
   }
-  await setValue(API_URL_KEY, normalized);
+  return normalized;
+}
+
+export async function setApiBaseUrl(value: string): Promise<void> {
+  await setValue(API_URL_KEY, normalizeApiBaseUrl(value));
 }
 
 export const authStorage = {

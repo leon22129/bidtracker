@@ -1,5 +1,5 @@
 import {
-  BadGatewayException, BadRequestException, Injectable, Logger,
+  BadGatewayException, BadRequestException, ForbiddenException, Injectable, Logger,
 } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { Prisma } from '@prisma/client';
@@ -184,6 +184,9 @@ export class ApplicationGenerationService {
     const url = dto.mode === 'manual' ? '' : dto.url?.trim() || '';
     if (dto.mode !== 'manual' && !url) throw new BadRequestException('Job URL is required for linked applications');
     await this.access.assertCanEdit(user, dto.workspace_id);
+    if (dto.continue_after_eligibility_failure && !await this.canContinueAfterEligibilityFailure(user)) {
+      throw new ForbiddenException('Your admin has not enabled Continue after an eligibility failure for your account.');
+    }
     const workspace = await this.prisma.workspace.findUnique({ where: { id: dto.workspace_id }, include: { resumeProfile: true } });
     if (!workspace) throw new BadRequestException('Workspace not found');
 
@@ -273,10 +276,11 @@ export class ApplicationGenerationService {
     }
     if (eligibilityJson.requires_in_person_interview) rejectionReasons.push('it requires an in-person interview');
     if (eligibilityJson.requires_onsite_onboarding) rejectionReasons.push('it requires onsite onboarding');
-    if (rejectionReasons.length) {
+    if (rejectionReasons.length && !dto.continue_after_eligibility_failure) {
       return {
         success: false,
         eligible: false,
+        can_continue: await this.canContinueAfterEligibilityFailure(user),
         url,
         reason: `Skipped because ${rejectionReasons.join(', ')}.`,
         eligibility: eligibilityJson,
@@ -326,6 +330,8 @@ export class ApplicationGenerationService {
       provider: config.provider,
       draft_id: draft.id,
       scope: 'eligibility_and_resume_generation',
+      eligibility_overridden: rejectionReasons.length > 0,
+      eligibility_rejection_reasons: rejectionReasons,
       ...prefixedOpenAiUsageFields('eligibility', eligibilityUsage, this.usageRates(config, eligibilityUsage)),
       ...prefixedOpenAiUsageFields('resume', resumeUsage, this.usageRates(config, resumeUsage)),
       ...prefixedOpenAiUsageFields(
@@ -344,6 +350,18 @@ export class ApplicationGenerationService {
       conversation_id: conversation.id,
       full_name: profile.full_name,
     };
+  }
+
+  private async canContinueAfterEligibilityFailure(user: AuthUser): Promise<boolean> {
+    if (!['bidder', 'bidder_manager'].includes(user.role)) return false;
+    // Read the current permission for both direct requests and queued jobs, including revocations.
+    const account = await this.prisma.user.findUnique({
+      where: { id: user.id },
+      select: { role: true, is_active: true, can_continue_after_eligibility_failure: true },
+    });
+    return account?.is_active === true
+      && ['bidder', 'bidder_manager'].includes(account.role)
+      && account.can_continue_after_eligibility_failure === true;
   }
 
   private async extractJobIdentity(jobDescription: string, config: AiConfiguration): Promise<{ company_name: string; job_title: string }> {
@@ -391,7 +409,8 @@ export class ApplicationGenerationService {
     }
     if (dto.job_description && dto.kind === 'resume') {
       return this.generate(user, { workspace_id: profile.workspace_id, profile_id: profile.id,
-        url: dto.url, job_description: dto.job_description });
+        url: dto.url, job_description: dto.job_description,
+        continue_after_eligibility_failure: dto.continue_after_eligibility_failure });
     }
     if (dto.job_description && dto.kind === 'applicationAnswers' && dto.questions?.length) {
       const known = this.knownProfileAnswers(dto.questions, profile);

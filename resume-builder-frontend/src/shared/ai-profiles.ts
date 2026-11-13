@@ -52,6 +52,7 @@ export type ApplicationQuestionInput = {
 }
 
 export type GenerateResumeInput = {
+  continueAfterEligibilityFailure?: boolean
   profileId: string
   mode?: "linked" | "manual"
   workspaceId?: string
@@ -70,6 +71,7 @@ export type GenerateResumeResult = {
   conversationId?: string
   answers?: Array<{ question: string; answer: string }>
   eligible?: boolean
+  canContinue?: boolean
   reason?: string
   jobDescription?: string
   banned?: boolean

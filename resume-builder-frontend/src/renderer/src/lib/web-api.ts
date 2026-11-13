@@ -14,7 +14,7 @@ import {
   normalizeResumeEducation,
   normalizeResumePersonalInfo,
 } from "../../../shared/resume-profile"
-import { authStorage, getApiBaseUrl } from "@/lib/extension-storage"
+import { authStorage, getApiBaseUrl, normalizeApiBaseUrl, setApiBaseUrl } from "@/lib/extension-storage"
 import { parseExtensionUpdate } from "@/lib/extension-update"
 import { generateWithJob } from "@/lib/generation-job"
 
@@ -29,12 +29,12 @@ class UnauthorizedError extends Error {
   }
 }
 
-async function apiFetch(path: string, init: RequestInit = {}): Promise<Response> {
-  const token = await authStorage.getToken()
+async function apiFetch(path: string, init: RequestInit = {}, apiBaseUrl?: string): Promise<Response> {
+  const token = path === "/auth/login" ? null : await authStorage.getToken()
   const headers = new Headers(init.headers)
   headers.set("X-Resume-Builder-Version", __APP_VERSION__)
   if (token) headers.set("Authorization", `Bearer ${token}`)
-  const response = await fetch(`${await getApiBaseUrl()}${path}`, { ...init, headers })
+  const response = await fetch(`${apiBaseUrl ?? await getApiBaseUrl()}${path}`, { ...init, headers })
   if (response.status === 426) {
     const update = parseExtensionUpdate(await response.json().catch(() => null))
     window.dispatchEvent(new CustomEvent("resume-ai-update-required", { detail: update }))
@@ -150,10 +150,11 @@ const webAiProfiles: AiProfilesApi = {
             url: input.url,
             profile_id: input.profileId,
             job_description: input.jobDescription,
+            continue_after_eligibility_failure: input.continueAfterEligibilityFailure,
             kind: input.kind,
             ...(!applicationGeneration ? { questions: input.questions } : {}),
             resume: input.resume,
-          }, `${apiBaseUrl}\n${token}`, { apiBaseUrl, token, version: __APP_VERSION__ }) as { tailored_resume?: string; full_name?: string; conversation_id?: string; job_description?: string; error?: string; message?: string; eligible?: boolean; reason?: string; banned?: boolean; resume?: unknown; answers?: unknown; application?: GenerateResumeResult["application"]; draft?: GenerateResumeResult["draft"]; duplicate?: boolean; duplicate_type?: string | null; cooldown_days?: number; company_name?: string; existing_application?: GenerateResumeResult["existingApplication"] } | null
+          }, `${apiBaseUrl}\n${token}`, { apiBaseUrl, token, version: __APP_VERSION__ }) as { tailored_resume?: string; full_name?: string; conversation_id?: string; job_description?: string; error?: string; message?: string; eligible?: boolean; can_continue?: boolean; reason?: string; banned?: boolean; resume?: unknown; answers?: unknown; application?: GenerateResumeResult["application"]; draft?: GenerateResumeResult["draft"]; duplicate?: boolean; duplicate_type?: string | null; cooldown_days?: number; company_name?: string; existing_application?: GenerateResumeResult["existingApplication"] } | null
     if (conversationAnswers) {
       if (!Array.isArray(data?.answers)) throw new Error("The AI provider returned an empty response.")
       return { tailored_resume: JSON.stringify({ answers: data.answers }) }
@@ -181,7 +182,7 @@ const webAiProfiles: AiProfilesApi = {
         full_name: data.full_name,
       }
       if (data?.banned) return { banned: true, tailored_resume: "" }
-      if (data?.eligible === false) return { eligible: false, reason: data.reason, jobDescription: data.job_description, tailored_resume: "" }
+      if (data?.eligible === false) return { eligible: false, canContinue: data.can_continue === true, reason: data.reason, jobDescription: data.job_description, tailored_resume: "" }
       if (!data?.resume) throw new Error("The AI provider returned an empty response.")
       return { eligible: true, tailored_resume: JSON.stringify(data.resume), full_name: data.full_name, conversationId: data.conversation_id, jobDescription: data.job_description, draft: data.draft, answers }
     }
@@ -214,14 +215,16 @@ const webAuth: WebAuthApi = {
     const data = await response.json() as { username: string }
     return { authenticated: true, username: data.username }
   },
-  async login(username, password) {
+  async login(username, password, apiUrl) {
+    const apiBaseUrl = normalizeApiBaseUrl(apiUrl ?? await getApiBaseUrl())
     const response = await apiFetch("/auth/login", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email: username, password }),
-    })
+    }, apiBaseUrl)
     const data = await response.json().catch(() => null) as { access_token?: string; user?: { username: string }; message?: string } | null
     if (!response.ok || !data?.access_token) throw new Error(data?.message || "Unable to sign in.")
+    await setApiBaseUrl(apiBaseUrl)
     await authStorage.setToken(data.access_token)
     return { authenticated: true, username: data.user?.username || username }
   },
