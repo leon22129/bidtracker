@@ -2,7 +2,8 @@ import { pdf } from "@react-pdf/renderer"
 import { withTimeout } from "../../../shared/with-timeout"
 
 const PDF_TIMEOUT_MS = 60_000
-type PdfStream = NodeJS.ReadableStream & { destroy?: () => void }
+type PdfStream = Pick<NodeJS.ReadableStream, "on"> &
+  Partial<Pick<NodeJS.ReadableStream, "off" | "removeListener">> & { destroy?: () => void }
 
 export function renderPdfBlob(document: Parameters<typeof pdf>[0]): Promise<Blob> {
   let stream: PdfStream | undefined
@@ -19,10 +20,12 @@ export function renderPdfBlob(document: Parameters<typeof pdf>[0]): Promise<Blob
     return new Promise<Blob>((resolve, reject) => {
       const chunks: Uint8Array[] = []
       const cleanup = () => {
-        source.removeListener("data", onData)
-        source.removeListener("end", onEnd)
-        source.removeListener("error", onError)
-        source.removeListener("close", onClose)
+        // PDFKit's browser stream exposes off(); older streams use removeListener().
+        const remove = source.off ?? source.removeListener
+        remove?.call(source, "data", onData)
+        remove?.call(source, "end", onEnd)
+        remove?.call(source, "error", onError)
+        remove?.call(source, "close", onClose)
       }
       const onData = (chunk: Uint8Array) => chunks.push(new Uint8Array(chunk))
       const onError = (error: unknown) => {

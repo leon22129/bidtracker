@@ -52,15 +52,22 @@ function harness(globals = {}, overrides = {}) {
   } };
 }
 
-function stream() {
+function stream(listenerApi = 'both') {
   const source = new EventEmitter();
-  source.destroy = () => { source.destroyed = true; source.emit('close'); };
+  if (listenerApi === 'off') {
+    source.off = EventEmitter.prototype.removeListener;
+    source.removeListener = undefined;
+    source.destroy = undefined;
+  } else {
+    if (listenerApi === 'removeListener') source.off = undefined;
+    source.destroy = () => { source.destroyed = true; source.emit('close'); };
+  }
   source.complete = () => { source.emit('data', new TextEncoder().encode('%PDF-fixture')); source.emit('end'); source.emit('close'); };
   return source;
 }
 
-test('PDF streams produce a PDF blob and release listeners and timers', async () => {
-  const source = stream();
+for (const listenerApi of ['both', 'off', 'removeListener']) test(`PDF streams with ${listenerApi} produce a PDF blob and release listeners and timers`, async () => {
+  const source = stream(listenerApi);
   const app = harness({}, { '@react-pdf/renderer': { pdf: () => ({ toBuffer: async () => source }) } });
   const result = app.load('render-pdf.ts').renderPdfBlob({});
   await flush(); source.complete();
@@ -71,8 +78,8 @@ test('PDF streams produce a PDF blob and release listeners and timers', async ()
   assert.equal(app.timers.size, 0);
 });
 
-for (const event of ['error', 'close']) test(`PDF stream ${event} rejects instead of leaving the download pending`, async () => {
-  const source = stream();
+for (const listenerApi of ['both', 'off', 'removeListener']) for (const event of ['error', 'close']) test(`PDF stream ${event} with ${listenerApi} rejects instead of leaving the download pending`, async () => {
+  const source = stream(listenerApi);
   const app = harness({}, { '@react-pdf/renderer': { pdf: () => ({ toBuffer: async () => source }) } });
   const rejected = assert.rejects(app.load('render-pdf.ts').renderPdfBlob({}), /Could not prepare the PDF/);
   await flush(); source.emit(event, new Error('broken stream')); await rejected;
