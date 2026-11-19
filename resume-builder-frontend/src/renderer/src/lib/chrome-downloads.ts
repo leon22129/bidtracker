@@ -1,7 +1,12 @@
+import { withTimeout } from "../../../shared/with-timeout"
+
 export async function downloadBlob(blob: Blob, filename: string): Promise<void> {
   const chromeApi = (globalThis as {
     chrome?: {
-      downloads?: { download: (options: { url: string; filename: string; saveAs?: boolean }, callback?: (downloadId: number) => void) => Promise<number> | void }
+      downloads?: {
+        download: (options: { url: string; filename: string; saveAs?: boolean }, callback?: (downloadId: number) => void) => Promise<number> | void
+        cancel?: (downloadId: number) => Promise<void> | void
+      }
       runtime?: { lastError?: { message?: string } }
     }
   }).chrome
@@ -9,18 +14,19 @@ export async function downloadBlob(blob: Blob, filename: string): Promise<void> 
   try {
     if (chromeApi?.downloads) {
       try {
-        const dataUrl = await new Promise<string>((resolve, reject) => {
-          const reader = new FileReader()
+        const reader = new FileReader()
+        const dataUrl = await withTimeout(new Promise<string>((resolve, reject) => {
           reader.onload = () => resolve(String(reader.result))
           reader.onerror = () => reject(reader.error)
+          reader.onabort = () => reject(new Error("Preparing the download was interrupted. Please try again."))
           reader.readAsDataURL(blob)
-        })
-        await new Promise<void>((resolve, reject) => {
+        }), 30_000, "Preparing the download took too long. Please try again.", { onTimeout: () => reader.abort() })
+        await withTimeout(new Promise<number>((resolve, reject) => {
           let settled = false
-          const finish = (error?: Error) => {
+          const finish = (error?: Error, downloadId?: number) => {
             if (settled) return
             settled = true
-            error ? reject(error) : resolve()
+            error ? reject(error) : resolve(downloadId!)
           }
           const result = chromeApi.downloads!.download(
             { url: dataUrl, filename, saveAs: false },
@@ -34,7 +40,7 @@ export async function downloadBlob(blob: Blob, filename: string): Promise<void> 
                 finish(new Error("Chrome could not start the download."))
                 return
               }
-              finish()
+              finish(undefined, downloadId)
             },
           )
           if (result && typeof result.then === "function") {
@@ -43,12 +49,15 @@ export async function downloadBlob(blob: Blob, filename: string): Promise<void> 
                 finish(new Error("Chrome could not start the download."))
                 return
               }
-              finish()
+              finish(undefined, downloadId)
             }).catch((error: unknown) => finish(error instanceof Error ? error : new Error(String(error))))
           }
+        }), 30_000, "Chrome did not respond to the download request. Check Chrome Downloads before trying again.", {
+          onLateResult: (downloadId) => chromeApi.downloads?.cancel?.(downloadId),
         })
         return
       } catch (error) {
+        if (error instanceof Error && error.name === "TimeoutError") throw error
         throw new Error("Chrome could not start the download. Check its download permissions and the selected folder.", { cause: error })
       }
     }

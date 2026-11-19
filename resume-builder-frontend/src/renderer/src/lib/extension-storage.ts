@@ -1,3 +1,5 @@
+import { withTimeout } from "../../../shared/with-timeout";
+
 const DEFAULT_API_URL = "https://bidtracker365.com/api";
 const API_URL_KEY = "resume_ai_api_url";
 const TOKEN_KEY = "resume_ai_access_token";
@@ -69,7 +71,8 @@ export const authStorage = {
 export type ProfileDownloadPaths = Record<string, string>;
 
 export async function getProfileDownloadPaths(): Promise<ProfileDownloadPaths> {
-  return getValue(PROFILE_DOWNLOAD_PATHS_KEY, {});
+  return withTimeout(getValue<ProfileDownloadPaths>(PROFILE_DOWNLOAD_PATHS_KEY, {}), 10_000,
+    "The browser did not respond while reading the download location. Reload the extension and try again.");
 }
 
 export async function setProfileDownloadPath(profileId: string, path: string): Promise<void> {
@@ -78,7 +81,8 @@ export async function setProfileDownloadPath(profileId: string, path: string): P
   if (!normalized || normalized.split("/").some((part) => part === "." || part === ".." || /[:*?"<>|]/.test(part))) {
     throw new Error("Enter a relative download path such as Resumes/Go.");
   }
-  await setValue(PROFILE_DOWNLOAD_PATHS_KEY, { ...paths, [profileId]: normalized });
+  await withTimeout(setValue(PROFILE_DOWNLOAD_PATHS_KEY, { ...paths, [profileId]: normalized }), 10_000,
+    "The browser did not respond while saving the download location. Reload the extension and try again.");
 }
 
 export async function getCurrentBrowserTabKey(): Promise<string> {
@@ -303,11 +307,23 @@ export async function getCurrentPageContext({ includeQuestions = true }: { inclu
 }
 
 function openDirectoryHandleDb(): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
+  let abandoned = false;
+  return withTimeout(new Promise<IDBDatabase>((resolve, reject) => {
     const request = indexedDB.open(PROFILE_DIRECTORY_HANDLES_DB, 1);
     request.onupgradeneeded = () => request.result.createObjectStore(PROFILE_DIRECTORY_HANDLES_STORE);
-    request.onsuccess = () => resolve(request.result);
+    request.onsuccess = () => {
+      const db = request.result;
+      if (abandoned) { db.close(); return; }
+      db.onversionchange = () => db.close();
+      resolve(db);
+    };
+    request.onblocked = () => {
+      abandoned = true;
+      reject(new Error("The saved download folder is locked by another open window. Close other Resume Builder windows and try again."));
+    };
     request.onerror = () => reject(request.error);
+  }), 10_000, "The browser did not respond while opening the saved download folder. Reload the extension and try again.", {
+    onTimeout: () => { abandoned = true; },
   });
 }
 
@@ -316,16 +332,22 @@ export async function getProfileDirectoryHandle(profileId: string): Promise<File
   try {
     const db = await openDirectoryHandleDb();
     try {
-      return await new Promise((resolve, reject) => {
-        const request = db.transaction(PROFILE_DIRECTORY_HANDLES_STORE, "readonly")
+      const transaction = db.transaction(PROFILE_DIRECTORY_HANDLES_STORE, "readonly");
+      return await withTimeout(new Promise<FileSystemDirectoryHandle | null>((resolve, reject) => {
+        const request = transaction
           .objectStore(PROFILE_DIRECTORY_HANDLES_STORE).get(`resumeDirHandle:${profileId}`);
         request.onsuccess = () => resolve(request.result ?? null);
         request.onerror = () => reject(request.error);
+        transaction.onabort = () => reject(transaction.error ?? new Error("Reading the download folder was interrupted."));
+        transaction.onerror = () => reject(transaction.error);
+      }), 10_000, "The browser did not respond while reading the saved download folder. Reload the extension and try again.", {
+        onTimeout: () => transaction.abort(),
       });
     } finally {
       db.close();
     }
   } catch (cause) {
+    if (cause instanceof Error && cause.name === "TimeoutError") throw cause;
     throw new Error("Unable to read the saved download folder. Check the location in extension Settings under Profile download locations.", { cause });
   }
 }
@@ -333,12 +355,14 @@ export async function getProfileDirectoryHandle(profileId: string): Promise<File
 export async function setProfileDirectoryHandle(profileId: string, handle: FileSystemDirectoryHandle): Promise<void> {
   const db = await openDirectoryHandleDb();
   try {
-    await new Promise<void>((resolve, reject) => {
-      const transaction = db.transaction(PROFILE_DIRECTORY_HANDLES_STORE, "readwrite");
+    const transaction = db.transaction(PROFILE_DIRECTORY_HANDLES_STORE, "readwrite");
+    await withTimeout(new Promise<void>((resolve, reject) => {
       transaction.objectStore(PROFILE_DIRECTORY_HANDLES_STORE).put(handle, `resumeDirHandle:${profileId}`);
       transaction.oncomplete = () => resolve();
       transaction.onabort = () => reject(transaction.error);
       transaction.onerror = () => reject(transaction.error);
+    }), 10_000, "The browser did not respond while saving the download folder. Reload the extension and try again.", {
+      onTimeout: () => transaction.abort(),
     });
   } finally {
     db.close();
@@ -349,12 +373,14 @@ export async function clearProfileDirectoryHandle(profileId: string): Promise<vo
   if (!("indexedDB" in window)) return;
   const db = await openDirectoryHandleDb();
   try {
-    await new Promise<void>((resolve, reject) => {
-      const transaction = db.transaction(PROFILE_DIRECTORY_HANDLES_STORE, "readwrite");
+    const transaction = db.transaction(PROFILE_DIRECTORY_HANDLES_STORE, "readwrite");
+    await withTimeout(new Promise<void>((resolve, reject) => {
       transaction.objectStore(PROFILE_DIRECTORY_HANDLES_STORE).delete(`resumeDirHandle:${profileId}`);
       transaction.oncomplete = () => resolve();
       transaction.onabort = () => reject(transaction.error);
       transaction.onerror = () => reject(transaction.error);
+    }), 10_000, "The browser did not respond while resetting the download folder. Reload the extension and try again.", {
+      onTimeout: () => transaction.abort(),
     });
   } finally {
     db.close();

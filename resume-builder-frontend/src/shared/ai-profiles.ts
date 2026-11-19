@@ -81,6 +81,7 @@ export type GenerateResumeResult = {
   companyName?: string
   application?: GeneratedApplication
   draft?: GeneratedApplication
+  existingDraft?: { id: string; company_name: string; url: string; can_manage: boolean }
   existingApplication?: {
     id: string
     url: string
@@ -131,5 +132,7 @@ export type AiProfilesApi = {
   delete: (profileId: string) => Promise<void>
   generate: (input: GenerateResumeInput) => Promise<GenerateResumeResult>
   loadLastApplication: (workspaceId: string, mode?: "linked" | "manual") => Promise<SavedGeneratedApplication>
+  loadPreparedApplication: (draftId: string) => Promise<SavedGeneratedApplication>
+  discardPreparedApplication: (draftId: string) => Promise<void>
   loadConversationAnswers: (conversationId: string) => Promise<SavedConversationAnswers>
 }

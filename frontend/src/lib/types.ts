@@ -112,6 +112,12 @@ export interface ResumeProfile {
   cover_letter_template: string;
 }
 
+export interface ApplicationDocument {
+  kind: 'resume' | 'job_description';
+  format: 'pdf' | 'txt';
+  filename: string;
+}
+
 export interface JobApplication {
   id: string;
   workspace_id: string;
@@ -129,6 +135,7 @@ export interface JobApplication {
   note: string | null;
   paid: boolean;
   resume_generated_at: string | null;
+  documents?: ApplicationDocument[];
   cover_letter_template: string | null;
   screenshot: { captured_at: string; expires_at: string } | null;
   created_by_user_id: string | null;

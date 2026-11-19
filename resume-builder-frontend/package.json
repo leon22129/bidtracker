@@ -1,6 +1,6 @@
 {
   "name": "Resume-Builder",
-  "version": "0.9.12",
+  "version": "0.9.14",
   "private": true,
   "type": "module",
   "scripts": {
@@ -10,6 +10,7 @@
     "start": "vite preview --config vite.web.config.ts",
     "test:workflow-browser": "node scripts/check-workflow-browser.cjs",
     "test:generation-jobs": "node --test tests/generation-job.test.cjs",
+    "test:downloads": "node --test tests/download-recovery.test.cjs",
     "test:form-capture": "node --test tests/application-screenshots.test.cjs && node scripts/check-form-capture-browser.cjs && node scripts/check-form-capture-navigation.cjs"
   },
   "dependencies": {

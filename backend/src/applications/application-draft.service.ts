@@ -1,5 +1,5 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { ApplicationDraft, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthUser } from '../common/decorators/current-user.decorator';
 import { WorkspaceAccessService } from '../workspaces/workspace-access.service';
@@ -8,12 +8,21 @@ import { DuplicateService } from './duplicate.service';
 import { BannedUrlService } from './banned-url.service';
 import { NumberingService } from './numbering.service';
 import { detectJobSource, normalizeUrl } from '../common/utils/url.util';
-import { createJobFingerprint } from '../common/utils/job-fingerprint.util';
+import { createJobFingerprint, normalizeCompanyIdentity } from '../common/utils/job-fingerprint.util';
 import { toDayStart } from '../common/utils/date.util';
 import { parseApplicationHistory } from '../common/utils/application-history.util';
 import { assertScreenshotFile, screenshotDates } from './application-screenshot.service';
 import { formatJobDescription } from '../common/utils/job-description.util';
 import { capturedFormHistory, mergeCapturedStep, validateCapturedStep } from '../common/utils/application-form.util';
+
+const GENERATION_LEASE_MS = 120_000;
+type GenerationTarget = { workspace_id: string; company_name: string; url: string };
+
+export type GenerationBlock = {
+  success: false; duplicate: true; duplicate_type: string; company_name?: string; reason?: string;
+  existing_application?: unknown; cooldown_days?: number;
+  existing_draft?: { id: string; company_name: string; url: string; can_manage: boolean };
+};
 
 @Injectable()
 export class ApplicationDraftService {
@@ -26,11 +35,87 @@ export class ApplicationDraftService {
     private readonly numbering: NumberingService,
   ) {}
 
-  async prepare(user: AuthUser, data: Omit<Prisma.ApplicationDraftUncheckedCreateInput, 'created_by_user_id'>) {
+  /** Check and claim together, without holding a database transaction open during AI work. */
+  async reserveGeneration(user: AuthUser, target: GenerationTarget, reservationId?: string): Promise<{ id: string } | { blocked: GenerationBlock }> {
+    return this.applications.withWorkspaceWrite(target.workspace_id, async ({ db }) => {
+      await this.access.assertCanEdit(user, target.workspace_id, { db });
+      const normalizedUrl = target.url ? normalizeUrl(target.url) : null;
+      const companyIdentity = normalizeCompanyIdentity(target.company_name);
+      if (!companyIdentity) throw new BadRequestException('Need company name in the JD.');
+      if (normalizedUrl) {
+        const [match] = await this.duplicates.classifyBatch(target.workspace_id, [target.url], undefined, db);
+        if (match.is_duplicate) return { blocked: {
+          success: false, duplicate: true, duplicate_type: 'url', existing_application: match.existing,
+        } };
+      }
+      const companyMatch = await this.duplicates.findRecentCompanyMatch(target.workspace_id, target.company_name, undefined, db);
+      if (companyMatch) return { blocked: {
+        success: false, duplicate: true, duplicate_type: 'company', company_name: target.company_name,
+        cooldown_days: this.duplicates.companyCooldownDays(), existing_application: companyMatch,
+      } };
+      const cutoff = this.duplicates.companyCooldownCutoff();
+      const prepared = await db.applicationDraft.findMany({
+        where: { workspace_id: target.workspace_id, submitted_at: null,
+          OR: [{ created_at: { gte: cutoff } }, ...(normalizedUrl ? [{ normalized_url: normalizedUrl }] : [])] },
+        select: { id: true, company_name: true, url: true, normalized_url: true, created_by_user_id: true, created_at: true },
+        orderBy: { created_at: 'desc' },
+      });
+      const draft = prepared.find((item) => (normalizedUrl && item.normalized_url === normalizedUrl)
+        || (item.created_at >= cutoff && normalizeCompanyIdentity(item.company_name) === companyIdentity));
+      if (draft) return { blocked: {
+        success: false, duplicate: true, duplicate_type: 'prepared', company_name: draft.company_name,
+        reason: draft.created_by_user_id === user.id
+          ? 'A resume is already prepared for this company in this profile. Reopen that prepared job, or discard it if you are no longer applying.'
+          : 'Another user already has a prepared job for this company in this profile. Ask them to finish or discard it before generating again.',
+        existing_draft: { id: draft.id, company_name: draft.company_name, url: draft.url,
+          can_manage: draft.created_by_user_id === user.id },
+      } };
+
+      const now = new Date();
+      await db.resumeGenerationReservation.deleteMany({ where: { workspace_id: target.workspace_id, expires_at: { lte: now } } });
+      if (reservationId && !await db.resumeGenerationReservation.findFirst({ where: { id: reservationId, workspace_id: target.workspace_id } })) {
+        throw new ConflictException('This generation reservation expired. Please try again.');
+      }
+      const active = await db.resumeGenerationReservation.findFirst({ where: {
+        workspace_id: target.workspace_id, ...(reservationId ? { id: { not: reservationId } } : {}),
+        OR: [{ company_identity: companyIdentity }, ...(normalizedUrl ? [{ normalized_url: normalizedUrl }] : [])],
+      } });
+      if (active) return { blocked: {
+        success: false, duplicate: true, duplicate_type: 'in_progress', company_name: target.company_name,
+        reason: 'A resume for this company or job is already being generated in this profile. Wait for it to finish, then reopen the prepared job.',
+      } };
+      const data = { workspace_id: target.workspace_id, company_identity: companyIdentity,
+        normalized_url: normalizedUrl, expires_at: new Date(Date.now() + GENERATION_LEASE_MS) };
+      const claim = reservationId
+        ? await db.resumeGenerationReservation.update({ where: { id: reservationId }, data })
+        : await db.resumeGenerationReservation.create({ data });
+      return { id: claim.id };
+    });
+  }
+
+  async renewGeneration(reservationId: string) {
+    const renewed = await this.prisma.resumeGenerationReservation.updateMany({
+      where: { id: reservationId, expires_at: { gt: new Date() } },
+      data: { expires_at: new Date(Date.now() + GENERATION_LEASE_MS) },
+    });
+    if (!renewed.count) throw new ConflictException('This generation reservation expired. Please try again.');
+  }
+
+  async releaseGeneration(reservationId: string) {
+    await this.prisma.resumeGenerationReservation.deleteMany({ where: { id: reservationId } });
+  }
+
+  async prepare(user: AuthUser, data: Omit<Prisma.ApplicationDraftUncheckedCreateInput, 'created_by_user_id'>, reservationId?: string) {
     if (data.generated_resume_json.length > 250_000) throw new BadRequestException('Generated resume is too large to save');
     return this.applications.withWorkspaceWrite(data.workspace_id, async ({ db }) => {
       await this.access.assertCanEdit(user, data.workspace_id, { db });
-      return db.applicationDraft.create({ data: { ...data, job_description: formatJobDescription(data.job_description), created_by_user_id: user.id } });
+      if (reservationId && !await db.resumeGenerationReservation.findFirst({ where: {
+        id: reservationId, workspace_id: data.workspace_id, expires_at: { gt: new Date() },
+        company_identity: normalizeCompanyIdentity(data.company_name), normalized_url: data.normalized_url || null,
+      } })) throw new ConflictException('This generation reservation expired. Please try again.');
+      const draft = await db.applicationDraft.create({ data: { ...data, job_description: formatJobDescription(data.job_description), created_by_user_id: user.id } });
+      if (reservationId) await db.resumeGenerationReservation.deleteMany({ where: { id: reservationId } });
+      return draft;
     });
   }
 
@@ -42,6 +127,32 @@ export class ApplicationDraftService {
       where: { workspace_id: workspaceId, created_by_user_id: user.id, url: mode === 'manual' ? '' : { not: '' } }, orderBy: { created_at: 'desc' },
     });
     if (!draft) throw new NotFoundException('No prepared job found');
+    return this.serialize(draft);
+  }
+
+  async getPrepared(user: AuthUser, draftId: string) {
+    const draft = await this.prisma.applicationDraft.findFirst({ where: { id: draftId, created_by_user_id: user.id } });
+    if (!draft) throw new NotFoundException('Prepared job not found');
+    await this.access.assertCanView(user, draft.workspace_id);
+    return this.serialize(draft);
+  }
+
+  async discard(user: AuthUser, draftId: string) {
+    const owned = await this.prisma.applicationDraft.findFirst({
+      where: { id: draftId, created_by_user_id: user.id }, select: { workspace_id: true },
+    });
+    if (!owned) throw new NotFoundException('Prepared job not found');
+    return this.applications.withWorkspaceWrite(owned.workspace_id, async ({ db }) => {
+      await this.access.assertCanEdit(user, owned.workspace_id, { db });
+      const draft = await db.applicationDraft.findFirst({ where: { id: draftId, created_by_user_id: user.id } });
+      if (!draft) throw new NotFoundException('Prepared job not found');
+      if (draft.submitted_at) throw new ConflictException('A submitted application cannot be discarded as a prepared job.');
+      await db.applicationDraft.delete({ where: { id: draftId } });
+      return { discarded: true };
+    });
+  }
+
+  private serialize(draft: ApplicationDraft) {
     const history = draft.submitted_at ? capturedFormHistory(draft.application_form_json)
       : parseApplicationHistory(draft.application_questions_json, draft.application_answers_json);
     return {

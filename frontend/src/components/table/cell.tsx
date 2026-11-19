@@ -5,6 +5,7 @@ import type { ApplicationStatus, JobApplication, PipelineStatus, User } from '@/
 import { allowedStatusTransitions, canEditField, whyLocked } from '@/lib/permissions';
 import { PipelinePill, StatusPill } from '@/components/ui/status-pill';
 import type { ColumnDef } from './columns';
+import { ApplicationDocumentDownloads } from './application-document-downloads';
 
 interface CellProps {
   row: JobApplication;
@@ -73,6 +74,9 @@ export function Cell({
   }
 
   if (column.editor === 'resume') {
+    if (row.documents?.length) {
+      return <ApplicationDocumentDownloads applicationId={row.id} documents={row.documents} />;
+    }
     const hasResume = Boolean(row.resume_generated_at);
     return (
       <div className="cell justify-center gap-1">

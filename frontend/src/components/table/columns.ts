@@ -51,7 +51,7 @@ export const COLUMNS: ColumnDef[] = [
   },
   { key: 'url', label: 'URL', width: 300, minWidth: 140, editor: 'url', sortable: false },
   {
-    key: 'resume_generated_at', label: 'Generated files', width: 410, minWidth: 380, editor: 'resume',
+    key: 'resume_generated_at', label: 'Application files', width: 410, minWidth: 380, editor: 'resume',
     sortable: false, align: 'center',
   },
   {

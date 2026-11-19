@@ -154,7 +154,7 @@ const webAiProfiles: AiProfilesApi = {
             kind: input.kind,
             ...(!applicationGeneration ? { questions: input.questions } : {}),
             resume: input.resume,
-          }, `${apiBaseUrl}\n${token}`, { apiBaseUrl, token, version: __APP_VERSION__ }) as { tailored_resume?: string; full_name?: string; conversation_id?: string; job_description?: string; error?: string; message?: string; eligible?: boolean; can_continue?: boolean; reason?: string; banned?: boolean; resume?: unknown; answers?: unknown; application?: GenerateResumeResult["application"]; draft?: GenerateResumeResult["draft"]; duplicate?: boolean; duplicate_type?: string | null; cooldown_days?: number; company_name?: string; existing_application?: GenerateResumeResult["existingApplication"] } | null
+          }, `${apiBaseUrl}\n${token}`, { apiBaseUrl, token, version: __APP_VERSION__ }) as { tailored_resume?: string; full_name?: string; conversation_id?: string; job_description?: string; error?: string; message?: string; eligible?: boolean; can_continue?: boolean; reason?: string; banned?: boolean; resume?: unknown; answers?: unknown; application?: GenerateResumeResult["application"]; draft?: GenerateResumeResult["draft"]; duplicate?: boolean; duplicate_type?: string | null; cooldown_days?: number; company_name?: string; existing_application?: GenerateResumeResult["existingApplication"]; existing_draft?: GenerateResumeResult["existingDraft"] } | null
     if (conversationAnswers) {
       if (!Array.isArray(data?.answers)) throw new Error("The AI provider returned an empty response.")
       return { tailored_resume: JSON.stringify({ answers: data.answers }) }
@@ -174,6 +174,8 @@ const webAiProfiles: AiProfilesApi = {
       if (data?.duplicate) return {
         duplicate: true,
         duplicateType: data.duplicate_type,
+        reason: data.reason,
+        existingDraft: data.existing_draft,
         cooldownDays: data.cooldown_days,
         companyName: data.company_name,
         existingApplication: data.existing_application,
@@ -195,6 +197,19 @@ const webAiProfiles: AiProfilesApi = {
     const data = await response.json().catch(() => null) as (SavedGeneratedApplication & { message?: string }) | null
     if (!response.ok || !data) throw new Error(data?.message || "Unable to load the last application.")
     return data
+  },
+  async loadPreparedApplication(draftId: string): Promise<SavedGeneratedApplication> {
+    const response = await apiFetch(`/applications/drafts/${encodeURIComponent(draftId)}`)
+    const data = await response.json().catch(() => null) as (SavedGeneratedApplication & { message?: string }) | null
+    if (!response.ok || !data) throw new Error(data?.message || "Unable to reopen the prepared job.")
+    return data
+  },
+  async discardPreparedApplication(draftId: string): Promise<void> {
+    const response = await apiFetch(`/applications/drafts/${encodeURIComponent(draftId)}`, { method: "DELETE" })
+    if (!response.ok) {
+      const data = await response.json().catch(() => null)
+      throw new Error(data?.message || "Unable to discard the prepared job.")
+    }
   },
   async loadConversationAnswers(conversationId: string): Promise<SavedConversationAnswers> {
     const response = await apiFetch(`/resume/answers/${encodeURIComponent(conversationId)}`)

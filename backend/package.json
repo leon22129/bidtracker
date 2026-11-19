@@ -25,6 +25,7 @@
     "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js",
     "test:company-cooldown": "node scripts/check-company-cooldown.cjs",
     "test:application-workflow": "node scripts/check-application-workflow.cjs",
+    "test:manual-documents": "node scripts/check-manual-application-documents.cjs",
     "test:generation-notifications": "node scripts/check-generation-notifications.cjs",
     "test:ai-settings": "node scripts/check-ai-settings.cjs",
     "check:ai": "node scripts/check-openai-connection.cjs",

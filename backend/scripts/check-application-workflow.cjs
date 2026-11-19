@@ -10,6 +10,7 @@ const build = join(__dirname, '..', process.env.WORKFLOW_CHECK_BUILD || 'dist');
 const { ApplicationsService } = require(join(build, 'applications/applications.service'));
 const { ApplicationDraftService } = require(join(build, 'applications/application-draft.service'));
 const { ApplicationGenerationService } = require(join(build, 'resume/resume.service'));
+const { applicationQuestionId } = require(join(build, 'resume/original-prompts'));
 const { GenerationJobsService } = require(join(build, 'resume/generation-jobs.service'));
 const { DuplicateService } = require(join(build, 'applications/duplicate.service'));
 const { BannedUrlService } = require(join(build, 'applications/banned-url.service'));
@@ -38,11 +39,12 @@ async function main() {
   await root.$executeRawUnsafe(`CREATE SCHEMA "${schema}"`);
   createdSchema = true;
   // Create the old tables, then exercise the actual draft migration against that existing schema.
-  await runSql(diff.stdout.replace(/^\s*"(?:application_form_json|answer_cache_json)" TEXT,?\r?\n/gm, '').split(';').filter((statement) => !statement.includes('"application_drafts"') && !statement.includes('"generation_jobs"')).join(';'));
+  await runSql(diff.stdout.replace(/^\s*"(?:application_form_json|answer_cache_json)" TEXT,?\r?\n/gm, '').split(';').filter((statement) => !statement.includes('"application_drafts"') && !statement.includes('"generation_jobs"') && !statement.includes('"resume_generation_reservations"')).join(';'));
   await runSql(readFileSync(join(__dirname, '../prisma/migrations/20261026000000_add_application_drafts/migration.sql'), 'utf8'));
   await runSql(readFileSync(join(__dirname, '../prisma/migrations/20261103000000_add_application_form_capture/migration.sql'), 'utf8'));
   await runSql(readFileSync(join(__dirname, '../prisma/migrations/20261109000000_add_application_answer_cache/migration.sql'), 'utf8'));
   await runSql(readFileSync(join(__dirname, '../prisma/migrations/20261109010000_add_generation_jobs/migration.sql'), 'utf8'));
+  await runSql(readFileSync(join(__dirname, '../prisma/migrations/20261118000000_add_resume_generation_reservations/migration.sql'), 'utf8'));
   const user = await db.user.create({ data: { username: 'workflow-bidder', email: 'workflow@example.test', password_hash: 'fixture', role: 'bidder' } });
   const other = await db.user.create({ data: { username: 'other-bidder', email: 'other@example.test', password_hash: 'fixture', role: 'bidder' } });
   const workspace = await db.workspace.create({ data: { name: 'Workflow', owner_user_id: user.id } });
@@ -73,7 +75,9 @@ async function main() {
       summary: 'Prepared resume', skills: ['TypeScript'], workexperience: [],
       annual_salary: '$150,000', hourly_rate: '$72.12', rate_in_jd: false,
     });
-    if (options.operation === 'application_answers') return JSON.stringify({ answers: [{ question: 'Why this role?', answer: 'It fits my experience.' }] });
+    if (options.operation === 'application_answers') return JSON.stringify({ answers: [{
+      question_id: applicationQuestionId({ question: 'Why this role?' }), answer: 'It fits my experience.',
+    }] });
     throw Error(`Unexpected AI operation ${options.operation}`);
   };
   generation.requestProvider = async (_path, _body, _method, operation) => {
@@ -95,6 +99,20 @@ async function main() {
   assert.equal(await count(), 0);
   assert.equal(await pay(), 0);
   assert.deepEqual(calls, ['job_eligibility', 'resume_generation']);
+  assert.equal(await db.resumeGenerationReservation.count(), 0, 'Successful generation replaces the claim with a draft');
+  calls.length = 0;
+  assert.equal((await generation.generate(user, input('ACME, Inc.'))).duplicate_type, 'prepared');
+  assert.equal((await generation.generate(user, { ...input('Different Employer'), url: source.url + '?utm_source=test' })).duplicate_type, 'prepared');
+  assert.deepEqual(calls, [], 'Prepared companies and URLs are blocked before any provider call');
+  assert.equal((await drafts.getPrepared(user, prepared.draft.id)).id, prepared.draft.id);
+  await assert.rejects(drafts.getPrepared(other, prepared.draft.id), (error) => error.getStatus() === 404);
+  await assert.rejects(drafts.discard(other, prepared.draft.id), (error) => error.getStatus() === 404);
+  // Old clients could create overlapping drafts. Keep fixtures for the last submission safeguard.
+  const legacyDraft = async (id, differentUrl = false) => {
+    const { id: oldId, created_at, updated_at, ...data } = await db.applicationDraft.findUniqueOrThrow({ where: { id } });
+    if (differentUrl) { data.url += '-legacy'; data.normalized_url += '-legacy'; }
+    return { draft: await db.applicationDraft.create({ data: { ...data, conversation_id: null, submitted_at: null, submitted_application_id: null } }) };
+  };
   const conversation = await db.resumeConversation.findUniqueOrThrow({ where: { id: prepared.conversation_id } });
   assert.match(conversation.openai_conversation_id, /^local_/);
   assert.match(conversation.reference_context, /"fullName":"Candidate"/);
@@ -179,7 +197,9 @@ async function main() {
   assert.equal((await generation.generate(user, input('Acme'))).duplicate, true);
   assert.deepEqual(calls, []);
   assert.equal(await count(), 1);
+  await assert.rejects(drafts.discard(user, prepared.draft.id), /submitted application cannot be discarded/);
   assert.equal((await generation.generate(user, input('RejectedCo', 'This role requires security clearance.'))).eligible, false);
+  assert.equal(await db.resumeGenerationReservation.count(), 0, 'Rejected jobs release the claim');
   assert.equal(await count(), 1);
   await banned.create('Banned Company', user.id);
   calls.length = 0;
@@ -189,22 +209,41 @@ async function main() {
   await banned.create('New Ban', user.id);
   await assert.rejects(drafts.submit(user, stale.draft.id, file, true), /now banned/);
   assert.equal(await count(), 1);
-  const concurrent = await Promise.all([generation.generate(user, input('ConcurrentCo')), generation.generate(user, input('ConcurrentCo'))]);
-  const committed = await Promise.all(concurrent.map((value) => drafts.submit(user, value.draft.id, file, true)));
+  const anotherGeneration = new ApplicationGenerationService(db, access, duplicates, banned, applications, {}, drafts, aiSettings);
+  anotherGeneration.generateText = generation.generateText;
+  anotherGeneration.requestProvider = generation.requestProvider;
+  calls.length = 0;
+  const concurrent = await Promise.all([generation.generate(user, input('ConcurrentCo')), anotherGeneration.generate(user, input('ConcurrentCo'))]);
+  assert.equal(concurrent.filter((result) => result.success).length, 1);
+  assert.equal(concurrent.filter((result) => result.duplicate).length, 1);
+  assert.equal(calls.filter((operation) => operation === 'resume_generation').length, 1, 'Competing requests generate only one resume');
+  const firstConcurrent = concurrent.find((result) => result.success);
+  const oldConcurrent = await legacyDraft(firstConcurrent.draft.id, true);
+  const committed = await Promise.all([firstConcurrent, oldConcurrent].map((value) => drafts.submit(user, value.draft.id, file, true)));
   assert.deepEqual(committed.map((value) => value.application.application_status).sort(), ['Applied', 'Duplicated']);
   assert.equal(await pay(), 2);
   assert.equal(await db.applicationScreenshot.count(), 3);
   const sameUrl = input('URLRaceCo');
-  const urlDrafts = await Promise.all([generation.generate(user, sameUrl), generation.generate(user, sameUrl)]);
-  await drafts.submit(user, urlDrafts[0].draft.id, file, true);
-  await assert.rejects(drafts.submit(user, urlDrafts[1].draft.id, file, true), /already in the application table/);
+  calls.length = 0;
+  const urlDrafts = await Promise.all([generation.generate(user, sameUrl), anotherGeneration.generate(user, sameUrl)]);
+  assert.equal(urlDrafts.filter((result) => result.success).length, 1);
+  assert.equal(urlDrafts.filter((result) => result.duplicate).length, 1);
+  assert.equal(calls.filter((operation) => operation === 'resume_generation').length, 1);
+  const firstUrlDraft = urlDrafts.find((result) => result.success);
+  const oldUrlDraft = await legacyDraft(firstUrlDraft.draft.id);
+  await drafts.submit(user, firstUrlDraft.draft.id, file, true);
+  await assert.rejects(drafts.submit(user, oldUrlDraft.draft.id, file, true), /already in the application table/);
   assert.equal(await db.applicationScreenshot.count(), 4);
   assert.equal(await count(), 4);
 
   const confirmationUrl = 'https://www.linkedin.com/jobs/';
   await assert.rejects(failingDrafts.submit(user, manual.draft.id, file, true, confirmationUrl), /simulated screenshot failure/);
   assert.equal(await count(), 4, 'Manual submission rolls back when the screenshot cannot be saved');
-  const manualRepeat = await generation.generate(user, { ...input('Manual Company'), mode: 'manual', url: undefined });
+  calls.length = 0;
+  assert.equal((await generation.generate(user, { ...input('Manual Company'), mode: 'manual', url: undefined })).duplicate_type, 'prepared');
+  assert.equal((await generation.generate(user, input('Manual Company'))).duplicate_type, 'prepared');
+  assert.deepEqual(calls, [], 'Manual and linked requests share the prepared company check');
+  const manualRepeat = await legacyDraft(manual.draft.id);
   const manualOther = await generation.generate(user, { ...input('Another Manual Company'), mode: 'manual', url: undefined });
   const manualSaved = await Promise.all([
     drafts.submit(user, manual.draft.id, file, true, confirmationUrl),
@@ -230,6 +269,41 @@ async function main() {
   await banned.create('Manual Ban', user.id);
   await assert.rejects(drafts.submit(user, manualBanned.draft.id, file, true, confirmationUrl), /now banned/);
   console.log('PASS: manual screenshot submission, saved page URL/source/documents, rollback, idempotent retries, shared confirmation pages, company duplicates, and payment counts');
+  const retryInput = input('Retry Employer');
+  const originalGenerateText = generation.generateText;
+  generation.generateText = async () => { throw Error('Simulated provider failure'); };
+  await assert.rejects(generation.generate(user, retryInput), /Simulated provider failure/);
+  assert.equal(await db.resumeGenerationReservation.count(), 0, 'Provider failures release claims');
+  generation.generateText = originalGenerateText;
+  const retried = await generation.generate(user, retryInput);
+  assert.equal(retried.success, true);
+  await drafts.discard(user, retried.draft.id);
+  await assert.rejects(drafts.submit(user, retried.draft.id, file, true), /Prepared job not found/);
+  const regenerated = await generation.generate(user, retryInput);
+  assert.equal(regenerated.success, true, 'Discarded jobs can be generated again');
+  await drafts.discard(user, regenerated.draft.id);
+
+  const target = { workspace_id: workspace.id, company_name: 'Lease Employer', url: 'https://jobs.example.test/lease' };
+  const claim = await drafts.reserveGeneration(user, target);
+  assert.ok(claim.id);
+  await drafts.renewGeneration(claim.id);
+  assert.equal((await drafts.reserveGeneration(user, { ...target, company_name: 'LEASE EMPLOYER, Inc.', url: '' })).blocked.duplicate_type, 'in_progress');
+  assert.equal((await drafts.reserveGeneration(user, { ...target, company_name: 'Different Lease Employer' })).blocked.duplicate_type, 'in_progress');
+  const secondWorkspace = await db.workspace.create({ data: { name: 'Independent profile', owner_user_id: user.id } });
+  const independent = await drafts.reserveGeneration(user, { ...target, workspace_id: secondWorkspace.id });
+  assert.ok(independent.id, 'Reservations are scoped to a profile');
+  await drafts.releaseGeneration(independent.id);
+  await db.resumeGenerationReservation.update({ where: { id: claim.id }, data: { expires_at: new Date(Date.now() - 1000) } });
+  await assert.rejects(drafts.renewGeneration(claim.id), /reservation expired/);
+  const replacement = await drafts.reserveGeneration(user, target);
+  assert.ok(replacement.id && replacement.id !== claim.id, 'Interrupted generations expire and can be retried');
+  await drafts.releaseGeneration(claim.id);
+  assert.equal(await db.resumeGenerationReservation.count(), 1, 'An old request cannot release the new claim');
+  await assert.rejects(drafts.prepare(user, { ...target, normalized_url: 'jobs.example.test/lease', job_title: 'Engineer',
+    source_job_description: 'JD', job_description: 'JD', generated_resume_json: '{}' }, claim.id), /reservation expired/);
+  await drafts.releaseGeneration(replacement.id);
+  assert.equal(await db.resumeGenerationReservation.count(), 0);
+  console.log('PASS: early prepared-job and company checks across manual/linked modes, one paid generation across concurrent workers, draft ownership/discard/retry, and reservation expiry/recovery');
   let finishGeneration;
   let backgroundCalls = 0;
   const delayedGeneration = { generate: async () => {

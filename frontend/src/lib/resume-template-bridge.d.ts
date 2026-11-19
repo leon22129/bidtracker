@@ -2,6 +2,7 @@ import type React from 'react';
 import type { ResumeData } from './types';
 
 type ResumeTemplate = React.ComponentType<{ data: ResumeData }>;
+export function renderPdfBlob(document: React.ReactElement): Promise<Blob>;
 
 export const ClassicTemplate: ResumeTemplate;
 export const ModernTemplate: ResumeTemplate;

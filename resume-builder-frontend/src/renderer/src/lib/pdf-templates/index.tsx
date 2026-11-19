@@ -1,4 +1,4 @@
-﻿import { pdf } from "@react-pdf/renderer"
+import { renderPdfBlob } from "../render-pdf"
 import type React from "react"
 import type { ResumeData } from "../parse-resume"
 import type { TemplateId } from "./types"
@@ -34,7 +34,7 @@ export async function generateResumePDF(
 ): Promise<{ folderPath?: string }> {
   const save = await createProfileDownload(isDirectory, folderName, profileId, downloadPath)
   const TemplateComponent = templateComponents[templateId] || ClassicTemplate
-  const blob = await pdf(<TemplateComponent data={data} />).toBlob()
+  const blob = await renderPdfBlob(<TemplateComponent data={data} />)
   await save(blob, filename)
   if (isDirectory && jdContent?.trim()) {
     await save(new Blob([jdContent], { type: "text/plain;charset=utf-8" }), "job-description.txt")

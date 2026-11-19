@@ -2,6 +2,16 @@
 
 Job application, bidder, payment, and recruiting-analytics management for a bid team.
 
+The website's **Add application** form requires a resume and a job description. Each accepts a PDF
+(up to 5 MB), pasted text, or an imported UTF-8 TXT file (up to 50,000 characters); both PDF and text
+versions can be saved together. The **Application files** column downloads the saved versions.
+Documents and the application are committed together and share the workspace's access permissions.
+Apply migration `20261117000000_add_manual_application_documents` with `npm run prisma:deploy` in
+`backend`, regenerate the Prisma client, then rebuild and restart the backend and frontend. On Windows,
+stop the backend before regenerating the client if its Prisma engine DLL is locked.
+After building the backend, `npm run test:manual-documents` verifies the upload and download workflow
+in an isolated PostgreSQL schema.
+
 Three roles (**admin**, **bidder manager**, **junior bidder**) work in per-bidder workspaces
 ("tabs"). Bidders paste job URLs or import spreadsheets; the system normalises each URL, extracts
 the company and job title, detects duplicates, and numbers rows per date. Admins manage the
@@ -12,6 +22,17 @@ eligibility, then generate the resume and expected rate. The URL, original JD, u
 and generated answers are saved in `application_drafts`. The JD and linked job page stay available
 after generation and when a prepared job is restored.
 Blocked and ineligible jobs do not add table rows.
+
+Before eligibility or resume generation, a database reservation checks submitted applications,
+unsubmitted prepared jobs, and other active generation requests for the same profile. Company names
+use the existing normalization and cooldown (90 days by default); linked jobs also check normalized
+URLs. Concurrent requests across tabs or server workers can generate only one resume for that company
+or URL. Eligibility corrections recheck the company before generating. Failed requests release their
+reservation; interrupted workers expire after two minutes without a heartbeat. The draft replaces the
+reservation in one transaction. A blocked bidder can **Reopen prepared job** or explicitly **Discard
+prepared job** before retrying. Only the draft's creator can reopen/discard it, and submitted applications
+cannot be discarded this way. Apply migration `20261118000000_add_resume_generation_reservations`
+before starting the updated backend, and distribute/reload Resume Builder **0.9.14**.
 
 Admins can enable **Continue after eligibility failure** for individual bidders and bidder managers
 on **Users**. It is disabled by default and does not carry over from a manager to their bidders.
@@ -34,8 +55,9 @@ Existing saved JDs receive the same readable formatting when downloaded.
 After successfully applying, the bidder confirms submission and chooses **Take screenshot & add
 application**. The backend rechecks bans and duplicates and commits the application, its saved
 documents/answers, and screenshot in one transaction. Screenshot failures add no row, and retries
-reuse the submission receipt. Concurrent submissions to the same company are marked `Duplicated`
-and excluded from payment. Preparing a draft never counts as an applied or payable application.
+reuse the submission receipt. The submission check still protects older drafts and records imported
+or changed after generation: company conflicts are marked `Duplicated` and excluded from payment.
+Preparing a draft never counts as an applied or payable application.
 Each profile tab keeps its own prepared draft, JD, resume, answers, and submission state, including
 when multiple tabs use the same profile. This state is restored when the panel is reopened. The
 screenshot button submits that tab's draft using its original browser page; there is no separate
@@ -419,6 +441,8 @@ maintain historical records or unarchive the profile to resume applying.
 Additional generated-resume routes:
 
 - `GET /applications/drafts/latest?workspace_id=...` restores the bidder's latest prepared job and answers.
+- `GET /applications/drafts/:draftId` restores an owned prepared job by ID.
+- `DELETE /applications/drafts/:draftId` discards an owned, unsubmitted draft and releases its duplicate block.
 - `POST /applications/drafts/:draftId/submit` requires multipart `screenshot` (PNG) and `submitted=true`;
   atomically adds the application and screenshot after successful submission.
 

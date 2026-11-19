@@ -1,4 +1,4 @@
-﻿import { pdf } from "@react-pdf/renderer"
+import { renderPdfBlob } from "../render-pdf"
 import type React from "react"
 import type { CoverLetterData, CoverLetterTemplateId } from "./types"
 import { ClassicCoverLetterTemplate } from "./classic"
@@ -26,6 +26,6 @@ export async function generateCoverLetterPDF(
   const save = await createProfileDownload(saveInFolder, folderName, profileId, downloadPath)
   const TemplateComponent = templateComponents[templateId] || ClassicCoverLetterTemplate
   const templateData = { ...data, text: stripTrailingCoverLetterSigner(data.text, data.personalInfo.fullName) }
-  const blob = await pdf(<TemplateComponent data={templateData} />).toBlob()
+  const blob = await renderPdfBlob(<TemplateComponent data={templateData} />)
   await save(blob, filename)
 }

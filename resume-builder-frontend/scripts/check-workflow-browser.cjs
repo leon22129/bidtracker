@@ -34,6 +34,7 @@ function fixture(extensionVersion) {
     { id: 'd1', browserTabId: 73, company: 'Acme', salary: '$150,000', url: 'https://jobs.example.test/123' },
     { id: 'd2', browserTabId: 74, company: 'Beta', salary: '$180,000', url: 'https://jobs.example.test/456' },
     { id: 'manual-1', company: 'Manual Company', salary: '$160,000', url: '' },
+    { id: 'prepared-manual', company: 'Prepared Company', salary: '$160,000', url: '' },
   ];
   state.browserTabs ||= Object.fromEntries(jobs.filter((job) => job.browserTabId).map((job) => [job.browserTabId, job.url]));
   state.nextBrowserTabId ||= 75;
@@ -84,6 +85,11 @@ function fixture(extensionVersion) {
   const messageListeners = [];
   window.chrome = {
     downloads: { download: (options, callback) => {
+      if (state.holdDownload) {
+        state.downloadWaiting = true;
+        state.releaseDownload = () => { state.downloadWaiting = false; callback(999); };
+        return;
+      }
       if (state.failDownload) {
         chrome.runtime.lastError = { message: 'Fixture download failure' };
         callback(-1);
@@ -93,7 +99,7 @@ function fixture(extensionVersion) {
       const content = atob(options.url.split(',')[1]);
       state.downloads.push({ filename: options.filename, bytes: content.length, header: content.slice(0, 5) });
       callback(state.downloads.length);
-    } },
+    }, cancel: async (id) => { (state.cancelledDownloads ||= []).push(id); } },
     sidePanel: { setPanelBehavior: async () => {} }, action: { onClicked: { addListener() {} } },
     storage: { local: {
       get: async () => store,
@@ -152,6 +158,11 @@ function fixture(extensionVersion) {
       if (!job || input.job_description !== jd(job)) throw Error('Wrong JD was sent');
       if (input.mode === 'manual' && Object.hasOwn(input, 'url')) throw Error('Manual generation must omit the URL');
       (state.generationInputs ||= []).push(input);
+      if (state.generationBlock) {
+        const id = new Headers(init.headers).get('X-Generation-Id');
+        (state.generationJobs ||= {})[id] = { kind: 'application', polls: 0, result: state.generationBlock };
+        return json({ job_id: id, status: 'queued' });
+      }
       if (input.continue_after_eligibility_failure && !state.allowEligibilityContinue) {
         return new Response(JSON.stringify({ message: 'Your admin has not enabled Continue after an eligibility failure for your account.' }), {
           status: 403, headers: { 'Content-Type': 'application/json' },
@@ -191,8 +202,12 @@ function fixture(extensionVersion) {
       }
       return json({ job_id: id, status: 'completed', result: job.result });
     }
-    if (endpoint.startsWith('/applications/drafts/latest')) {
-      const job = jobs.find((job) => job.id === (endpoint.includes('mode=manual') ? state.latestManualDraft : state.latestDraft));
+    if (endpoint.startsWith('/applications/drafts/latest') || endpoint === '/applications/drafts/prepared-manual') {
+      const job = jobs.find((job) => job.id === (endpoint.endsWith('/prepared-manual') ? 'prepared-manual' : endpoint.includes('mode=manual') ? state.latestManualDraft : state.latestDraft));
+      if (init?.method === 'DELETE') {
+        (state.discarded ||= []).push(job.id);
+        return json({ discarded: true });
+      }
       return json({ id: job.id, draft_id: job.id, submitted_at: state.added.includes(job.id) ? new Date().toISOString() : null, url: job.url, company_name: job.company, job_title: 'Engineer', resume: snapshot(job), template: 'classic', job_description: updated(job), conversation_id: job.id + '-conversation', questions: state.answers.map((answer) => ({ question: answer.question, options: [] })), answers: state.answers });
     }
     if (endpoint === '/applications/drafts/d2/form-capture') {
@@ -483,6 +498,15 @@ function fixture(extensionVersion) {
     await waitFor("activeProfileWorkspace.textContent.includes('Could not access the selected folder')");
     assert.equal(await evaluate('workflowTest.downloads.length'), 3, 'Folder errors must not silently fall back to another destination');
     await evaluate('FileSystemDirectoryHandle.prototype.getDirectoryHandle = window.originalGetDirectory');
+    // A lost drive can leave the browser promise pending instead of rejecting.
+    await evaluate(`window.originalDownloadTimer = window.setTimeout;
+      window.setTimeout = (callback, delay, ...args) => window.originalDownloadTimer(callback, delay === 30000 ? 250 : delay, ...args);
+      FileSystemDirectoryHandle.prototype.getDirectoryHandle = () => new Promise(() => {});`);
+    await click('Download PDF');
+    await waitFor("document.body.innerText.includes('selected download folder is not responding')");
+    await waitFor("[...document.querySelectorAll('button')].some(el => el.textContent.trim() === 'Download PDF' && !el.disabled)");
+    assert.equal(await evaluate('workflowTest.downloads.length'), 3);
+    await evaluate('window.setTimeout = window.originalDownloadTimer; FileSystemDirectoryHandle.prototype.getDirectoryHandle = window.originalGetDirectory');
     await click('Close');
 
     await openExtensionSettings();
@@ -517,6 +541,19 @@ function fixture(extensionVersion) {
     await waitFor("activeProfileWorkspace.textContent.includes('Chrome could not start the download')");
     assert.equal(await evaluate('workflowTest.downloads.length'), 6);
     await evaluate('workflowTest.failDownload = false');
+    await evaluate(`window.originalDownloadTimer = window.setTimeout;
+      window.setTimeout = (callback, delay, ...args) => window.originalDownloadTimer(callback, delay === 30000 ? 250 : delay, ...args);
+      workflowTest.holdDownload = true;`);
+    await click('Download PDF');
+    await waitFor('workflowTest.downloadWaiting');
+    await waitFor("document.body.innerText.includes('Chrome did not respond to the download request')");
+    await waitFor("[...document.querySelectorAll('button')].some(el => el.textContent.trim() === 'Download PDF' && !el.disabled)");
+    await evaluate('workflowTest.releaseDownload(); workflowTest.holdDownload = false; window.setTimeout = window.originalDownloadTimer');
+    await waitFor('workflowTest.cancelledDownloads.includes(999)');
+    assert.equal(await evaluate('workflowTest.downloads.length'), 6, 'A late completion must not continue with the cover letter');
+    await click('Download PDF');
+    await waitFor('workflowTest.downloads.length === 8');
+    await waitFor("[...document.querySelectorAll('button')].some(el => el.textContent.trim() === 'Download PDF' && !el.disabled)");
     await click('Close');
     console.log('PASS: profile options persist; generation keeps its workspace; company names appear only in directory names; cover-letter switches affect files; Chrome and native-folder PDF downloads work; failures propagate');
     await evaluate("document.querySelector('[toast-close]')?.click()");
@@ -780,6 +817,31 @@ function fixture(extensionVersion) {
     await evaluate('workflowTest.browserTabId = 73');
     console.log('PASS: Continue is permission controlled, clears when the JD changes, handles revocation, and generates resumes in linked and manual modes');
     console.log('PASS: manual generation without a browser page or URL, PDF downloads, Q&A, isolated mode state, reload, job restoration, screenshot submission from the active page, retries, and clearing only the completed manual job');
+    // A blocked duplicate can restore the exact older draft, including switching application mode.
+    const generatedBeforeBlock = await evaluate('workflowTest.generationUrls.length');
+    await evaluate(`workflowTest.generationBlock = { success: false, duplicate: true, duplicate_type: 'prepared',
+      reason: 'A resume is already prepared for this company in this profile.',
+      existing_draft: { id: 'prepared-manual', company_name: 'Prepared Company', url: '', can_manage: true } }`);
+    await click('Generate Resume');
+    await waitFor("activeProfileWorkspace.innerText.includes('A resume is already prepared for this company')");
+    await click('Reopen prepared job');
+    await waitFor("activeProfileWorkspace.innerText.includes('Prepared Company') && activeProfileWorkspace.querySelector('[aria-label=\"Application mode\"] [data-state=active]').textContent === 'Manual'");
+    await click('Resume');
+    await evaluate("activeProfileWorkspace.querySelector('details').open = true; window.confirm = () => false");
+    await click('Discard prepared job');
+    assert.equal(await evaluate('(workflowTest.discarded || []).length'), 0, 'Cancelling discard preserves the draft');
+    await evaluate('window.confirm = () => true');
+    await click('Discard prepared job');
+    await waitFor("workflowTest.discarded?.includes('prepared-manual') && !activeProfileWorkspace.innerText.includes('Prepared job: Prepared Company')");
+    assert.equal(await evaluate("[...activeProfileWorkspace.querySelectorAll('button')].find(el=>el.textContent.includes('Generate Resume')).disabled"), false, 'Discard releases the editor for a new generation');
+    assert.equal(await evaluate('workflowTest.generationUrls.length'), generatedBeforeBlock, 'Reopening/discarding does not regenerate a resume');
+    await click('Current workflow');
+    await evaluate("workflowTest.generationBlock = { success: false, duplicate: true, duplicate_type: 'in_progress', reason: 'A resume for this company is already being generated.' }");
+    await click('Generate Resume');
+    await waitFor("activeProfileWorkspace.innerText.includes('A resume for this company is already being generated.')");
+    assert.equal(await evaluate("activeProfileWorkspace.innerText.includes('Reopen prepared job')"), false);
+    await evaluate('delete workflowTest.generationBlock');
+    console.log('PASS: prepared-job duplicate messages, exact draft restoration across modes, discard confirmation/recovery, and concurrent-generation messages');
     await evaluate('workflowTest.requireUpdate = true');
     const updateError = await evaluate('window.aiProfiles.list().then(() => null, error => error.message)');
     assert.match(updateError, /Update Resume Builder to version 0\.9\.5/);

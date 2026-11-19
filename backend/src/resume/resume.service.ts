@@ -15,6 +15,7 @@ import {
 } from './dto/generate.dto';
 import {
   APPLICATION_ANSWERS_INSTRUCTIONS,
+  applicationQuestionId,
   buildApplicationQuestionsInput,
   buildJobEligibilityPrompt,
   type ApplicationQuestionInput,
@@ -220,6 +221,35 @@ export class ApplicationGenerationService {
     }
     const blocked = await this.checkCompany(workspace.id, profile.career_path, url, identity.company_name);
     if (blocked) return blocked;
+    const reservation = await this.drafts.reserveGeneration(user, {
+      workspace_id: workspace.id, company_name: identity.company_name, url,
+    });
+    if ('blocked' in reservation) return reservation.blocked;
+    let leaseError: unknown;
+    let renewing = false;
+    const heartbeat = setInterval(() => {
+      if (renewing || leaseError) return;
+      renewing = true;
+      void this.drafts.renewGeneration(reservation.id).catch((error) => { leaseError = error; })
+        .finally(() => { renewing = false; });
+    }, 30_000);
+    heartbeat.unref();
+    try {
+      return await this.generateReserved(user, dto, workspace, profile, url, jobDescription, config, identity, reservation.id,
+        () => { if (leaseError) throw leaseError; });
+    } finally {
+      clearInterval(heartbeat);
+      await this.drafts.releaseGeneration(reservation.id).catch((error) => {
+        logEvent(this.logger, 'warn', 'generation_reservation_release_failed', { ...errorFields(error) });
+      });
+    }
+  }
+
+  private async generateReserved(
+    user: AuthUser, dto: GenerateApplicationDto, workspace: { id: string }, profile: any,
+    url: string, jobDescription: string, config: AiConfiguration,
+    identity: { company_name: string; job_title: string }, reservationId: string, assertLease: () => void,
+  ) {
     const conversation = await this.createGenerationConversation(user, profile, workspace.id);
     let eligibilityUsage: OpenAiUsage | undefined;
     const eligibility = await this.generateText(buildJobEligibilityPrompt(jobDescription, url), {
@@ -288,6 +318,13 @@ export class ApplicationGenerationService {
       };
     }
 
+    // Eligibility can correct the employer, and another application may have been saved meanwhile.
+    // Move the claim and recheck under the same lock before spending on resume generation.
+    assertLease();
+    const reservation = await this.drafts.reserveGeneration(user, {
+      workspace_id: workspace.id, company_name: companyName, url,
+    }, reservationId);
+    if ('blocked' in reservation) return reservation.blocked;
     let resumeUsage: OpenAiUsage | undefined;
     const resume = this.parseJson(await this.generateText(this.resumePrompt(profile, normalizedDescription, config.resumePrompt), {
       config,
@@ -308,6 +345,7 @@ export class ApplicationGenerationService {
     const coverLetterText = profile.generate_cover_letter && typeof resume.coverletter === 'string'
       ? resume.coverletter
       : undefined;
+    assertLease();
     const draft = await this.drafts.prepare(user, {
       workspace_id: workspace.id,
       url,
@@ -323,7 +361,7 @@ export class ApplicationGenerationService {
       cover_letter_template: coverLetterText
         ? profile.cover_letter_template || 'classic'
         : undefined,
-    });
+    }, reservationId);
 
     logEvent(this.logger, 'log', 'application_generation_usage', {
       model: config.model,
@@ -532,15 +570,14 @@ export class ApplicationGenerationService {
     for (let answerIndex = 0; answerIndex < items.length; answerIndex++) {
       const answerItem = items[answerIndex];
       if (answerItem.role !== 'assistant') continue;
-      const answers = this.parseConversationAnswers(this.conversationItemText(answerItem));
-      if (!answers.length) continue;
-
       const questionItem = items.slice(answerIndex + 1).find((item) => (
         item.role === 'user' && this.conversationItemText(item).includes('Application questions:')
       ));
       const questions = questionItem
         ? this.parseConversationQuestions(this.conversationItemText(questionItem))
         : [];
+      const answers = this.parseConversationAnswers(this.conversationItemText(answerItem), questions);
+      if (!answers.length) continue;
       const restored = {
         questions: questions.length
           ? questions
@@ -816,34 +853,42 @@ ${JSON.stringify(resume)}`;
       reasoningEffort: 'low',
       operation: 'application_answers',
     });
-    const parsed = this.parseJson(text);
+    const generated = this.mapApplicationAnswers(this.parseJson(text), pending);
+    return {
+      answers: questions.map((question, index) => ({
+        question: question.question,
+        answer: answers[index] ?? generated[pendingIndexes.get(answerContextFingerprint([question.question, question.options ?? []]))!].answer,
+      })),
+    };
+  }
+
+  private mapApplicationAnswers(parsed: Record<string, unknown>, questions: ApplicationQuestionInput[]): SavedApplicationAnswer[] {
     if (
       !Array.isArray(parsed.answers) ||
-      parsed.answers.length !== pending.length ||
+      parsed.answers.length !== questions.length ||
       parsed.answers.some((answer) => (
         !answer ||
         typeof answer !== 'object' ||
-        typeof (answer as Record<string, unknown>).question !== 'string' ||
+        typeof (answer as Record<string, unknown>).question_id !== 'string' ||
         typeof (answer as Record<string, unknown>).answer !== 'string'
       ))
     ) {
       throw new BadGatewayException('The AI provider returned an incomplete set of application answers');
     }
-    const generated = parsed.answers.map((answer: Record<string, unknown>, index: number) => {
-      const expected = pending[index];
-      if (answer.question !== expected.question) {
-        throw new BadGatewayException('The AI provider returned answers for different application questions');
-      }
+    const expectedById = new Map(questions.map((question) => [applicationQuestionId(question), question]));
+    const answersById = new Map<string, string>();
+    for (const answer of parsed.answers as Array<{ question_id: string; answer: string }>) {
+      const expected = expectedById.get(answer.question_id);
+      if (!expected) throw new BadGatewayException('The AI provider returned an unknown application question ID');
+      if (answersById.has(answer.question_id)) throw new BadGatewayException('The AI provider returned duplicate application question IDs');
       const result = this.allowedAnswer(expected, String(answer.answer).trim());
       if (result === undefined) throw new BadGatewayException(`The AI provider did not select an allowed answer for: ${expected.question}`);
-      return result;
-    });
-    return {
-      answers: questions.map((question, index) => ({
-        question: question.question,
-        answer: answers[index] ?? generated[pendingIndexes.get(answerContextFingerprint([question.question, question.options ?? []]))!],
-      })),
-    };
+      answersById.set(answer.question_id, result);
+    }
+    return questions.map((question) => ({
+      question: question.question,
+      answer: answersById.get(applicationQuestionId(question))!,
+    }));
   }
 
   private allowedAnswer(question: ApplicationQuestionInput, answer?: string): string | undefined {
@@ -876,10 +921,13 @@ ${JSON.stringify(resume)}`;
       .join('');
   }
 
-  private parseConversationAnswers(text: string): Array<{ question: string; answer: string }> {
+  private parseConversationAnswers(text: string, questions: ApplicationQuestionInput[]): SavedApplicationAnswer[] {
     try {
       const parsed = this.parseJson(text);
       if (!Array.isArray(parsed.answers)) return [];
+      if (parsed.answers.some((item) => item && typeof item === 'object' && 'question_id' in item)) {
+        return this.mapApplicationAnswers(parsed, questions);
+      }
       return parsed.answers
         .filter((item): item is Record<string, unknown> => Boolean(
           item && typeof item === 'object' &&
@@ -898,6 +946,19 @@ ${JSON.stringify(resume)}`;
   private parseConversationQuestions(text: string): ApplicationQuestionInput[] {
     const section = text.match(/Application questions:\s*([\s\S]*?)\n\s*Return valid JSON/i)?.[1];
     if (!section) return [];
+    if (section.trim().startsWith('[')) {
+      try {
+        const parsed: unknown = JSON.parse(section);
+        if (!Array.isArray(parsed) || !parsed.every((item) => (
+          item && typeof item === 'object' && typeof item.question === 'string' && item.question.trim()
+          && Array.isArray(item.options) && item.options.every((option: unknown) => typeof option === 'string')
+          && item.question_id === applicationQuestionId(item)
+        ))) return [];
+        return parsed.map((item) => ({ question: item.question, options: item.options }));
+      } catch {
+        return [];
+      }
+    }
     return [...section.matchAll(/(?:^|\n)\d+\.\s+([\s\S]*?)(?=\n\d+\.\s+|$)/g)]
       .map((match) => {
         const block = match[1].trim();

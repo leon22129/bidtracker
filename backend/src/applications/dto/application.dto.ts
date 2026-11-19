@@ -217,6 +217,19 @@ export class CreateManualApplicationDto {
 
   @IsIn(APPLICATION_STATUSES)
   application_status: ApplicationStatus;
+
+  // Each document requires either this text version or its multipart PDF upload.
+  @IsOptional()
+  @Transform(({ value }) => typeof value === 'string' ? value.replace(/\r\n?/g, '\n').trim() : value)
+  @IsString()
+  @MaxLength(50000)
+  resume_text?: string;
+
+  @IsOptional()
+  @Transform(({ value }) => typeof value === 'string' ? value.replace(/\r\n?/g, '\n').trim() : value)
+  @IsString()
+  @MaxLength(50000)
+  job_description?: string;
 }
 
 /** Compatibility payload for older resume clients that save after generation. */

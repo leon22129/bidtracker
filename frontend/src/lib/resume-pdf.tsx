@@ -1,10 +1,10 @@
 'use client';
 
-import { pdf } from '@react-pdf/renderer';
 import type React from 'react';
 import type { ResumeArtifact, ResumeData } from './types';
 import { downloadBlob } from './artifact-download';
 import {
+  renderPdfBlob,
   AcademicTemplate,
   BoldTemplate,
   ClassicCoverLetterTemplate,
@@ -44,7 +44,7 @@ const coverLetterTemplates = {
 export async function downloadResumePdf(artifact: ResumeArtifact) {
   const template = artifact.template in templates ? artifact.template as TemplateId : 'classic';
   const Template = templates[template];
-  const blob = await pdf(<Template data={artifact.resume} />).toBlob();
+  const blob = await renderPdfBlob(<Template data={artifact.resume} />);
   downloadBlob(blob, 'resume.pdf');
 }
 
@@ -54,12 +54,12 @@ export async function downloadCoverLetterPdf(artifact: ResumeArtifact) {
     ? artifact.cover_letter_template as CoverLetterTemplateId
     : 'classic';
   const Template = coverLetterTemplates[templateId];
-  const blob = await pdf(
+  const blob = await renderPdfBlob(
     <Template data={{
       text: artifact.cover_letter_text,
       personalInfo: artifact.resume.personalInfo,
       companyName: artifact.company_name || '',
     }} />,
-  ).toBlob();
+  );
   downloadBlob(blob, 'cover letter.pdf');
 }

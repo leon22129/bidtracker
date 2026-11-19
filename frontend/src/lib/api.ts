@@ -1,7 +1,7 @@
 'use client';
 
 import type {
-  AnalyticsOverview, ApplicationFilters, BannedUrlPattern, ImportPreview, ImportResult, JobApplication, Paginated,
+  AnalyticsOverview, ApplicationDocument, ApplicationFilters, BannedUrlPattern, ImportPreview, ImportResult, JobApplication, Paginated,
   PaymentReport, PaymentReportResult, ResumeArtifact, Role, UpcomingInterview, User, Workspace,
   WorkspaceSummary,
 } from './types';
@@ -240,10 +240,17 @@ export const api = {
     company_name: string;
     url: string;
     application_status: JobApplication['application_status'];
-  }) => request<JobApplication>('/applications', {
-    method: 'POST',
-    body: JSON.stringify(data),
-  }),
+    resume_pdf: File | null;
+    resume_text: string;
+    job_description_pdf: File | null;
+    job_description: string;
+  }) => {
+    const form = new FormData();
+    for (const [key, value] of Object.entries(data)) {
+      if (value !== null && value !== '') form.append(key, value);
+    }
+    return request<JobApplication>('/applications', { method: 'POST', body: form });
+  },
   updatePipeline: (
     id: string,
     patch: {
@@ -268,6 +275,8 @@ export const api = {
     }),
   getApplicationResume: (id: string) =>
     request<ResumeArtifact>(`/applications/${id}/resume`),
+  getApplicationDocument: (id: string, document: ApplicationDocument) =>
+    requestBlob(`/applications/${encodeURIComponent(id)}/documents/${document.kind}/${document.format}`),
   getApplicationScreenshot: (id: string) =>
     requestBlob(`/applications/${encodeURIComponent(id)}/screenshot`),
   listBannedPatterns: () => request<BannedUrlPattern[]>('/applications/banned-patterns'),

@@ -1,5 +1,6 @@
 // JavaScript bridge keeps the shared TSX templates out of this app's TypeScript program. The two
 // apps intentionally use different React type versions, while Next still compiles these sources.
+export { renderPdfBlob } from '../../../resume-builder-frontend/src/renderer/src/lib/render-pdf';
 export { ClassicTemplate } from '../../../resume-builder-frontend/src/renderer/src/lib/pdf-templates/classic';
 export { ModernTemplate } from '../../../resume-builder-frontend/src/renderer/src/lib/pdf-templates/modern';
 export { MinimalTemplate } from '../../../resume-builder-frontend/src/renderer/src/lib/pdf-templates/minimal';

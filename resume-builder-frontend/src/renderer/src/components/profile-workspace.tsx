@@ -51,7 +51,7 @@ import {
   type Certification,
   normalizeSkills,
 } from "@/lib/parse-resume";
-import type { AiProfile, ApplicationQuestionInput } from "../../../shared/ai-profiles";
+import type { AiProfile, ApplicationQuestionInput, GenerateResumeResult } from "../../../shared/ai-profiles";
 import {
   generateCoverLetterPDF,
   DEFAULT_COVER_LETTER_TEMPLATE,
@@ -70,6 +70,7 @@ import {
 } from "@/lib/profile-utils";
 import {
   armApplicationScreenshot,
+  clearProfileTabScreenshot,
   chooseProfileDirectory,
   getCurrentBrowserTabUrl,
   getCurrentBrowserTabContext,
@@ -142,6 +143,13 @@ export function ProfileWorkspace(props: ProfileWorkspaceProps) {
     catch { return "linked"; }
   });
   const [busy, setBusy] = useState(false);
+  const [requestedDraft, setRequestedDraft] = useState<{ id: string; mode: ApplicationMode } | null>(null);
+
+  const openPreparedDraft = (id: string, next: ApplicationMode) => {
+    setRequestedDraft({ id, mode: next });
+    setMode(next);
+    try { localStorage.setItem(`${props.tabStorageKey}:mode`, next); } catch { /* Keep the workspace usable. */ }
+  };
 
   return (
     <Tabs value={mode} onValueChange={(value) => {
@@ -159,6 +167,8 @@ export function ProfileWorkspace(props: ProfileWorkspaceProps) {
       {(["linked", "manual"] as const).map((value) => (
         <TabsContent key={value} value={value} className="mt-0 min-h-0 flex-1 overflow-hidden">
           <ProfileWorkspaceContent {...props} mode={value} onBusyChange={setBusy}
+            requestedDraftId={requestedDraft?.mode === value ? requestedDraft.id : undefined}
+            onOpenDraft={openPreparedDraft} onDraftOpened={() => setRequestedDraft(null)}
             tabStorageKey={value === "manual" ? `${props.tabStorageKey}:manual` : props.tabStorageKey} />
         </TabsContent>
       ))}
@@ -181,7 +191,13 @@ function ProfileWorkspaceContent({
   isActive,
   mode,
   onBusyChange,
-}: ProfileWorkspaceProps & { mode: ApplicationMode; onBusyChange: (busy: boolean) => void }) {
+  requestedDraftId,
+  onOpenDraft,
+  onDraftOpened,
+}: ProfileWorkspaceProps & {
+  mode: ApplicationMode; onBusyChange: (busy: boolean) => void;
+  requestedDraftId?: string; onOpenDraft: (id: string, mode: ApplicationMode) => void; onDraftOpened: () => void;
+}) {
   const isManual = mode === "manual";
   const [savedTab] = useState(() => readProfileTabState(tabStorageKey, profile.id));
   // Operational settings synced from profile
@@ -245,6 +261,7 @@ function ProfileWorkspaceContent({
   const [isLoadingLastApplication, setIsLoadingLastApplication] = useState(false);
   const [isLinkingJob, setIsLinkingJob] = useState(false);
   const [error, setError] = useState("");
+  const [blockedPreparedJob, setBlockedPreparedJob] = useState<GenerateResumeResult["existingDraft"]>();
   const [eligibilityContinuation, setEligibilityContinuation] = useState<{
     profileId: string; jobDescription: string; url: string;
   } | null>(null);
@@ -372,6 +389,7 @@ function ProfileWorkspaceContent({
     setError("");
     setEligibilityContinuation(null);
     const sourceDescription = jobDescription.trim();
+    setBlockedPreparedJob(undefined);
     setIsGenerating(true);
 
     const shouldGenerateCoverLetter = profile.generateCoverLetter ?? generateCoverLetter;
@@ -400,11 +418,12 @@ function ProfileWorkspaceContent({
         const location = existing
           ? ` It is already recorded as application #${existing.number}${existing.workspace_name ? ` in ${existing.workspace_name}` : " in this profile"}.`
           : "";
-        const reason = data.duplicateType === "career_history"
+        const reason = data.reason || (data.duplicateType === "career_history"
           ? `Resume generation is blocked because ${data.companyName || "the target company"} is already listed as a previous employer in this profile's career path.`
           : data.duplicateType === "company"
             ? `This company is already recorded in this profile within the last ${data.cooldownDays ?? 90} days.${location}`
-            : `This job URL has already been added.${location}`;
+            : `This job URL has already been added.${location}`);
+        setBlockedPreparedJob(data.existingDraft);
         setError(reason);
         if (isActive) toast({ title: "Duplicate job", description: reason });
         return;
@@ -539,12 +558,14 @@ function ProfileWorkspaceContent({
     }
   };
 
-  const handleLoadLastApplication = async () => {
+  const handleLoadLastApplication = async (draftId?: string) => {
     if (!profile.workspaceId || isJobBusy) return;
     setIsLoadingLastApplication(true);
     setError("");
     try {
-      const saved = await window.aiProfiles.loadLastApplication(profile.workspaceId, mode);
+      const saved = draftId
+        ? await window.aiProfiles.loadPreparedApplication(draftId)
+        : await window.aiProfiles.loadLastApplication(profile.workspaceId, mode);
       const loadedResume = saved.resume as ResumeData;
       if (!loadedResume || typeof loadedResume !== "object" || !loadedResume.personalInfo) {
         throw new Error("The saved resume is not valid.");
@@ -558,6 +579,7 @@ function ProfileWorkspaceContent({
       }
 
       setJobDescription(saved.job_description ?? "");
+      setBlockedPreparedJob(undefined);
       setJobSource((current) => isManual ? null : current?.url === saved.url ? current : { url: saved.url });
       setPreparedJob({ applicationId: saved.draft_id || saved.id, submittedAt: saved.submitted_at,
         url: saved.url, companyName: saved.company_name || "", jobTitle: saved.job_title || "", description: saved.job_description || "" });
@@ -636,6 +658,10 @@ function ProfileWorkspaceContent({
     }
   };
 
+  useEffect(() => {
+    if (requestedDraftId) void handleLoadLastApplication(requestedDraftId).finally(onDraftOpened);
+  }, [requestedDraftId]);
+
   const handleApplicationSaved = (applicationId: string) => {
     if (preparedJob?.applicationId !== applicationId) return;
     // A new JD may already be in the editor while the prepared job awaits submission.
@@ -660,6 +686,28 @@ function ProfileWorkspaceContent({
     setDownloadLocationPromptOpen(false);
     setWorkflowTab("resume");
     syncFromProfile(profile);
+  };
+
+  const handleDiscardPreparedJob = async (draftId: string) => {
+    if (isJobBusy || !window.confirm("Discard this prepared job and its saved documents? You can generate a new resume afterward.")) return;
+    setIsLoadingLastApplication(true);
+    try {
+      await window.aiProfiles.discardPreparedApplication(draftId);
+      if (preparedJob?.applicationId === draftId) {
+        handleApplicationSaved(draftId);
+        setJobDescription(jobDescription);
+        setJobSource(jobSource);
+        // The server has already discarded the draft; a stale watcher cannot submit it.
+        if (!isManual) void clearProfileTabScreenshot(profileTabId).catch(() => {});
+      }
+      setBlockedPreparedJob(undefined);
+      setError("");
+      toast({ title: "Prepared job discarded", description: "You can now generate a new resume." });
+    } catch (err) {
+      setError(getFriendlyErrorMessage(err, "Unable to discard the prepared job."));
+    } finally {
+      setIsLoadingLastApplication(false);
+    }
   };
 
   const handleGenerateAnswers = async () => {
@@ -1062,6 +1110,8 @@ function ProfileWorkspaceContent({
             <summary className="cursor-pointer font-medium">Prepared job: {preparedJob.companyName} · {preparedJob.jobTitle}</summary>
             {!isManual && <a className="mt-2 block break-all text-primary underline" href={preparedJob.url} target="_blank" rel="noreferrer">Open job posting</a>}
             <pre className="mt-3 max-h-64 overflow-auto whitespace-pre-wrap font-sans text-xs text-muted-foreground">{preparedJob.description}</pre>
+            {!preparedJob.submittedAt && <Button variant="outline" className="mt-3" disabled={isJobBusy || isDownloading}
+              onClick={() => void handleDiscardPreparedJob(preparedJob.applicationId)}>Discard prepared job</Button>}
           </details>
         )}
 
@@ -1070,6 +1120,16 @@ function ProfileWorkspaceContent({
           <AlertCircle className="h-4 w-4" />
           <AlertDescription>
             {error}
+            {blockedPreparedJob?.can_manage && (
+              <div className="mt-3 flex flex-wrap gap-2">
+                <Button disabled={isJobBusy} onClick={() => onOpenDraft(blockedPreparedJob.id, blockedPreparedJob.url ? "linked" : "manual")}>
+                  Reopen prepared job
+                </Button>
+                <Button variant="outline" disabled={isJobBusy} onClick={() => void handleDiscardPreparedJob(blockedPreparedJob.id)}>
+                  Discard prepared job
+                </Button>
+              </div>
+            )}
             {canContinueEligibility && (
               <div className="mt-3 space-y-2">
                 <p>Your admin has enabled you to continue and generate a resume for this job.</p>

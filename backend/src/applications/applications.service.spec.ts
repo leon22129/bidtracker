@@ -422,6 +422,7 @@ describe('ApplicationsService generated-application duplicate-click protection',
 
     await expect(service.createManual(user, {
       ...dto, company_name: 'A different company', application_status: 'Applied',
+      resume_text: 'Resume text', job_description: 'Job description text',
     })).rejects.toThrow('URL already exists');
 
     expect(prisma.jobApplication.create).not.toHaveBeenCalled();
@@ -576,12 +577,18 @@ describe('ApplicationsService generated-application duplicate-click protection',
     await expect(service.createManual(user, {
       ...dto,
       application_status: 'Applied',
+      resume_text: 'Resume text', job_description: 'Job description text',
     })).resolves.toMatchObject({ application_status: 'Applied' });
     expect(prisma.jobApplication.create).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({
         job_title: dto.job_title,
         company_name: dto.company_name,
         application_status: 'Applied',
+        job_description: 'Job description text',
+        documents: { create: expect.arrayContaining([
+          expect.objectContaining({ kind: 'resume', format: 'txt', data: Buffer.from('Resume text') }),
+          expect.objectContaining({ kind: 'job_description', format: 'txt', data: Buffer.from('Job description text') }),
+        ]) },
       }),
     }));
     expect(slackNotifications.notifyApplicationCreated).toHaveBeenCalledWith(user.id);
@@ -594,5 +601,18 @@ describe('ApplicationsService generated-application duplicate-click protection',
       ...dto,
       application_status: 'Rejected',
     })).rejects.toThrow('Transition Pending');
+  });
+
+  it.each([
+    { resume_text: '   ', job_description: 'Job description' },
+    { resume_text: 'Resume', job_description: '   ' },
+    {},
+  ])('rejects incomplete manual documents before writing a row', async (documents) => {
+    const { service, prisma, slackNotifications } = setup();
+    await expect(service.createManual(user, {
+      ...dto, application_status: 'Applied', ...documents,
+    })).rejects.toThrow('is required');
+    expect(prisma.jobApplication.create).not.toHaveBeenCalled();
+    expect(slackNotifications.notifyApplicationCreated).not.toHaveBeenCalled();
   });
 });

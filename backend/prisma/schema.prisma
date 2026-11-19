@@ -75,6 +75,7 @@ model Workspace {
   resumeProfile       ResumeProfile?
   resumeConversations ResumeConversation[]
   generationJobs      GenerationJob[]
+  resumeGenerationReservations ResumeGenerationReservation[]
 
   @@index([owner_user_id])
   @@index([manager_user_id])
@@ -193,6 +194,21 @@ model GenerationJob {
   @@map("generation_jobs")
 }
 
+// Short-lived claims prevent concurrent paid generations for the same profile/company or URL.
+model ResumeGenerationReservation {
+  id String @id @default(cuid())
+  workspace_id String
+  company_identity String
+  normalized_url String?
+  expires_at DateTime
+  workspace Workspace @relation(fields: [workspace_id], references: [id], onDelete: Cascade)
+
+  @@unique([workspace_id, company_identity])
+  @@unique([workspace_id, normalized_url])
+  @@index([expires_at])
+  @@map("resume_generation_reservations")
+}
+
 model AiSettings {
   resume_prompt String?
   admin_id String @id
@@ -256,6 +272,7 @@ model JobApplication {
   createdByUser User                @relation("CreatedBy", fields: [created_by_user_id], references: [id], onDelete: Restrict)
   conversation  ResumeConversation? @relation(fields: [conversation_id], references: [id], onDelete: SetNull)
   screenshot    ApplicationScreenshot?
+  documents     ApplicationDocument[]
 
   // Guarantees the "number resets per date" invariant at the storage layer, and doubles as the
   // covering index for the default table sort (date desc, number asc).
@@ -283,6 +300,22 @@ model JobApplication {
   @@index([workspace_id, date(sort: Desc), number(sort: Asc)], map: "job_applications_workspace_date_desc_number_asc_idx")
   @@map("job_applications")
   submissionDraft ApplicationDraft?
+}
+
+// Original PDFs and text versions supplied when manually adding an application.
+model ApplicationDocument {
+  id             String @id @default(cuid())
+  application_id String
+  kind           String // resume | job_description
+  format         String // pdf | txt
+  filename       String
+  content_type   String
+  data           Bytes
+
+  application JobApplication @relation(fields: [application_id], references: [id], onDelete: Cascade)
+
+  @@unique([application_id, kind, format])
+  @@map("application_documents")
 }
 
 model ApplicationScreenshot {

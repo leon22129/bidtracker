@@ -94,7 +94,7 @@ export class DuplicateService {
     };
   }
 
-  private companyCooldownCutoff() {
+  companyCooldownCutoff() {
     const cutoff = new Date(Date.now() - this.companyCooldownDays() * 24 * 60 * 60 * 1000);
     // Application dates are UTC day buckets; include the entire boundary date.
     cutoff.setUTCHours(0, 0, 0, 0);

@@ -33,12 +33,14 @@ import {
 import { SlackNotificationService } from './slack-notification.service';
 import { parseApplicationHistory } from '../common/utils/application-history.util';
 import { formatJobDescription } from '../common/utils/job-description.util';
+import { manualApplicationDocuments, ManualApplicationFiles } from './manual-application-documents';
 
 const ROW_SELECT = {
   id: true, workspace_id: true, date: true, number: true, job_title: true, company_name: true,
   url: true, normalized_url: true, job_source: true, application_status: true, pipeline_status: true,
   interview_date: true, interview_note: true, note: true, paid: true,
   resume_generated_at: true, cover_letter_template: true,
+  documents: { select: { kind: true, format: true, filename: true } },
   screenshot: { select: { captured_at: true, expires_at: true } },
   created_by_user_id: true, created_at: true, updated_at: true,
 } as const;
@@ -184,6 +186,22 @@ export class ApplicationsService {
     });
     if (!row) throw new NotFoundException('Application not found');
     return row;
+  }
+
+  async getDocument(user: AuthUser, id: string, kind: string, format: string) {
+    if (!['resume', 'job_description'].includes(kind) || !['pdf', 'txt'].includes(format)) {
+      throw new NotFoundException('Document not found');
+    }
+    const workspaceWhere = this.access.visibilityWhere(user);
+    const document = await this.prisma.applicationDocument.findFirst({
+      where: {
+        application_id: id, kind, format,
+        ...(workspaceWhere ? { application: { workspace: workspaceWhere } } : {}),
+      },
+      select: { data: true, filename: true, content_type: true },
+    });
+    if (!document) throw new NotFoundException('Document not found');
+    return document;
   }
 
   async getResume(user: AuthUser, id: string) {
@@ -600,11 +618,12 @@ export class ApplicationsService {
   // -------------------------------------------------------------------------
 
   /** Creates a complete application entered directly from the workspace UI. */
-  async createManual(user: AuthUser, dto: CreateManualApplicationDto, context?: WorkspaceWriteContext) {
-    if (!context) return this.withWorkspaceWrite(dto.workspace_id, (write) => this.createManual(user, dto, write));
+  async createManual(user: AuthUser, dto: CreateManualApplicationDto, files: ManualApplicationFiles = {}, context?: WorkspaceWriteContext) {
+    if (!context) return this.withWorkspaceWrite(dto.workspace_id, (write) => this.createManual(user, dto, files, write));
     const db = context.db;
     await this.access.assertCanEdit(user, dto.workspace_id, { db });
     assertStatusTransition('Pending', dto.application_status, user.role);
+    const documents = manualApplicationDocuments(dto, files);
 
     const url = dto.url.trim();
     const companyName = dto.company_name.trim();
@@ -640,6 +659,8 @@ export class ApplicationsService {
             company_name: companyName,
             job_title: jobTitle,
             job_fingerprint: createJobFingerprint(companyName, jobTitle),
+            job_description: dto.job_description?.trim() || null,
+            documents: { create: documents },
             note: recentCompanyApplication ? this.companyDuplicateNote(recentCompanyApplication)
               : banned ? BANNED_URL_NOTE : null,
             created_by_user_id: user.id,

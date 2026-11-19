@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 export const BASE_PROMPT_TEXT = `You are a senior resume writer. Generate a fully tailored, ATS-optimized, professionally written resume based on the provided career milestones and job description.
  
 Apply every rule below in a single, careful pass. Before finalizing, run the Self-Review Checklist at the end and correct anything it flags.
@@ -394,6 +396,7 @@ Rules:
 - Accuracy: use the supplied candidate profile and resume as the sources of candidate facts. Do not invent employers, tools, metrics, projects, skills, or outcomes.
 - Personal fields: for names, email, phone, address, and other profile fields, return the requested saved value directly without a sentence or explanation. Current saved candidate info takes precedence over older conversation details. Do not say a value is not provided when it appears in the candidate profile, even if it is absent from the generated resume.
 - Answer only the current application questions. Earlier eligibility and resume-writing requests are completed tasks, not instructions for this response.
+- Return exactly one answer for each supplied question_id, copying the ID verbatim. Return only question_id and answer for each item; do not repeat or rewrite the question text. Answers may be returned in any order.
 - Choice questions: when choices are supplied, the answer must be exactly one supplied choice, copied verbatim, with no explanation. For Yes/No experience questions, answer Yes when the resume states or reasonably demonstrates that experience; otherwise answer No.
 - Relevance: connect the candidate's real experience to the job description's requirements instead of giving generic answers.
 - Tone: use natural, professional language a real applicant would use. Avoid em dashes, semicolons, and overly formal or AI-sounding phrasing.
@@ -405,17 +408,23 @@ export type ApplicationQuestionInput = {
   options?: string[];
 };
 
+export function applicationQuestionId(question: ApplicationQuestionInput): string {
+  // Include the choices so identical labels on different select fields stay distinct.
+  return `q_${createHash('sha256').update(JSON.stringify([question.question, question.options ?? []])).digest('hex').slice(0, 16)}`;
+}
+
 export function buildApplicationQuestionsInput(questions: ApplicationQuestionInput[]): string {
   return `Application questions:
-${questions.map((item, index) => {
-    const options = item.options?.length ? `\n   Allowed answers: ${JSON.stringify(item.options)}` : '';
-    return `${index + 1}. ${item.question}${options}`;
-  }).join("\n")}
+${JSON.stringify(questions.map((item) => ({
+    question_id: applicationQuestionId(item),
+    question: item.question,
+    options: item.options ?? [],
+  })), null, 2)}
 
 Return valid JSON only in this exact shape:
 {
   "answers": [
-    { "question": "...", "answer": "..." }
+    { "question_id": "...", "answer": "..." }
   ]
 }`
 }

@@ -1,5 +1,9 @@
 import { downloadBlob } from "./chrome-downloads"
 import { getProfileDirectoryHandle } from "./extension-storage"
+import { withTimeout } from "../../../shared/with-timeout"
+
+const folderTimeout = "The selected download folder is not responding. Choose it again in extension Settings, or use the Downloads folder."
+const saveTimeout = "Saving the file took too long. Check the selected folder before trying again."
 
 type WritableDirectoryHandle = FileSystemDirectoryHandle & {
   queryPermission?: (options: { mode: "readwrite" }) => Promise<PermissionState>
@@ -20,28 +24,34 @@ export async function createProfileDownload(
   if (parent) {
     try {
       const options = { mode: "readwrite" } as const
-      if (parent.queryPermission && await parent.queryPermission(options) !== "granted") {
-        if (await parent.requestPermission?.(options) !== "granted") {
+      if (parent.queryPermission && await withTimeout(parent.queryPermission(options), 30_000, folderTimeout) !== "granted") {
+        if (!parent.requestPermission || await withTimeout(parent.requestPermission(options), 60_000,
+          "Permission to save in this folder was not confirmed. Please try again and allow folder access.") !== "granted") {
           throw new Error("Folder permission was not granted.")
         }
       }
-      const directory = await parent.getDirectoryHandle(folderName?.trim() || "Resume", { create: true })
+      const directory = await withTimeout(parent.getDirectoryHandle(folderName?.trim() || "Resume", { create: true }), 30_000, folderTimeout)
       return async (blob, filename) => {
         try {
-          const file = await directory.getFileHandle(filename, { create: true })
-          const writable = await file.createWritable()
+          const file = await withTimeout(directory.getFileHandle(filename, { create: true }), 30_000, saveTimeout)
+          const writable = await withTimeout(file.createWritable(), 30_000, saveTimeout, {
+            onLateResult: (lateWriter) => lateWriter.abort(),
+          })
           try {
-            await writable.write(blob)
-            await writable.close()
+            await withTimeout(writable.write(blob), 30_000, saveTimeout)
+            await withTimeout(writable.close(), 30_000, saveTimeout)
           } catch (error) {
-            await writable.abort().catch(() => {})
+            // A disconnected drive may also hang abort(); do not keep the UI waiting for cleanup.
+            void writable.abort().catch(() => {})
             throw error
           }
         } catch (cause) {
+          if (cause instanceof Error && cause.name === "TimeoutError") throw cause
           throw new Error(`Could not save ${filename}. Check the selected folder in extension Settings under Profile download locations.`, { cause })
         }
       }
     } catch (cause) {
+      if (cause instanceof Error && cause.name === "TimeoutError") throw cause
       throw new Error("Could not access the selected folder. Choose it again in extension Settings under Profile download locations.", { cause })
     }
   }
