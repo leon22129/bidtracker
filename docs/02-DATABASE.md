@@ -44,6 +44,7 @@ creator, so reassignment cannot move earlier work to another bidder.
 | `workspace_id` | TEXT UNIQUE FK→Workspace ON DELETE CASCADE | exactly one owning workspace; profiles cannot be shared |
 | `name` and resume fields | TEXT/BOOL | identity, resume content, template, and download settings |
 | `us_work_status` | TEXT | optional application-autofill status: `US Citizen`, `Green Card`, or `Other` |
+| `check_job_eligibility` | BOOL default true | Admin-controlled profile setting; false skips eligibility AI requests while retaining bans, duplicate checks, and workspace access rules |
 
 ### JobApplication
 | Column | Type | Notes |

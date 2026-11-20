@@ -1,4 +1,4 @@
-import { IsArray, IsBoolean, IsEmail, IsIn, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
+import { IsArray, IsBoolean, IsEmail, IsIn, IsOptional, IsString, MaxLength, MinLength, ValidateIf } from 'class-validator';
 
 export class CreateWorkspaceDto {
   @IsString()
@@ -148,6 +148,10 @@ export class UpdateWorkspaceDto {
   @IsOptional()
   @IsBoolean()
   use_generated_role_titles?: boolean;
+
+  @ValidateIf((_, value) => value !== undefined)
+  @IsBoolean()
+  check_job_eligibility?: boolean;
 
   @IsOptional()
   @IsString()

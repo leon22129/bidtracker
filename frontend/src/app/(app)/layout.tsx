@@ -6,7 +6,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth-context';
 import { BrandIcon } from '@/components/brand-icon';
 import { ThemeToggle } from '@/components/theme-toggle';
-import { canManageUsers, canViewAnalytics, isAdmin, roleLabel } from '@/lib/permissions';
+import { canManageUsers, canViewAnalytics, roleLabel } from '@/lib/permissions';
 
 /**
  * Route group for everything behind authentication.
@@ -39,7 +39,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     { href: '/admin/payments', label: 'Bid Count Report', show: true },
     { href: '/admin/analytics', label: 'Analytics', show: canViewAnalytics(user) },
     { href: '/admin/users', label: 'Users', show: canManageUsers(user) },
-    { href: '/admin/banned-urls', label: 'Banned URLs', show: isAdmin(user) },
+    { href: '/admin/banned-urls', label: 'Banned URLs', show: true },
     { href: '/extension', label: 'Download extension', show: true },
   ].filter((n) => n.show);
 

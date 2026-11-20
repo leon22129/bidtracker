@@ -28,6 +28,7 @@ describe('Archived profile write protection across services', () => {
     const profile = {
       id: input.profile_id, workspace_id: input.workspace_id, full_name: 'Candidate',
       career_path: '', template: 'classic', education_json: '[]', certifications_json: '[]',
+      check_job_eligibility: true,
     };
     const workspace = {
       id: input.workspace_id, name: 'Candidate', owner_user_id: user.id,
@@ -48,7 +49,13 @@ describe('Archived profile write protection across services', () => {
         update: jest.fn(async ({ data }) => Object.assign(workspace, data)),
       },
       resumeProfile: { findUnique: jest.fn().mockResolvedValue(profile) },
-      applicationDraft: { findFirst: jest.fn().mockResolvedValue(null), create: jest.fn() },
+      applicationDraft: { findFirst: jest.fn().mockResolvedValue(null), findMany: jest.fn().mockResolvedValue([]), create: jest.fn() },
+      resumeGenerationReservation: {
+        findFirst: jest.fn(async ({ where }) => typeof where.id === 'string' ? { id: where.id } : null),
+        create: jest.fn().mockResolvedValue({ id: 'reservation-1' }),
+        update: jest.fn().mockResolvedValue({ id: 'reservation-1' }),
+        deleteMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
       resumeConversation: {
         update: jest.fn().mockResolvedValue({}),
         findUnique: jest.fn().mockResolvedValue({
@@ -71,6 +78,7 @@ describe('Archived profile write protection across services', () => {
     const duplicates = {
       classifyBatch: jest.fn().mockResolvedValue([{ is_duplicate: false }]),
       findRecentCompanyMatch: jest.fn().mockResolvedValue(null),
+      companyCooldownCutoff: jest.fn().mockReturnValue(new Date('2026-08-01')),
     };
     const bannedUrls = { matches: jest.fn().mockResolvedValue(false), matchesJob: jest.fn().mockResolvedValue(false), matchMany: jest.fn() };
     const notifications = { notifyApplicationCreated: jest.fn() };
@@ -139,15 +147,25 @@ describe('Archived profile write protection across services', () => {
     expect(context.numbering.reserveBlock).not.toHaveBeenCalled();
   });
 
-  it('blocks saving a resume when the profile is archived during generation', async () => {
+  it('blocks archived profiles even when eligibility checks are disabled', async () => {
+    const context = setup();
+    context.workspace.resumeProfile.check_job_eligibility = false;
+    await expect(context.generation.generate(user, input)).rejects.toBeInstanceOf(ForbiddenException);
+    expect(context.generateText).not.toHaveBeenCalled();
+    expect(context.prisma.resumeGenerationReservation.create).not.toHaveBeenCalled();
+  });
+
+  it.each([true, false])('blocks saving a resume when archived during generation with eligibility checks %s', async (enabled) => {
     const context = setup();
     context.workspace.is_archived = false;
-    context.generateText.mockResolvedValueOnce(JSON.stringify(eligibility)).mockImplementationOnce(async () => {
+    context.workspace.resumeProfile.check_job_eligibility = enabled;
+    if (enabled) context.generateText.mockResolvedValueOnce(JSON.stringify(eligibility));
+    context.generateText.mockImplementationOnce(async () => {
       context.workspace.is_archived = true;
       return JSON.stringify({ summary: 'Tailored summary', annual_salary: '$150,000', hourly_rate: '$72.12' });
     });
     await expect(context.generation.generate(user, input)).rejects.toBeInstanceOf(ForbiddenException);
-    expect(context.generateText).toHaveBeenCalledTimes(2);
+    expect(context.generateText).toHaveBeenCalledTimes(enabled ? 2 : 1);
     expect(context.prisma.jobApplication.create).not.toHaveBeenCalled();
     expect(context.numbering.withNextNumber).not.toHaveBeenCalled();
   });

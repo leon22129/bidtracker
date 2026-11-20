@@ -175,6 +175,7 @@ export const api = {
       requires_sponsorship: string; legally_authorized_us: string;
       us_work_status: string;
       update_headline: boolean; use_generated_role_titles: boolean;
+      check_job_eligibility: boolean;
       template: string; save_in_folder: boolean; auto_download: boolean;
       download_jd_with_pdf: boolean; use_company_name: boolean;
       generate_cover_letter: boolean; cover_letter_template: string;

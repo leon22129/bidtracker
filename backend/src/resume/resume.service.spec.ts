@@ -43,7 +43,8 @@ describe('ApplicationGenerationService application metadata eligibility', () => 
     ethnicity: 'White',
   };
 
-  function setup() {
+  function setup(checkJobEligibility?: boolean) {
+    const storedProfile = { ...profile, check_job_eligibility: checkJobEligibility };
     const prisma = {
       user: { findUnique: jest.fn().mockResolvedValue({ ...user, is_active: true, can_continue_after_eligibility_failure: false }) },
       $transaction: jest.fn(async (operations) => Promise.all(operations)),
@@ -51,9 +52,9 @@ describe('ApplicationGenerationService application metadata eligibility', () => 
         id: dto.workspace_id,
         owner_user_id: user.id,
         name: 'Workspace',
-        resumeProfile: profile,
+        resumeProfile: storedProfile,
       }) },
-      resumeProfile: { findUnique: jest.fn().mockResolvedValue(profile) },
+      resumeProfile: { findUnique: jest.fn().mockResolvedValue(storedProfile) },
       applicationDraft: { findFirst: jest.fn().mockResolvedValue(null), updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
       resumeConversation: {
         findUnique: jest.fn(),
@@ -140,6 +141,90 @@ describe('ApplicationGenerationService application metadata eligibility', () => 
     requires_onsite_onboarding: false,
     reason: '',
     ...overrides,
+  });
+
+  it.each([
+    ['bidder', 'linked'], ['bidder_manager', 'linked'], ['bidder', 'manual'], ['bidder_manager', 'manual'],
+  ] as const)('skips eligibility for a disabled profile used by a %s in %s mode', async (role, mode) => {
+    const { service, drafts, prisma } = setup(false);
+    const actor = { ...user, role };
+    const jobDescription = 'Acme is hiring a Software Engineer onsite in Canada. Clearance and onsite onboarding required.';
+    const generateText = jest.spyOn(service as any, 'generateText').mockResolvedValue(JSON.stringify({
+      summary: 'Generated resume', annual_salary: '$150,000', hourly_rate: '$72.12',
+    }));
+
+    await expect(service.generate(actor, { ...dto, mode, job_description: jobDescription,
+      url: mode === 'manual' ? undefined : dto.url })).resolves.toMatchObject({
+      success: true, eligible: true, eligibility_skipped: true,
+      draft: { id: 'draft-1', company_name: 'Acme', job_title: 'Software Engineer' },
+    });
+    expect(generateText).toHaveBeenCalledTimes(1);
+    expect(generateText).toHaveBeenCalledWith(expect.stringContaining(jobDescription),
+      expect.objectContaining({ operation: 'resume_generation' }));
+    expect(prisma.user.findUnique).not.toHaveBeenCalled();
+    expect(drafts.prepare).toHaveBeenCalledWith(actor, expect.objectContaining({
+      source_job_description: jobDescription, job_description: expect.stringContaining(jobDescription),
+    }), 'reservation-1');
+    expect(drafts.releaseGeneration).toHaveBeenCalledWith('reservation-1');
+  });
+
+  it.each([true, undefined])('still checks eligibility when the profile setting is %s', async (setting) => {
+    const { service, drafts } = setup(setting);
+    const generateText = jest.spyOn(service as any, 'generateText').mockResolvedValue(eligible({ is_us_job: false }));
+    await expect(service.generate(user, dto)).resolves.toMatchObject({ success: false, eligible: false });
+    expect(generateText).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ operation: 'job_eligibility' }));
+    expect(drafts.prepare).not.toHaveBeenCalled();
+  });
+
+  it('still extracts company and title without evaluating eligibility for a disabled profile', async () => {
+    const { service } = setup(false);
+    (service as any).extractJobIdentity.mockRestore();
+    const generateText = jest.spyOn(service as any, 'generateText')
+      .mockResolvedValueOnce(JSON.stringify({ company_name: 'Acme', job_title: 'Software Engineer' }))
+      .mockResolvedValueOnce(JSON.stringify({ summary: 'Resume', annual_salary: '$150,000', hourly_rate: '$72.12' }));
+    await expect(service.generate(user, dto)).resolves.toMatchObject({ success: true, eligibility_skipped: true });
+    expect(generateText.mock.calls.map(([, options]: any[]) => options.operation)).toEqual(['job_identity', 'resume_generation']);
+  });
+
+  it.each(['url ban', 'company ban', 'url duplicate', 'company cooldown', 'career history', 'missing identity', 'prepared', 'in_progress'])(
+    'keeps %s enforced when profile eligibility checks are disabled', async (block) => {
+      const { service, prisma, duplicates, bannedUrls, drafts } = setup(false);
+      const generateText = jest.spyOn(service as any, 'generateText');
+      if (block === 'url ban') bannedUrls.matches.mockResolvedValue(true);
+      if (block === 'company ban') bannedUrls.matchesJob.mockResolvedValue(true);
+      if (block === 'url duplicate') duplicates.classifyBatch.mockResolvedValue([{ is_duplicate: true }]);
+      if (block === 'company cooldown') duplicates.findRecentCompanyMatch.mockResolvedValue({ id: 'existing' });
+      if (block === 'career history') prisma.workspace.findUnique.mockResolvedValue({ id: dto.workspace_id,
+        resumeProfile: { ...profile, check_job_eligibility: false, career_path: 'Company: Acme\nRole: Engineer' } });
+      if (block === 'missing identity') (service as any).extractJobIdentity.mockResolvedValue({ company_name: '', job_title: '' });
+      if (block === 'prepared' || block === 'in_progress') drafts.reserveGeneration.mockResolvedValue({
+        blocked: { success: false, duplicate: true, duplicate_type: block },
+      });
+      await expect(service.generate(user, dto)).resolves.toMatchObject({ success: false });
+      expect(drafts.prepare).not.toHaveBeenCalled();
+      expect(generateText).not.toHaveBeenCalled();
+    },
+  );
+
+  it('keeps workspace authorization enforced for a disabled profile', async () => {
+    const { service, access, drafts } = setup(false);
+    access.assertCanEdit.mockRejectedValue(new ForbiddenException());
+    const generateText = jest.spyOn(service as any, 'generateText');
+    await expect(service.generate(user, dto)).rejects.toBeInstanceOf(ForbiddenException);
+    expect(generateText).not.toHaveBeenCalled();
+    expect(drafts.reserveGeneration).not.toHaveBeenCalled();
+  });
+
+  it('skips the standalone eligibility request for a disabled profile without inventing a verdict', async () => {
+    const { service } = setup(false);
+    const generateText = jest.spyOn(service as any, 'generateText');
+    const result = await service.generateProfilePrompt(user, {
+      profile_id: profile.id, kind: 'jobEligibility', job_description: dto.job_description, url: dto.url,
+    });
+    expect(result).toMatchObject({ eligibility_skipped: true });
+    if (!('tailored_resume' in result)) throw new Error('Expected a standalone eligibility response');
+    expect(JSON.parse(result.tailored_resume!)).toMatchObject({ skipped: true });
+    expect(generateText).not.toHaveBeenCalled();
   });
 
   it.each(['prepared', 'in_progress'])('blocks %s jobs before eligibility and resume generation', async (duplicateType) => {

@@ -18,10 +18,19 @@ the company and job title, detects duplicates, and numbers rows per date. Admins
 recruiting pipeline, settle weekly bid payments, and read conversion analytics.
 
 Resume Builder follows a draft workflow: scan the JD, check company/URL bans and duplicates, check
-eligibility, then generate the resume and expected rate. The URL, original JD, updated JD, resume,
+eligibility when enabled for the profile, then generate the resume and expected rate. The URL, original JD, updated JD, resume,
 and generated answers are saved in `application_drafts`. The JD and linked job page stay available
 after generation and when a prepared job is restored.
 Blocked and ineligible jobs do not add table rows.
+
+Admins can turn off **Check job eligibility** in **Dashboard → Edit profile** for individual profiles.
+It is enabled by default. When disabled, both linked and Manual generation skip the eligibility AI
+request and proceed to resume generation. Company/URL bans, duplicates, career-history matches,
+required company/title data, and workspace access still apply. Bidders and bidder managers can view
+the setting but cannot change it. All signed-in users can open **Banned URLs**; only admins can add
+or remove patterns. Apply migration `20261120000000_add_profile_eligibility_setting` with
+`npm run prisma:deploy` in `backend`, regenerate the Prisma client, and rebuild/restart the backend
+and frontend. This setting is enforced by the backend and needs no extension update.
 
 Before eligibility or resume generation, a database reservation checks submitted applications,
 unsubmitted prepared jobs, and other active generation requests for the same profile. Company names
@@ -436,7 +445,8 @@ maintain historical records or unarchive the profile to resume applying.
 | POST   | `/applications/bulk-delete`  | 🛡      | `{ ids }`                                                     |
 | POST   | `/applications/generate`     | 🔑 edit | Check bans/duplicates and eligibility, generate the resume, and save a prepared draft |
 | POST   | `/applications/generated`    | 🔑 edit | Retired: returns 400; submit a prepared draft with a screenshot instead |
-| GET/POST/DELETE | `/applications/banned-patterns` | 🛡 | Manage database-backed banned URL substrings |
+| GET | `/applications/banned-patterns` | 👤 | View banned companies and URL patterns |
+| POST/DELETE | `/applications/banned-patterns` | 🛡 | Add or remove banned companies and URL patterns |
 
 Additional generated-resume routes:
 
@@ -954,7 +964,9 @@ After a successful application, `POST /api/applications/drafts/:draftId/submit` 
 PNG screenshot and all draft documents/answers to the application table together. Documents remain
 available after provider conversation retention. `/api/resume/generate` uses the same draft workflow;
 the old `/api/applications/generated` save route returns 400 to prevent premature table entries.
-Admins manage company names and URL deny patterns from **Banned URLs** in the dashboard.
+All signed-in users can view company names and URL deny patterns from **Banned URLs** in the dashboard;
+only admins can add or remove patterns. Profile eligibility checks can be disabled by an admin using
+`check_job_eligibility: false`; generation then skips eligibility and returns `eligibility_skipped: true`.
 Workspace profile details are edited through `PATCH /api/workspaces/:id`.
 
 ### Common tasks

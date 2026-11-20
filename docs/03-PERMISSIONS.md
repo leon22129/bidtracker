@@ -54,6 +54,15 @@ the current account permission server-side, including queued jobs; revocation ap
 This bypass covers only eligibility rejection reasons. Bans, duplicates, career history, missing job
 identity, and workspace access remain enforced.
 
+Admins and super admins can also set `check_job_eligibility` on profiles within their workspace-edit
+scope. It defaults to true. Setting it to false skips the eligibility AI request for that profile in
+linked and Manual generation without requiring the account-level Continue permission. Both profile
+update endpoints reject this field from bidders and bidder managers. Bans, duplicates, career history,
+required job identity, and archive/access checks still apply.
+
+All four roles can read `GET /applications/banned-patterns`. Only admins and super admins can create
+or delete banned patterns; bidders and bidder managers have a view-only Banned URLs page.
+
 ## 3.2 (B) Workspace scope resolution
 
 ```ts

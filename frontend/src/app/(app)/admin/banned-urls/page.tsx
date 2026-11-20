@@ -9,6 +9,7 @@ import { useToast } from '@/components/ui/toast';
 
 export default function BannedUrlsPage() {
   const { user } = useAuth();
+  const canEdit = isAdmin(user);
   const toast = useToast();
   const [patterns, setPatterns] = useState<BannedUrlPattern[]>([]);
   const [pattern, setPattern] = useState('');
@@ -28,13 +29,9 @@ export default function BannedUrlsPage() {
 
   useEffect(() => { void load(); }, [load]);
 
-  if (!isAdmin(user)) {
-    return <main className="mx-auto max-w-lg px-4 py-16 text-center text-sm text-gray-600 dark:text-gray-400">Banned URL settings are restricted to administrators.</main>;
-  }
-
   async function add(event: FormEvent) {
     event.preventDefault();
-    if (!pattern.trim()) return;
+    if (!canEdit || !pattern.trim()) return;
     setSaving(true);
     try {
       await api.createBannedPattern(pattern);
@@ -49,6 +46,7 @@ export default function BannedUrlsPage() {
   }
 
   async function remove(row: BannedUrlPattern) {
+    if (!canEdit) return;
     if (!window.confirm(`Remove "${row.pattern}" from the banned list?`)) return;
     try {
       await api.deleteBannedPattern(row.id);
@@ -64,9 +62,10 @@ export default function BannedUrlsPage() {
       <div className="mb-5">
         <h1 className="text-lg font-semibold">Banned Companies & URL Patterns</h1>
         <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">A matching company name or job URL pattern blocks resume generation before eligibility checks.</p>
+        {!canEdit && <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">View only. Administrators manage this list.</p>}
       </div>
 
-      <form className="card mb-5 flex gap-2 p-4" onSubmit={add}>
+      {canEdit && <form className="card mb-5 flex gap-2 p-4" onSubmit={add}>
         <input
           className="input flex-1"
           value={pattern}
@@ -77,23 +76,23 @@ export default function BannedUrlsPage() {
         <button className="btn-primary" type="submit" disabled={saving || pattern.trim().length < 2}>
           {saving ? 'Adding...' : 'Add pattern'}
         </button>
-      </form>
+      </form>}
 
       <div className="card overflow-hidden">
         {loading ? <p className="p-4 text-sm text-gray-500 dark:text-gray-400">Loading...</p> : (
           <table className="w-full text-xs">
             <thead className="bg-gray-50 dark:bg-gray-800 text-left text-2xs uppercase tracking-wide text-gray-500 dark:text-gray-400">
-              <tr><th className="px-3 py-2 font-medium">Pattern</th><th className="px-3 py-2 font-medium">Added by</th><th className="px-3 py-2" /></tr>
+              <tr><th className="px-3 py-2 font-medium">Pattern</th><th className="px-3 py-2 font-medium">Added by</th>{canEdit && <th className="px-3 py-2" />}</tr>
             </thead>
             <tbody>
               {patterns.map((row) => (
                 <tr key={row.id} className="border-t border-gray-100 dark:border-gray-800">
                   <td className="px-3 py-2 font-mono">{row.pattern}</td>
                   <td className="px-3 py-2 text-gray-500 dark:text-gray-400">{row.createdByUser?.username ?? 'system default'}</td>
-                  <td className="px-3 py-2 text-right"><button className="btn-danger btn-xs" type="button" onClick={() => void remove(row)}>Remove</button></td>
+                  {canEdit && <td className="px-3 py-2 text-right"><button className="btn-danger btn-xs" type="button" onClick={() => void remove(row)}>Remove</button></td>}
                 </tr>
               ))}
-              {!patterns.length && <tr><td className="px-3 py-6 text-center text-gray-500 dark:text-gray-400" colSpan={3}>No banned URL patterns.</td></tr>}
+              {!patterns.length && <tr><td className="px-3 py-6 text-center text-gray-500 dark:text-gray-400" colSpan={canEdit ? 3 : 2}>No banned URL patterns.</td></tr>}
             </tbody>
           </table>
         )}

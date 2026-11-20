@@ -103,6 +103,7 @@ export interface ResumeProfile {
   certifications: Array<{ name: string; issuer: string; year: string }>;
   update_headline: boolean;
   use_generated_role_titles: boolean;
+  check_job_eligibility: boolean;
   template: string;
   save_in_folder: boolean;
   auto_download: boolean;

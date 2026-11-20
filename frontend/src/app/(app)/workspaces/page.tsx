@@ -326,6 +326,9 @@ export default function WorkspacesPage() {
                   <p className="mt-0.5 text-2xs text-gray-500 dark:text-gray-400">
                     Manager: {w.manager?.username ?? 'Unassigned'}
                   </p>
+                  <p className="mt-0.5 text-2xs text-gray-500 dark:text-gray-400">
+                    Eligibility checks: {w.profile?.check_job_eligibility === false ? 'Disabled' : 'Enabled'}
+                  </p>
                 </div>
               </div>
 
@@ -459,6 +462,7 @@ function ProfileViewModal({ workspace, onClose }: { workspace: Workspace; onClos
     ['Requires sponsorship', personal.requiresSponsorship],
     ['Authorized to work in U.S.', personal.legallyAuthorizedUs], ['Gender', personal.gender],
     ['Hispanic/Latino', personal.hispanicLatino], ['Race / ethnicity', personal.ethnicity],
+    ['Job eligibility checks', profile.check_job_eligibility === false ? 'Disabled' : 'Enabled'],
   ].filter(([, value]) => Boolean(value));
 
   return (
@@ -540,6 +544,7 @@ function ProfileModal({
   const [certifications, setCertifications] = useState(profile?.certifications ?? []);
   const [updateHeadline, setUpdateHeadline] = useState(profile?.update_headline ?? true);
   const [useGeneratedRoleTitles, setUseGeneratedRoleTitles] = useState(profile?.use_generated_role_titles ?? true);
+  const [checkJobEligibility, setCheckJobEligibility] = useState(profile?.check_job_eligibility ?? true);
   const [busy, setBusy] = useState(false);
 
   async function save(e: React.FormEvent) {
@@ -578,6 +583,7 @@ function ProfileModal({
         certifications,
         update_headline: updateHeadline,
         use_generated_role_titles: useGeneratedRoleTitles,
+        check_job_eligibility: checkJobEligibility,
       });
       toast.success('Profile saved');
       await onChanged();
@@ -593,6 +599,13 @@ function ProfileModal({
     <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/30 p-4">
       <form onSubmit={save} className="card max-h-[90vh] w-full max-w-2xl overflow-y-auto p-5">
         <h2 className="text-sm font-semibold">Edit resume profile</h2>
+        <label className="mt-4 flex items-center gap-2 text-xs text-gray-700 dark:text-gray-300">
+          <input type="checkbox" checked={checkJobEligibility} onChange={(e) => setCheckJobEligibility(e.target.checked)} aria-describedby="job-eligibility-help" />
+          Check job eligibility
+        </label>
+        <p id="job-eligibility-help" className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+          Turn off to generate resumes for this profile without checking job eligibility.
+        </p>
         <div className="mt-4 grid gap-3 sm:grid-cols-2">
           <ProfileInput label="Profile name" value={name} onChange={setName} />
           <ProfileInput

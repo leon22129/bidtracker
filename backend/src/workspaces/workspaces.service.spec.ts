@@ -1,5 +1,8 @@
 import { ForbiddenException } from '@nestjs/common';
 import { WorkspacesService } from './workspaces.service';
+import { plainToInstance } from 'class-transformer';
+import { validateSync } from 'class-validator';
+import { UpdateWorkspaceDto } from './dto/workspace.dto';
 
 describe('WorkspacesService', () => {
   const prisma = {
@@ -14,6 +17,46 @@ describe('WorkspacesService', () => {
   const conversationCleanup = { deleteForWorkspaceOrThrow: jest.fn() };
 
   beforeEach(() => jest.clearAllMocks());
+
+  it.each(['bidder', 'bidder_manager'] as const)('prevents a %s from changing profile eligibility through either update endpoint', async (role) => {
+    const service = new WorkspacesService(prisma as never, access as never, conversationCleanup as never);
+    const actor = { id: 'u-1', username: 'user', email: 'user@example.test', role };
+    prisma.workspace.findUnique.mockResolvedValue({ id: 'w-1', name: 'Workspace' });
+    for (const enabled of [true, false]) {
+      await expect(service.updateProfile('p-1', { check_job_eligibility: enabled }, actor)).rejects.toBeInstanceOf(ForbiddenException);
+      await expect(service.update('w-1', { check_job_eligibility: enabled }, actor)).rejects.toBeInstanceOf(ForbiddenException);
+    }
+    expect(prisma.resumeProfile.update).not.toHaveBeenCalled();
+  });
+
+  it.each(['admin', 'super_admin'] as const)('lets a %s save and read eligibility settings through both update endpoints', async (role) => {
+    const actor = { id: 'admin-1', username: 'admin', email: 'admin@example.test', role };
+    const profile = { id: 'p-1', workspace_id: 'w-1', check_job_eligibility: true };
+    const workspace = { id: 'w-1', name: 'Workspace', resumeProfile: profile };
+    const localPrisma = {
+      workspace: { findUnique: jest.fn().mockResolvedValue(workspace), update: jest.fn().mockResolvedValue(workspace) },
+      resumeProfile: {
+        findUnique: jest.fn(async () => profile),
+        findMany: jest.fn(async () => [profile]),
+        update: jest.fn(async ({ data }) => Object.assign(profile, data)),
+      },
+      $transaction: jest.fn(async (action) => action(localPrisma)),
+    };
+    const service = new WorkspacesService(localPrisma as never, access as never, conversationCleanup as never);
+    for (const enabled of [false, true]) {
+      await service.update('w-1', { check_job_eligibility: enabled }, actor);
+      expect(profile.check_job_eligibility).toBe(enabled);
+      await expect(service.listProfiles(actor)).resolves.toMatchObject([{ check_job_eligibility: enabled }]);
+      await expect(service.updateProfile('p-1', { check_job_eligibility: !enabled }, actor))
+        .resolves.toMatchObject({ check_job_eligibility: !enabled });
+    }
+    expect(access.assertCanEdit).toHaveBeenCalledWith(actor, 'w-1', { allowArchived: true });
+  });
+
+  it.each([null, 'false', 0, 1])('rejects a non-boolean eligibility setting: %s', (value) => {
+    const errors = validateSync(plainToInstance(UpdateWorkspaceDto, { check_job_eligibility: value }));
+    expect(errors.some((error) => error.property === 'check_job_eligibility')).toBe(true);
+  });
 
   it.each([false, true])('reports bidder edit access when archive state is %s', async (archived) => {
     const localPrisma = {

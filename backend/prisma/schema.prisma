@@ -114,6 +114,7 @@ model ResumeProfile {
   us_work_status            String   @default("")
   update_headline           Boolean  @default(true)
   use_generated_role_titles Boolean  @default(true)
+  check_job_eligibility     Boolean  @default(true)
   template                  String   @default("classic")
   save_in_folder            Boolean  @default(false)
   auto_download             Boolean  @default(false)

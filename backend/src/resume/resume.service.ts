@@ -251,22 +251,24 @@ export class ApplicationGenerationService {
     identity: { company_name: string; job_title: string }, reservationId: string, assertLease: () => void,
   ) {
     const conversation = await this.createGenerationConversation(user, profile, workspace.id);
+    const eligibilitySkipped = profile.check_job_eligibility === false;
     let eligibilityUsage: OpenAiUsage | undefined;
-    const eligibility = await this.generateText(buildJobEligibilityPrompt(jobDescription, url), {
+    const eligibilityJson = eligibilitySkipped ? null : this.parseEligibility(await this.generateText(buildJobEligibilityPrompt(jobDescription, url), {
       config,
       operation: 'job_eligibility',
       reasoningEffort: 'low',
       maxOutputTokens: 4096,
       onUsage: (usage) => { eligibilityUsage = usage; },
-    });
-    const eligibilityJson = this.parseEligibility(eligibility);
-    const companyName = typeof eligibilityJson.company_name === 'string'
+    }));
+    const companyName = eligibilityJson
       ? eligibilityJson.company_name.trim()
-      : '';
-    const jobTitle = typeof eligibilityJson.job_title === 'string'
+      : identity.company_name;
+    const jobTitle = eligibilityJson
       ? eligibilityJson.job_title.trim()
-      : '';
-    let normalizedDescription = normalizedJobDescription(jobDescription, eligibilityJson);
+      : identity.job_title;
+    let normalizedDescription = eligibilityJson
+      ? normalizedJobDescription(jobDescription, eligibilityJson)
+      : formatJobDescription(jobDescription);
     if (!companyName || !jobTitle) {
       const missing = [
         !companyName ? 'company name' : null,
@@ -298,14 +300,16 @@ export class ApplicationGenerationService {
     }
 
     const rejectionReasons: string[] = [];
-    if (eligibilityJson.requires_clearance) rejectionReasons.push('it requires clearance');
-    if (eligibilityJson.requires_public_trust) rejectionReasons.push('it requires public trust');
-    if (!eligibilityJson.is_us_job) rejectionReasons.push('it is not clearly a US job');
-    if (!eligibilityJson.work_arrangement_is_remote_only) {
-      rejectionReasons.push(workArrangementRejectionReason(eligibilityJson.workplace));
+    if (eligibilityJson) {
+      if (eligibilityJson.requires_clearance) rejectionReasons.push('it requires clearance');
+      if (eligibilityJson.requires_public_trust) rejectionReasons.push('it requires public trust');
+      if (!eligibilityJson.is_us_job) rejectionReasons.push('it is not clearly a US job');
+      if (!eligibilityJson.work_arrangement_is_remote_only) {
+        rejectionReasons.push(workArrangementRejectionReason(eligibilityJson.workplace));
+      }
+      if (eligibilityJson.requires_in_person_interview) rejectionReasons.push('it requires an in-person interview');
+      if (eligibilityJson.requires_onsite_onboarding) rejectionReasons.push('it requires onsite onboarding');
     }
-    if (eligibilityJson.requires_in_person_interview) rejectionReasons.push('it requires an in-person interview');
-    if (eligibilityJson.requires_onsite_onboarding) rejectionReasons.push('it requires onsite onboarding');
     if (rejectionReasons.length && !dto.continue_after_eligibility_failure) {
       return {
         success: false,
@@ -367,7 +371,8 @@ export class ApplicationGenerationService {
       model: config.model,
       provider: config.provider,
       draft_id: draft.id,
-      scope: 'eligibility_and_resume_generation',
+      scope: eligibilitySkipped ? 'resume_generation' : 'eligibility_and_resume_generation',
+      eligibility_skipped: eligibilitySkipped,
       eligibility_overridden: rejectionReasons.length > 0,
       eligibility_rejection_reasons: rejectionReasons,
       ...prefixedOpenAiUsageFields('eligibility', eligibilityUsage, this.usageRates(config, eligibilityUsage)),
@@ -382,6 +387,7 @@ export class ApplicationGenerationService {
     return {
       success: true,
       eligible: true,
+      eligibility_skipped: eligibilitySkipped,
       draft: { id: draft.id, url: draft.url, company_name: companyName, job_title: jobTitle },
       resume,
       job_description: normalizedDescription,
@@ -433,6 +439,13 @@ export class ApplicationGenerationService {
     const profile = await this.findAccessibleProfile(user, dto.profile_id);
     if (!profile) throw new BadRequestException('Profile is not assigned to your account');
     if (dto.job_description && dto.kind === 'jobEligibility') {
+      if (profile.check_job_eligibility === false) {
+        return {
+          tailored_resume: JSON.stringify({ skipped: true, reason: 'Job eligibility checks are disabled for this profile.' }),
+          eligibility_skipped: true,
+          full_name: profile.full_name,
+        };
+      }
       if (!dto.url) throw new BadRequestException('Job URL is required for eligibility research');
       const config = await this.aiSettings.forWorkspace(profile.workspace_id);
       return {

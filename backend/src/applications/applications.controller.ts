@@ -179,7 +179,7 @@ export class ApplicationsController {
   }
 
   @Get('banned-patterns')
-  @Roles('admin', 'super_admin')
+  @Roles('bidder', 'bidder_manager', 'admin', 'super_admin')
   bannedPatterns() {
     return this.bannedUrls.list();
   }
