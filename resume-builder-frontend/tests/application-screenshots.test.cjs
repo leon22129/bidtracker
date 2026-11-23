@@ -108,6 +108,25 @@ test('the stable button can load an application before any submission signal', a
   assert.equal(items[0].submitted, false);
 });
 
+test('submission URL changes in the armed tab keep the original linked job and draft', async () => {
+  const app = setup();
+  const posting = 'https://jobs.ashbyhq.com/acme/c06e4344-c7b0-4c1b-beb8-a9646594ff7c';
+  app.tabs.get(7).url = posting;
+  await app.send({ type: 'ARM_APPLICATION_SCREENSHOT', applicationId: 'ashby-draft', draftId: 'ashby-draft',
+    profileTabId: 'profile-1', tabId: 7, url: posting });
+  // Capture remains bound to the draft/tab even when the success page omits the posting ID.
+  const confirmation = 'https://jobs.ashbyhq.com/acme/confirmation?applicationId=receipt';
+  app.tabs.get(7).url = confirmation;
+  await app.send({ type: 'APPLICATION_FORM_SUBMITTED' }, { tab: { id: 7 }, frameId: 0, url: confirmation });
+  assert.equal((await app.list()).items[0].url, posting);
+  const result = await app.send({ type: 'CAPTURE_APPLICATION_SCREENSHOT', applicationId: 'ashby-draft',
+    profileTabId: 'profile-1', tabId: 7, confirmed: true });
+  assert.equal(result.ok, true, result.error);
+  assert.match(app.uploads.at(-1).url, /drafts\/ashby-draft\/submit$/);
+  assert.equal(app.uploads.at(-1).options.body.get('submission_url'), null);
+  assert.equal(app.tabs.get(7).url, confirmation);
+});
+
 const manualCapture = (app, confirmed = true) => app.send({
   type: 'CAPTURE_MANUAL_APPLICATION_SCREENSHOT', applicationId: 'manual-1', profileTabId: 'profile-1', confirmed,
 });

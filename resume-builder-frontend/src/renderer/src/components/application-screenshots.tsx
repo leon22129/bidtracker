@@ -155,7 +155,7 @@ export function ApplicationScreenshots({
           {error || (!available ? "Screenshot capture is available in the Chrome extension."
             : !ready ? "No application is waiting for a screenshot in this profile tab. Generate a resume or load a prepared job here."
               : manual ? "Open this application's confirmation page in the active browser tab. Its screenshot and page URL will be saved when you add the application."
-              : "After submitting, keep the confirmation page open and take its screenshot here.")}
+              : "After submitting, keep the confirmation page open in the linked browser tab, even if its URL changes. The original job link is saved with the application.")}
         </p>
       </div>
     </section>

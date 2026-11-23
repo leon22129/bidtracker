@@ -31,7 +31,7 @@ function fixture(extensionVersion) {
   if (!previous) localStorage.clear();
   const state = window.workflowTest = previous?.state || { requests: [], tableRows: 0, answers: [], pending: {}, errors: [], failNextUpload: true, uploadWaiting: false, browserTabId: 73, added: [], captures: [], latestDraft: 'd1' };
   const jobs = [
-    { id: 'd1', browserTabId: 73, company: 'Acme', salary: '$150,000', url: 'https://jobs.example.test/123' },
+    { id: 'd1', browserTabId: 73, company: 'Acme', salary: '$150,000', url: 'https://jobs.ashbyhq.com/acme/c06e4344-c7b0-4c1b-beb8-a9646594ff7c' },
     { id: 'd2', browserTabId: 74, company: 'Beta', salary: '$180,000', url: 'https://jobs.example.test/456' },
     { id: 'manual-1', company: 'Manual Company', salary: '$160,000', url: '' },
     { id: 'prepared-manual', company: 'Prepared Company', salary: '$160,000', url: '' },
@@ -258,7 +258,7 @@ function fixture(extensionVersion) {
     const worker = fs.readFileSync('resume-builder-frontend/src/renderer/public/background.js', 'utf8');
     const extensionVersion = require('../package.json').version;
     await page.send('Page.addScriptToEvaluateOnNewDocument', { source: `(${fixture.toString()})(${JSON.stringify(extensionVersion)});\n(function(){${worker}\n})();` });
-    await page.send('Page.navigate', { url: 'http://127.0.0.1:5173' });
+    await page.send('Page.navigate', { url: process.env.WORKFLOW_URL || 'http://127.0.0.1:5173' });
     const evaluate = async (expression) => {
       const result = await page.send('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true });
       if (result.exceptionDetails) throw Error(result.exceptionDetails.text + ': ' + result.exceptionDetails.exception?.description);
@@ -391,10 +391,10 @@ function fixture(extensionVersion) {
     await page.send('Input.insertText', { text: firstJd });
     await waitFor("activeProfileWorkspace.querySelector('textarea').value.includes('Company: Acme')");
     await click('Link current page');
-    await waitFor("activeProfileWorkspace.querySelector('[data-job-source]').innerText.includes('https://jobs.example.test/123') && ![...activeProfileWorkspace.querySelectorAll('button')].find(el=>el.textContent.includes('Generate Resume')).disabled");
+    await waitFor("activeProfileWorkspace.querySelector('[data-job-source]').innerText.includes('https://jobs.ashbyhq.com/acme/c06e4344-c7b0-4c1b-beb8-a9646594ff7c') && ![...activeProfileWorkspace.querySelectorAll('button')].find(el=>el.textContent.includes('Generate Resume')).disabled");
     await evaluate('workflowTest.browserTabId = 74');
     assert.equal(await evaluate('workflowTest.browserTabId'), 74);
-    assert.equal(await evaluate("activeProfileWorkspace.querySelector('[data-job-source]').innerText.includes('https://jobs.example.test/123')"), true);
+    assert.equal(await evaluate("activeProfileWorkspace.querySelector('[data-job-source]').innerText.includes('https://jobs.ashbyhq.com/acme/c06e4344-c7b0-4c1b-beb8-a9646594ff7c')"), true);
     // The source page can change independently of the active tab; block before any backend request.
     await evaluate("workflowTest.browserTabs[73] = 'https://jobs.example.test/456'");
     await click('Generate Resume');
@@ -407,11 +407,12 @@ function fixture(extensionVersion) {
     await click('Open linked job');
     await waitFor('workflowTest.browserTabId === 75');
     // Restore the panel on its original browser tab; the JD's linked page is kept separately.
-    await evaluate("workflowTest.browserTabs[73] = 'https://jobs.example.test/123'; workflowTest.browserTabId = 73");
+    await evaluate("workflowTest.browserTabs[73] = 'https://jobs.ashbyhq.com/acme/c06e4344-c7b0-4c1b-beb8-a9646594ff7c'; workflowTest.browserTabId = 73");
     await reloadPage();
     await waitFor("activeProfileWorkspace?.querySelector('textarea')?.value.includes('Company: Acme')");
-    assert.equal(await evaluate("activeProfileWorkspace.querySelector('[data-job-source]').innerText.includes('https://jobs.example.test/123')"), true);
+    assert.equal(await evaluate("activeProfileWorkspace.querySelector('[data-job-source]').innerText.includes('https://jobs.ashbyhq.com/acme/c06e4344-c7b0-4c1b-beb8-a9646594ff7c')"), true);
     await evaluate('workflowTest.browserTabId = 74');
+    await evaluate("workflowTest.browserTabs[75] += '/application?source=board'");
     await verifyEligibilityContinue();
     await waitFor("activeProfileWorkspace.innerText.includes('Prepared job: Acme') && ![...activeProfileWorkspace.querySelectorAll('button')].find(el=>el.textContent.includes('Load Last Job')).disabled", 60_000);
     const readyToast = "[...document.querySelectorAll('[data-slot=toast][data-state=open]')].some(el => el.textContent.includes('Resume Ready'))";
@@ -422,7 +423,7 @@ function fixture(extensionVersion) {
     assert.equal((await savedTab(firstTabId)).jobDescription, firstJd);
     assert.equal(await evaluate("[...activeProfileWorkspace.querySelectorAll('button')].find(el=>el.textContent.includes('Generate Resume')).disabled"), true, 'The prepared job does not need another generation');
     assert.equal(await evaluate('workflowTest.tableRows'), 0);
-    assert.deepEqual(await evaluate('workflowTest.generationUrls'), ['https://jobs.example.test/123']);
+    assert.deepEqual(await evaluate('workflowTest.generationUrls'), ['https://jobs.ashbyhq.com/acme/c06e4344-c7b0-4c1b-beb8-a9646594ff7c']);
     assert.equal(await evaluate("Object.values(workflowTest.pending).find(entry => entry.applicationId === 'd1').tabId"), 75);
     assert.equal(await evaluate("activeProfileWorkspace.querySelector('pre').textContent.includes('Expected Rate')"), true);
     assert.equal(await evaluate("activeProfileWorkspace.querySelector('[data-submission-screenshot] button').disabled"), true);
@@ -442,8 +443,12 @@ function fixture(extensionVersion) {
     await waitFor("activeProfileWorkspace?.innerText.includes('Prepared job: Acme')");
     assert.equal(await evaluate("activeProfileWorkspace.querySelector('textarea').value"), firstJd, 'The pending JD survives reopening the panel');
     await assertPreparedJobLinks();
+    const tabsBeforeRedirect = await evaluate('workflowTest.nextBrowserTabId');
+    await evaluate("workflowTest.browserTabs[75] = workflowTest.browserTabs[75].split('?')[0] + '/confirmation?applicationId=receipt'");
     await click('Open linked job');
     await waitFor('workflowTest.browserTabId === 75');
+    assert.equal(await evaluate('workflowTest.nextBrowserTabId'), tabsBeforeRedirect, 'Reopening the same Ashby posting must preserve its confirmation tab');
+    assert.equal(await evaluate("workflowTest.browserTabs[75].includes('/application/confirmation')"), true);
     await assertPreparedJobLinks();
     await evaluate('workflowTest.browserTabId = 74');
     // Updating options must preserve the prepared company's name and workspace.
@@ -597,6 +602,8 @@ function fixture(extensionVersion) {
     await evaluate('workflowTest.browserTabId = 75');
     await click('Load Last Job');
     await waitFor("workflowTest.requests.some(path=>path.startsWith('/applications/drafts/latest')) && document.body.innerText.includes('Last application loaded')");
+    assert.equal((await savedTab(firstTabId)).jobSource.tabId, 75, 'Restored confirmation stays bound to its original browser tab');
+    assert.equal((await savedTab(firstTabId)).jobSource.url.includes('/application'), false, 'The saved job link stays the posting URL');
     await click('Resume');
     await waitFor("activeProfileWorkspace.querySelector('textarea')?.value.includes('Expected Rate')");
     await assertPreparedJobLinks();
@@ -621,7 +628,7 @@ function fixture(extensionVersion) {
     await waitFor("activeProfileWorkspace.innerText.includes('Prepared job: Beta') && ![...activeProfileWorkspace.querySelectorAll('button')].find(el=>el.textContent.includes('Load Last Job')).disabled", 60_000);
     assert.equal(await evaluate("activeProfileWorkspace.querySelector('textarea').value"), pastedJd);
     assert.equal(await evaluate("activeProfileWorkspace.innerText.includes('$180,000')"), true);
-    assert.deepEqual(await evaluate('workflowTest.generationUrls'), ['https://jobs.example.test/123', 'https://jobs.example.test/456']);
+    assert.deepEqual(await evaluate('workflowTest.generationUrls'), ['https://jobs.ashbyhq.com/acme/c06e4344-c7b0-4c1b-beb8-a9646594ff7c', 'https://jobs.example.test/456']);
     assert.equal(await evaluate("document.querySelector('select[aria-label=\"Application to screenshot\"]')"), null);
     assert.equal(await evaluate('Object.values(workflowTest.pending).length'), 2);
 
@@ -706,7 +713,7 @@ function fixture(extensionVersion) {
     await click('Link current page');
     await waitFor("![...activeProfileWorkspace.querySelectorAll('button')].find(el=>el.textContent.includes('Generate Resume')).disabled");
     const nextJob = { jobDescription: firstJd, jobSource: (await savedTab(secondTabId)).jobSource };
-    assert.equal(nextJob.jobSource.url, 'https://jobs.example.test/123');
+    assert.equal(nextJob.jobSource.url, 'https://jobs.ashbyhq.com/acme/c06e4344-c7b0-4c1b-beb8-a9646594ff7c');
     await evaluate(`(async () => {
       const stored = await chrome.storage.local.get('resume_ai_pending_screenshots');
       const entry = Object.values(stored.resume_ai_pending_screenshots).find(entry => entry.applicationId === 'd2');

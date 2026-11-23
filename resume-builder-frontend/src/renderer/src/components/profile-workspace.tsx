@@ -24,6 +24,7 @@ import { PersonalInformationPanel } from "@/components/personal-information-pane
 import { WorkspaceSidebar, type WorkspaceView } from "@/components/workspace-sidebar";
 import { ApplicationScreenshots } from "@/components/application-screenshots";
 import { readProfileTabState, type JobPageSource, type PreparedTabJob, type ProfileTabState } from "@/lib/profile-tab-state";
+import { comparableJobUrl } from "@/lib/job-page-url";
 import {
   Dialog,
   DialogContent,
@@ -72,7 +73,6 @@ import {
   armApplicationScreenshot,
   clearProfileTabScreenshot,
   chooseProfileDirectory,
-  getCurrentBrowserTabUrl,
   getCurrentBrowserTabContext,
   getBrowserTabContext,
   openBrowserJobPage,
@@ -109,30 +109,6 @@ function questionInputFromEditorLine(line: string, scannedQuestions: PageQuestio
     question: scanned?.question ?? line,
     options: scanned?.options ?? [],
   };
-}
-
-function comparableJobUrl(raw: string): string {
-  try {
-    const url = new URL(raw);
-    const ignored = new Set([
-      "source", "src", "ref", "referrer", "trackingid", "trk", "trkinfo", "position",
-      "pagenum", "origin", "originalsubdomain", "savedsearchid", "refid", "eburl", "from",
-      "lipi", "licu", "fbclid", "gclid", "mc_cid", "mc_eid", "ittk", "sid", "jobclick",
-      "campaignid", "clickid", "applyflowversion",
-    ]);
-    const params = new URLSearchParams();
-    [...url.searchParams.keys()].sort().forEach((key) => {
-      const lower = key.toLowerCase();
-      if (ignored.has(lower) || ["utm_", "gh_", "ref_"].some((prefix) => lower.startsWith(prefix))) return;
-      url.searchParams.getAll(key).forEach((value) => params.append(lower, value));
-    });
-    const host = url.hostname.toLowerCase().replace(/^www\./, "");
-    const path = url.pathname.replace(/\/{2,}/g, "/").replace(/\/+$/, "");
-    const query = params.toString();
-    return `${host}${path}${query ? `?${query}` : ""}`;
-  } catch {
-    return raw.trim().toLowerCase();
-  }
 }
 
 type ApplicationMode = "linked" | "manual";
@@ -571,16 +547,27 @@ function ProfileWorkspaceContent({
         throw new Error("The saved resume is not valid.");
       }
 
+      let restoredSource: JobPageSource | null = null;
+      let mismatch = false;
+      if (!isManual) {
+        try {
+          const current = await getCurrentBrowserTabContext();
+          mismatch = comparableJobUrl(current.url) !== comparableJobUrl(saved.url);
+          if (!mismatch) restoredSource = { url: saved.url, tabId: current.tabId };
+        } catch {
+          // Standalone mode has no active browser tab to compare.
+        }
+      }
       if (!isManual && !saved.submitted_at) {
         await armApplicationScreenshot(saved.draft_id || saved.id, {
           companyName: saved.company_name || undefined, jobTitle: saved.job_title || undefined,
-          draft: Boolean(saved.draft_id), url: saved.url, profileTabId,
+          draft: Boolean(saved.draft_id), url: saved.url, tabId: restoredSource?.tabId, profileTabId,
         });
       }
 
       setJobDescription(saved.job_description ?? "");
       setBlockedPreparedJob(undefined);
-      setJobSource((current) => isManual ? null : current?.url === saved.url ? current : { url: saved.url });
+      setJobSource((current) => isManual ? null : restoredSource ?? (current?.url === saved.url ? current : { url: saved.url }));
       setPreparedJob({ applicationId: saved.draft_id || saved.id, submittedAt: saved.submitted_at,
         url: saved.url, companyName: saved.company_name || "", jobTitle: saved.job_title || "", description: saved.job_description || "" });
       resumeJobDescription.current = saved.job_description ?? "";
@@ -623,16 +610,6 @@ function ProfileWorkspaceContent({
         setCoverLetterTemplate(saved.cover_letter_template as CoverLetterTemplateId);
       }
       if (savedCoverLetterText) setGenerateCoverLetter(true);
-
-      let mismatch = false;
-      try {
-        if (!isManual) {
-          const currentUrl = await getCurrentBrowserTabUrl();
-          mismatch = comparableJobUrl(currentUrl) !== comparableJobUrl(saved.url);
-        }
-      } catch {
-        // Standalone mode has no active browser tab to compare.
-      }
 
       const conversationNote = restoredHistory.answers.length
         ? ` Restored ${restoredHistory.answers.length} saved application answer${restoredHistory.answers.length === 1 ? "" : "s"}.`

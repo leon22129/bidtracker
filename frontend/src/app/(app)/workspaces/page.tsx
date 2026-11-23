@@ -94,10 +94,15 @@ export default function WorkspacesPage() {
 
   const load = useCallback(async () => {
     setLoading(true);
+    // Assignment controls need users, but the profile list can render independently.
+    if (admin || bidderManager) {
+      void api.listUsers().then(setUsers).catch((err) => {
+        toast.error(err instanceof Error ? err.message : 'Failed to load users');
+      });
+    }
     try {
       const list = await api.listWorkspaces(true);
       setWorkspaces(list);
-      if (admin || bidderManager) setUsers(await api.listUsers());
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to load workspaces');
     } finally {

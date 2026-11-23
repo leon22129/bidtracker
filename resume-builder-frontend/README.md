@@ -79,6 +79,16 @@ application**. Only after the screenshot and application are saved does that pro
 the completed JD, page link, documents, and answers. A failed save keeps the work available for
 retry. Other profile tabs and a new JD already entered for the next job are preserved.
 
+The application keeps the original linked job URL when the portal changes its URL after submission.
+Capture the confirmation in the same linked browser tab; do not link it as a new job. Ashby routes that
+retain the same company and posting UUID are recognized across posting, application and confirmation
+pages. **Open linked job** focuses that existing tab, and **Load Last Job** restores its original link.
+Different posting IDs remain distinct. Generic confirmation pages without a posting ID can still be
+captured from the already linked tab; they are not treated as interchangeable job postings.
+Run `npm run test:job-links` for posting-identity and tab-restoration regressions. The workflow browser
+fixture also follows an Ashby posting through application and confirmation routes, restores the job,
+and submits its screenshot with the original posting URL. These checks use fixtures, not live applications.
+
 Form answers are optional. The extension saves captured answers when possible and continues
 adding the application and screenshot if form capture or answer syncing fails. Saved answers
 are retained, and a successful save shows a brief notice when some answers could not be recorded.

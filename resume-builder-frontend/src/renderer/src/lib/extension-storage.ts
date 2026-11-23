@@ -1,4 +1,5 @@
 import { withTimeout } from "../../../shared/with-timeout";
+import { comparableJobUrl } from "./job-page-url";
 
 const DEFAULT_API_URL = "https://bidtracker365.com/api";
 const API_URL_KEY = "resume_ai_api_url";
@@ -122,7 +123,8 @@ export async function openBrowserJobPage(url: string, tabId?: number): Promise<{
   } } }).chrome;
   if (!api?.tabs || !/^https?:\/\//i.test(url)) throw new Error("Open the job posting in Chrome and link its page first.");
   const existing = tabId === undefined ? null : await api.tabs.get(tabId).catch(() => null);
-  if (existing?.url === url && tabId !== undefined) {
+  if (existing?.url && /^https?:\/\//i.test(existing.url)
+    && comparableJobUrl(existing.url) === comparableJobUrl(url) && tabId !== undefined) {
     await api.tabs.update(tabId, { active: true });
     return { url, tabId };
   }
@@ -144,10 +146,10 @@ export async function armApplicationScreenshot(
   if (tabId === undefined) return;
   const result = await chromeApi.runtime.sendMessage({
     type: "ARM_APPLICATION_SCREENSHOT",
+    ...details,
     tabId,
     applicationId,
     draftId: details.draft === false ? undefined : applicationId,
-    ...details,
   });
   if (!result?.ok) throw new Error(result?.error || "Unable to watch for application submission.");
 }

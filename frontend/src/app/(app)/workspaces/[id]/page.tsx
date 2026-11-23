@@ -62,23 +62,22 @@ export default function WorkspaceTablePage() {
   const { total, loading, error, getRow, ensureRange, patchRow, reload, loadedRows } =
     useApplications(workspaceId, filters);
 
-  const loadMeta = useCallback(async () => {
-    try {
-      const [ws, sum] = await Promise.all([
-        api.getWorkspace(workspaceId),
-        api.workspaceSummary(workspaceId),
-      ]);
-      setWorkspace(ws);
-      setSummary(sum);
-      setLoadError(null);
-    } catch (err) {
-      setLoadError(err instanceof Error ? err.message : 'Could not load this workspace');
-    }
-  }, [workspaceId]);
-
   useEffect(() => {
-    void loadMeta();
-  }, [loadMeta]);
+    let active = true;
+    setWorkspace(null);
+    setSummary(null);
+    setLoadError(null);
+    void api.getWorkspace(workspaceId).then((ws) => {
+      if (active) setWorkspace(ws);
+    }).catch((err) => {
+      if (active) setLoadError(err instanceof Error ? err.message : 'Could not load this workspace');
+    });
+    // Statistics decorate the toolbar; a slow or failed summary must not block the grid.
+    void api.workspaceSummary(workspaceId).then((sum) => {
+      if (active) setSummary(sum);
+    }).catch(() => { /* The table remains usable if statistics are unavailable. */ });
+    return () => { active = false; };
+  }, [workspaceId]);
 
   useEffect(() => {
     if (error) toast.error(error);
