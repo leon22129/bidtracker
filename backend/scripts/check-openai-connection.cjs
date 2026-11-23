@@ -14,9 +14,11 @@ async function main() {
   const { apiKey: key, model, provider, baseUrl } = await new AiSettingsService(db).forAdmin(admin.id);
   console.log(JSON.stringify({ node: process.version, admin_id: admin.id, provider, model, key_configured: true }));
   try {
-    const endpoint = provider === 'openai' ? `/models/${encodeURIComponent(model)}` : '/models';
+    const endpoint = provider === 'deepseek' ? '/models' : `/models/${encodeURIComponent(model)}`;
     const response = await fetch(`${baseUrl}${endpoint}`, {
-      headers: { Authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(15000),
+      headers: provider === 'gemini' ? { 'x-goog-api-key': key }
+        : provider === 'claude' ? { 'x-api-key': key, 'anthropic-version': '2023-06-01' }
+        : { Authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(15000),
     });
     const data = await response.json().catch(() => null);
     console.log(JSON.stringify({ status: response.status, request_id: response.headers.get('x-request-id'),
@@ -27,7 +29,8 @@ async function main() {
           : 'The provider returned an upstream error';
       throw Error(`${reason} (HTTP ${response.status})`);
     }
-    const accessible = provider === 'openai' ? data?.id === model
+    const accessible = provider === 'gemini' ? data?.name === `models/${model}`
+      : provider !== 'deepseek' ? data?.id === model
       : Array.isArray(data?.data) && data.data.some((item) => item.id === model);
     if (!accessible) throw Error('The selected model was not returned by the provider for this admin');
     console.log(`PASS: the server can reach ${provider} and access this admin's selected model`);

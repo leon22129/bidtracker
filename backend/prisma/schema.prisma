@@ -217,6 +217,8 @@ model AiSettings {
   model String @default("gpt-6.1-sol")
   openai_key String?
   deepseek_key String?
+  gemini_key String?
+  claude_key String?
   updated_at DateTime @updatedAt
   admin User @relation(fields: [admin_id], references: [id], onDelete: Cascade)
 

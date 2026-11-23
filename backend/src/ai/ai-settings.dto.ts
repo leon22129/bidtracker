@@ -1,10 +1,10 @@
 import { Transform } from 'class-transformer';
 import { IsBoolean, IsIn, IsOptional, IsString, MaxLength, MinLength, ValidateIf } from 'class-validator';
-import { AiProvider } from './ai-catalog';
+import { AI_PROVIDERS, AiProvider } from './ai-catalog';
 import { RESUME_PROMPT_MAX_LENGTH } from './resume-prompt';
 
 export class UpdateAiSettingsDto {
-  @IsIn(['openai', 'deepseek'])
+  @IsIn(Object.keys(AI_PROVIDERS))
   provider: AiProvider;
 
   @IsString()

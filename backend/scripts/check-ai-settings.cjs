@@ -77,6 +77,15 @@ async function main() {
   assert.equal((await request(admin, '/ai-settings', { provider: 'deepseek', model: 'gpt-6.1-sol' })).status, 400);
   assert.equal((await request(admin, '/ai-settings', { provider: 'other', model: 'anything' })).status, 400);
   const settingsService = module.get(AiSettingsService);
+  // Upgrade an existing row and verify both old encrypted keys and the custom prompt survive.
+  await db.$executeRawUnsafe(`INSERT INTO "ai_settings" ("admin_id", "model", "openai_key", "deepseek_key", "resume_prompt", "updated_at") VALUES ($1, 'gpt-6.1-sol', 'old-openai', 'old-deepseek', 'old-prompt', CURRENT_TIMESTAMP)`, other.id);
+  const providerMigrationSql = readFileSync(path.join(__dirname, '../prisma/migrations/20261123000000_gemini_claude/migration.sql'), 'utf8');
+  for (const statement of providerMigrationSql.split(';').map((part) => part.trim()).filter(Boolean)) await db.$executeRawUnsafe(statement);
+  const preserved = await db.aiSettings.findUnique({ where: { admin_id: other.id } });
+  assert.equal(preserved.openai_key, 'old-openai');
+  assert.equal(preserved.deepseek_key, 'old-deepseek');
+  assert.equal(preserved.resume_prompt, 'old-prompt');
+  await db.aiSettings.delete({ where: { admin_id: other.id } });
   const initial = await request(admin, '/ai-settings');
   assert.equal(initial.body.keys.openai.configured, false);
   assert.equal(initial.body.keys.deepseek.configured, false);
@@ -108,6 +117,21 @@ async function main() {
   assert.equal((await settingsService.forWorkspace(workspace.id)).apiKey, secret);
   await request(admin, '/ai-settings', { provider: 'deepseek', model: 'deepseek-flash', remove_api_key: true });
   await assert.rejects(settingsService.forWorkspace(workspace.id), /configure their own DeepSeek API key/);
+  for (const [provider, model] of [['gemini', 'gemini-4-hydrogen'], ['claude', 'claude-sonnet-5-5']]) {
+    const key = `test-${provider}-key`;
+    const result = await request(admin, '/ai-settings', { provider, model, api_key: key });
+    assert.equal(result.status, 200);
+    assert.equal(result.body.keys[provider].configured, true);
+    assert.ok(!JSON.stringify(result.body).includes(key));
+    const stored = await db.aiSettings.findUnique({ where: { admin_id: admin.id } });
+    assert.match(stored[`${provider}_key`], /^v1:/);
+    assert.ok(!stored[`${provider}_key`].includes(key));
+    assert.equal((await settingsService.forWorkspace(workspace.id)).apiKey, key);
+    assert.equal((await request(other, '/ai-settings')).body.keys[provider].configured, false);
+    assert.equal((await request(bidder, '/ai-settings', { provider, model, api_key: key })).status, 403);
+    await request(admin, '/ai-settings', { provider, model, remove_api_key: true });
+    await assert.rejects(settingsService.forWorkspace(workspace.id), /configure their own/);
+  }
   const slack = await request(bidder, '/auth/slack-settings', { slack_user_id: ' u123bidder ' });
   assert.equal(slack.status, 200);
   assert.equal(slack.body.slack_user_id, 'U123BIDDER');

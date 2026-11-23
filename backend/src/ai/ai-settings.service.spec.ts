@@ -3,6 +3,7 @@ import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
 import { UpdateAiSettingsDto, UpdateResumePromptDto } from './ai-settings.dto';
 import { DEFAULT_RESUME_PROMPT } from './resume-prompt';
+import { AI_PROVIDERS } from './ai-catalog';
 
 describe('Admin AI settings', () => {
   const admin = { id: 'admin-a', role: 'admin' as const, username: 'Admin', email: 'admin@example.com' };
@@ -54,6 +55,23 @@ describe('Admin AI settings', () => {
     await expect(service.forWorkspace('w')).rejects.toThrow('configure their own DeepSeek API key');
   });
 
+  it.each(['gemini', 'claude'] as const)('saves, isolates, switches, and removes %s credentials', async (provider) => {
+    const { service, records } = setup();
+    const model = AI_PROVIDERS[provider].default_model;
+    expect(await validate(plainToInstance(UpdateAiSettingsDto, { provider, model }))).toHaveLength(0);
+    await service.update(admin, { provider: 'openai', model: 'gpt-6.1-sol', api_key: 'own-openai' });
+    const result = await service.update(admin, { provider, model, api_key: 'own-native-key' });
+    expect(result.keys[provider]).toEqual({ saved: true, configured: true });
+    expect(records.get(admin.id)[`${provider}_key`]).toMatch(/^v1:/);
+    expect(JSON.stringify(result)).not.toContain('own-native-key');
+    expect((await service.get({ ...admin, id: 'admin-b' })).keys[provider].saved).toBe(false);
+    await expect(service.forWorkspace('w')).resolves.toMatchObject({ provider, model, apiKey: 'own-native-key', baseUrl: AI_PROVIDERS[provider].base_url });
+    await expect(service.forWorkspace('w', 'openai')).resolves.toMatchObject({ apiKey: 'own-openai' });
+    await service.update(admin, { provider, model, remove_api_key: true });
+    await expect(service.forWorkspace('w')).rejects.toThrow('configure their own');
+    await expect(service.forWorkspace('w', 'openai')).resolves.toMatchObject({ apiKey: 'own-openai' });
+  });
+
   it('rejects bidders, unsupported providers, and models from a different provider', async () => {
     const { service, prisma } = setup();
     await expect(service.get({ ...admin, role: 'bidder' })).rejects.toThrow('Only admins');
@@ -79,6 +97,7 @@ describe('Admin AI settings', () => {
       const { service } = setup();
       expect((await service.get(admin)).keys).toEqual({
         openai: { saved: false, configured: false }, deepseek: { saved: false, configured: false },
+        gemini: { saved: false, configured: false }, claude: { saved: false, configured: false },
       });
       await expect(service.forWorkspace('w')).rejects.toThrow('configure their own API key');
       await service.update(admin, { provider: 'openai', model: 'gpt-6.1-sol', api_key: 'own-key' });

@@ -2,11 +2,12 @@ import { BadRequestException, ForbiddenException, Injectable, ServiceUnavailable
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthUser } from '../common/decorators/current-user.decorator';
-import { AI_CATALOG, AiProvider, findAiModel } from './ai-catalog';
+import { AI_CATALOG, AI_PROVIDERS, AiProvider, currentModelPrices, findAiModel } from './ai-catalog';
 import { UpdateAiSettingsDto } from './ai-settings.dto';
 import { DEFAULT_RESUME_PROMPT, RESUME_PROMPT_MAX_LENGTH, RESUME_PROMPT_VARIABLES, validateResumePrompt } from './resume-prompt';
 
-export const DEFAULT_AI_MODEL = 'gpt-6.1-sol';
+export const DEFAULT_AI_MODEL = AI_PROVIDERS.openai.default_model;
+const KEY_FIELDS = { openai: 'openai_key', deepseek: 'deepseek_key', gemini: 'gemini_key', claude: 'claude_key' } as const;
 
 export interface AiConfiguration {
   provider: AiProvider;
@@ -37,8 +38,11 @@ export class AiSettingsService {
       keys: {
         openai: { saved: Boolean(saved?.openai_key), configured: Boolean(saved?.openai_key) },
         deepseek: { saved: Boolean(saved?.deepseek_key), configured: Boolean(saved?.deepseek_key) },
+        gemini: { saved: Boolean(saved?.gemini_key), configured: Boolean(saved?.gemini_key) },
+        claude: { saved: Boolean(saved?.claude_key), configured: Boolean(saved?.claude_key) },
       },
       ...AI_CATALOG,
+      models: AI_CATALOG.models.map((model) => currentModelPrices(model)),
     };
   }
 
@@ -57,7 +61,7 @@ export class AiSettingsService {
     this.assertAdmin(user);
     if (!findAiModel(dto.provider, dto.model)) throw new BadRequestException('Choose a supported model for this AI platform');
     if (dto.api_key && dto.remove_api_key) throw new BadRequestException('Enter a key or remove it, not both');
-    const keyField = dto.provider === 'openai' ? 'openai_key' : 'deepseek_key';
+    const keyField = KEY_FIELDS[dto.provider];
     const key = dto.api_key?.trim();
     const data = {
       provider: dto.provider, model: dto.model,
@@ -91,15 +95,15 @@ export class AiSettingsService {
     const saved = await this.prisma.aiSettings.findUnique({ where: { admin_id: adminId } });
     const provider = providerOverride ?? (saved?.provider as AiProvider);
     const model = providerOverride && saved?.provider !== providerOverride
-      ? (providerOverride === 'openai' ? DEFAULT_AI_MODEL : 'deepseek-flash') : saved?.model;
+      ? AI_PROVIDERS[providerOverride].default_model : saved?.model;
     if (!saved || !model) throw new ServiceUnavailableException('Ask your admin to configure their own API key in Account > AI generation');
     if (!findAiModel(provider, model)) throw new BadRequestException('Ask your admin to choose a supported AI model');
-    const encrypted = provider === 'openai' ? saved.openai_key : saved.deepseek_key;
-    if (!encrypted) throw new ServiceUnavailableException(`Ask your admin to configure their own ${provider === 'openai' ? 'OpenAI' : 'DeepSeek'} API key in Account > AI generation`);
+    const encrypted = saved[KEY_FIELDS[provider]];
+    if (!encrypted) throw new ServiceUnavailableException(`Ask your admin to configure their own ${AI_PROVIDERS[provider].name} API key in Account > AI generation`);
     return {
       provider, model,
       apiKey: this.decrypt(encrypted, adminId, provider),
-      baseUrl: provider === 'openai' ? 'https://api.openai.com/v1' : 'https://api.deepseek.com',
+      baseUrl: AI_PROVIDERS[provider].base_url,
       resumePrompt: saved.resume_prompt ?? DEFAULT_RESUME_PROMPT,
     };
   }

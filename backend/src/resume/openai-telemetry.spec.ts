@@ -75,9 +75,9 @@ describe('openAiUsageFields', () => {
         output_tokens_details: { reasoning_tokens: 1500 },
         total_tokens: 11500,
       },
-    ])).toEqual({
+    ])).toMatchObject({
       input_tokens: 9000,
-      input_tokens_details: { cached_tokens: 1500 },
+      input_tokens_details: { cached_tokens: 1500, cache_write_tokens: 0 },
       output_tokens: 4900,
       output_tokens_details: { reasoning_tokens: 1600 },
       total_tokens: 13900,

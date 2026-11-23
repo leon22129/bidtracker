@@ -25,6 +25,7 @@ import { ApplicationsService } from '../applications/applications.service';
 import { WorkspacesService } from '../workspaces/workspaces.service';
 import {
   combineOpenAiUsage,
+  AiUsageRates,
   OpenAiUsage,
   openAiUsageFields,
   prefixedOpenAiUsageFields,
@@ -44,6 +45,9 @@ import { findAiModel } from '../ai/ai-catalog';
 import { DEFAULT_RESUME_PROMPT, renderResumePrompt, RESUME_OUTPUT_INSTRUCTIONS } from '../ai/resume-prompt';
 import { OpenAiProvider } from '../ai/providers/openai-provider';
 import { DeepSeekProvider } from '../ai/providers/deepseek-provider';
+import { GeminiProvider } from '../ai/providers/gemini-provider';
+import { ClaudeProvider } from '../ai/providers/claude-provider';
+import { normalizeNativeResponse, readNativeResponseStream } from '../ai/providers/native-response';
 import { ApplicationAnswerCache, answerContextFingerprint } from './application-answer-cache';
 
 type OpenAiError = { message?: string; type?: string; code?: string; param?: string };
@@ -118,13 +122,22 @@ function requestText(body: unknown) {
   const record = body as Record<string, unknown>;
   const parts: string[] = [];
   if (typeof record.instructions === 'string') parts.push(record.instructions);
+  if (typeof record.system === 'string') parts.push(record.system);
+  const textParts = (items: unknown) => {
+    if (Array.isArray(items)) for (const item of items) {
+      if (item && typeof item.text === 'string') parts.push(item.text);
+    }
+  };
+  textParts((record.systemInstruction as { parts?: unknown } | undefined)?.parts);
   if (typeof record.input === 'string') parts.push(record.input);
-  for (const items of [record.items, record.input]) {
+  for (const items of [record.items, record.input, record.contents, record.messages]) {
     if (!Array.isArray(items)) continue;
     for (const item of items) {
       if (item && typeof item === 'object') {
         const content = (item as Record<string, unknown>).content;
         if (typeof content === 'string') parts.push(content);
+        textParts(content);
+        textParts((item as Record<string, unknown>).parts);
       }
     }
   }
@@ -995,16 +1008,19 @@ ${JSON.stringify(resume)}`;
 
   private async generateText(prompt: string, options: AiGenerationOptions) {
     const config = options.config;
-    const outputLimit = config.model.startsWith('gpt-4o') ? 16384 : 128000;
+    const outputLimit = findAiModel(config.provider, config.model)?.max_output_tokens
+      ?? (config.model.startsWith('gpt-4o') ? 16384 : 128000);
     let maxOutputTokens = Math.min(options.maxOutputTokens ?? 16000, outputLimit);
-    const provider = config.provider === 'deepseek' ? new DeepSeekProvider() : new OpenAiProvider();
+    const provider = { openai: new OpenAiProvider(), deepseek: new DeepSeekProvider(),
+      gemini: new GeminiProvider(), claude: new ClaudeProvider() }[config.provider];
+    if (!provider) throw new BadRequestException('Unsupported AI provider');
     let usage: OpenAiUsage | undefined;
     for (let attempt = 1; ; attempt++) {
       const data = await provider.generate({
         model: config.model, prompt, referenceContext: options.referenceContext,
         instructions: options.instructions, maxOutputTokens, reasoningEffort: options.reasoningEffort,
         legacyConversationId: options.conversationId,
-      }, (body) => this.requestProvider('/responses', body, 'POST', options.operation || 'response_generation', config)) as OpenAiResponse;
+      }, (body, path = '/responses') => this.requestProvider(path, body, 'POST', options.operation || 'response_generation', config)) as OpenAiResponse;
       usage = combineOpenAiUsage([usage, data.usage]);
       options.onUsage?.(usage);
       if (data.status === 'incomplete') {
@@ -1020,30 +1036,48 @@ ${JSON.stringify(resume)}`;
     }
   }
 
-  private usageRates(config: AiConfiguration, usage?: OpenAiUsage) {
+  private usageRates(config: AiConfiguration, usage?: OpenAiUsage): AiUsageRates {
     const model = findAiModel(config.provider, config.model);
     // DeepSeek's peak schedule excludes Chinese public holidays; avoid an inaccurate cost estimate.
     if (!model || config.provider === 'deepseek') return { input: null, cached_input: null, output: null };
+    if (usage?.requests?.length) {
+      const calls = usage.requests.map((request) => ({ request, rates: this.usageRates(config, request) }));
+      const weighted = (field: keyof AiUsageRates, tokens: (request: OpenAiUsage) => number) => {
+        const total = calls.reduce((sum, call) => sum + tokens(call.request), 0);
+        if (!total) return calls[0].rates[field] ?? null;
+        if (calls.some((call) => tokens(call.request) > 0 && call.rates[field] == null)) return null;
+        return calls.reduce((sum, call) => sum + tokens(call.request) * (call.rates[field] ?? 0), 0) / total;
+      };
+      return {
+        input: weighted('input', (r) => Math.max(0, (r.input_tokens ?? 0) - (r.input_tokens_details?.cached_tokens ?? 0) - (r.input_tokens_details?.cache_write_tokens ?? 0))),
+        cached_input: weighted('cached_input', (r) => r.input_tokens_details?.cached_tokens ?? 0),
+        cache_write: weighted('cache_write', (r) => r.input_tokens_details?.cache_write_tokens ?? 0),
+        output: weighted('output', (r) => r.output_tokens ?? 0),
+      };
+    }
+    if (model.long_context && (usage?.input_tokens ?? 0) > model.long_context.above_tokens) return model.long_context;
     const longContext = (usage?.input_tokens ?? 0) > 272000 && /^gpt-(6|5\.[456])/.test(model.id)
       && !/mini|nano/.test(model.id);
     return { input: model.input * (longContext ? 2 : 1),
       cached_input: (model.cached_input ?? model.input) * (longContext ? 2 : 1),
-      output: model.output * (longContext ? 1.5 : 1) };
+      output: model.output * (longContext ? 1.5 : 1), cache_write: model.cache_write };
   }
 
   private async requestProvider(path: string, body: unknown, method: string, operation: string, config: AiConfiguration) {
     const aiRequestId = randomUUID();
     const startedAt = performance.now();
     const input = requestText(body);
-    const shouldStream = path === '/responses' && method === 'POST' && body !== undefined && config.model !== 'o3-pro';
-    const requestBody = shouldStream && body && typeof body === 'object'
+    const nativeProvider = config.provider === 'gemini' || config.provider === 'claude' ? config.provider : undefined;
+    const isGeneration = path === '/responses' || Boolean(nativeProvider);
+    const shouldStream = isGeneration && method === 'POST' && body !== undefined && config.model !== 'o3-pro';
+    const requestBody = shouldStream && config.provider !== 'gemini' && body && typeof body === 'object'
       ? { ...(body as Record<string, unknown>), stream: true }
       : body;
     const serializedBody = requestBody === undefined ? undefined : JSON.stringify(requestBody);
     // DeepSeek can queue a request while sending keep-alive comments for up to ten minutes.
     // Leave time for inference too; browser requests use jobs/polling independently of this limit.
     const timeoutMs = config.provider === 'deepseek' ? 900_000
-      : config.model.includes('-pro') ? 600_000 : 120_000;
+      : nativeProvider || config.model.includes('-pro') ? 600_000 : 120_000;
     const includeContent = envEnabled('AI_LOG_CONTENT');
     const maxContentChars = contentLimit();
     const apiKey = config.apiKey;
@@ -1064,7 +1098,7 @@ ${JSON.stringify(resume)}`;
       operation,
       method,
       endpoint: path,
-      model: path === '/responses' ? config.model : undefined,
+      model: isGeneration ? config.model : undefined,
       provider: config.provider,
       request_bytes: serializedBody ? Buffer.byteLength(serializedBody, 'utf8') : 0,
       input_characters: input.length,
@@ -1082,13 +1116,20 @@ ${JSON.stringify(resume)}`;
       try {
         response = await fetch(`${config.baseUrl}${path}`, {
           method,
-          headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json',
+            ...(config.provider === 'gemini' ? { 'x-goog-api-key': apiKey }
+              : config.provider === 'claude' ? { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' }
+              : { Authorization: `Bearer ${apiKey}` }) },
           signal: AbortSignal.timeout(timeoutMs),
           ...(serializedBody === undefined ? {} : { body: serializedBody }),
         });
-        data = response.ok && shouldStream && !response.headers.get('content-type')?.includes('application/json')
-          ? await this.readOpenAiResponseStream(response)
-          : await response.json().catch(() => null) as OpenAiResponse | null;
+        if (response.ok && shouldStream && !response.headers.get('content-type')?.includes('application/json')) {
+          data = nativeProvider ? await readNativeResponseStream(nativeProvider, response) : await this.readOpenAiResponseStream(response);
+        } else {
+          const raw = await response.json().catch(() => null);
+          try { data = nativeProvider && raw ? normalizeNativeResponse(nativeProvider, raw) : raw; }
+          catch { throw new OpenAiResponseFormatError('The AI provider returned an invalid response'); }
+        }
         if (response.ok && (!data || typeof data !== 'object')) {
           throw new OpenAiResponseFormatError('The AI provider returned an invalid response');
         }
@@ -1101,7 +1142,7 @@ ${JSON.stringify(resume)}`;
             operation,
             method,
             endpoint: path,
-            model: path === '/responses' ? config.model : undefined,
+            model: isGeneration ? config.model : undefined,
             provider: config.provider,
             attempt,
             next_attempt: attempt + 1,
@@ -1118,7 +1159,7 @@ ${JSON.stringify(resume)}`;
           operation,
           method,
           endpoint: path,
-          model: path === '/responses' ? config.model : undefined,
+          model: isGeneration ? config.model : undefined,
           provider: config.provider,
           attempts: attempt,
           duration_ms: Number((performance.now() - startedAt).toFixed(2)),
@@ -1136,12 +1177,12 @@ ${JSON.stringify(resume)}`;
       const output = responseText(data);
       const commonFields = {
         ai_request_id: aiRequestId,
-        provider_request_id: response.headers.get('x-request-id') || undefined,
+        provider_request_id: response.headers.get('x-request-id') || response.headers.get('request-id') || undefined,
         response_id: data?.id,
         operation,
         method,
         endpoint: path,
-        model: path === '/responses' ? config.model : undefined,
+        model: isGeneration ? config.model : undefined,
         provider: config.provider,
         status_code: response.status,
         attempts: attempt,
@@ -1170,7 +1211,8 @@ ${JSON.stringify(resume)}`;
             'organization_spend_limit_exceeded', 'project_spend_limit_exceeded',
             'organization_usage_limit_exceeded'].includes(data?.error?.code || '');
         const retryable = !permanentError && (retryableOpenAiStatus(response.status)
-          || ['server_error', 'internal_error', 'rate_limit_exceeded', 'server_is_overloaded']
+          || ['server_error', 'internal_error', 'rate_limit_exceeded', 'server_is_overloaded',
+            'overloaded_error', 'api_error', 'rate_limit_error', 'UNAVAILABLE', 'INTERNAL', 'RESOURCE_EXHAUSTED']
             .includes(data?.error?.code || ''));
         const delayMs = openAiRetryDelay(response, attempt);
         if (retryable && attempt < maxAttempts && delayMs !== null) {

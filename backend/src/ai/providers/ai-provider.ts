@@ -9,7 +9,7 @@ export interface AiResponseRequest {
   legacyConversationId?: string;
 }
 
-export type SendAiResponse<T> = (body: Record<string, unknown>) => Promise<T>;
+export type SendAiResponse<T> = (body: Record<string, unknown>, path?: string) => Promise<T>;
 
 export function responseInput(request: AiResponseRequest) {
   // Keep the reusable material in its own message, with changing questions last.

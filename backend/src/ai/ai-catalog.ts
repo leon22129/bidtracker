@@ -1,4 +1,33 @@
-export type AiProvider = 'openai' | 'deepseek';
+export const AI_PROVIDERS = {
+  openai: {
+    name: 'OpenAI', base_url: 'https://api.openai.com/v1',
+    target_url: 'https://api.openai.com/v1/responses', default_model: 'gpt-6.1-sol',
+    key_url: 'https://platform.openai.com/api-keys', checked_at: '2026-10-30', notes: '',
+  },
+  deepseek: {
+    name: 'DeepSeek', base_url: 'https://api.deepseek.com',
+    target_url: 'https://api.deepseek.com/responses', default_model: 'deepseek-flash',
+    key_url: 'https://platform.deepseek.com/api_keys', checked_at: '2026-10-30', notes: '',
+  },
+  gemini: {
+    name: 'Gemini (Google)', base_url: 'https://generativelanguage.googleapis.com/v1beta',
+    target_url: 'https://generativelanguage.googleapis.com/v1beta/models/{model}:streamGenerateContent?alt=sse',
+    default_model: 'gemini-4-hydrogen', key_url: 'https://aistudio.google.com/api-keys', checked_at: '2026-11-23',
+    notes: 'Use a Gemini Developer API key. Prices are paid-tier rates and include thinking tokens. '
+      + 'Free-tier content may be used to improve Google products; use a paid project for candidate data. '
+      + 'Cache discounts depend on implicit cache hits.',
+  },
+  claude: {
+    name: 'Claude (Anthropic)', base_url: 'https://api.anthropic.com/v1',
+    target_url: 'https://api.anthropic.com/v1/messages', default_model: 'claude-sonnet-5-5',
+    key_url: 'https://platform.claude.com/settings/keys', checked_at: '2026-11-23',
+    notes: 'Use an Anthropic API key with API credits; a Claude chat subscription is separate. '
+      + 'Thinking tokens are billed as output. Reusable reference context uses a 5-minute prompt cache; '
+      + 'cache writes cost extra and hits depend on prompt length and reuse.',
+  },
+} as const;
+export type AiProvider = keyof typeof AI_PROVIDERS;
+export interface AiPrices { input: number; cached_input: number | null; output: number; cache_write?: number }
 export interface AiModel {
   id: string;
   provider: AiProvider;
@@ -6,6 +35,11 @@ export interface AiModel {
   cached_input: number | null;
   output: number;
   reasoning: boolean;
+  max_output_tokens?: number;
+  context_window?: number;
+  cache_write?: number;
+  long_context?: AiPrices & { above_tokens: number };
+  price_change?: AiPrices & { effective_at: string };
   deprecated?: boolean;
   off_peak?: { input: number; cached_input: number; output: number };
 }
@@ -52,16 +86,45 @@ export const AI_MODELS: AiModel[] = [
     reasoning: true, off_peak: { input: 0.15, cached_input: 0.003, output: 0.6 } },
   { id: 'deepseek-v4-pro', provider: 'deepseek', input: 1.32, cached_input: 0.044, output: 3.96,
     reasoning: true, off_peak: { input: 0.66, cached_input: 0.022, output: 1.98 } },
+  // Current publicly available families. Native APIs; synchronous output limits (no long-decode beta).
+  // https://aistudio.google.com/docs/models and /docs/pricing, checked 2026-11-23.
+  ...[
+    { id: 'gemini-4-hydrogen', input: 1.5, cached_input: 0.075, output: 7.5 },
+    { id: 'gemini-4-carbon', input: 2, cached_input: 0.1, output: 10,
+      price_change: { effective_at: '2026-12-01', input: 4, cached_input: 0.2, output: 20 } },
+    { id: 'gemini-4-neon', input: 3, cached_input: 0.15, output: 15 },
+    { id: 'gemini-4-argon', input: 2, cached_input: 0.1, output: 10,
+      price_change: { effective_at: '2026-12-01', input: 4, cached_input: 0.2, output: 20 } },
+  ].map((model): AiModel => ({ ...model, provider: 'gemini', reasoning: true,
+    context_window: 1048576, max_output_tokens: 65536 })),
+  // https://platform.claude.com/docs/en/models/overview and /en/about-claude/pricing.
+  ...[
+    { id: 'claude-sonnet-5-5', input: 2, cached_input: 0.1, output: 10, cache_write: 2.5 },
+    { id: 'claude-haiku-5-5', input: 0.1, cached_input: 0.01, output: 0.5, cache_write: 0.125,
+      long_context: { above_tokens: 100000, input: 0.5, cached_input: 0.05, output: 2.5, cache_write: 0.625 } },
+    { id: 'claude-opus-5-5', input: 4, cached_input: 0.2, output: 20, cache_write: 5 },
+    { id: 'claude-fable-5-2', input: 8, cached_input: 0.2, output: 40, cache_write: 10 },
+  ].map((model): AiModel => ({ ...model, provider: 'claude', reasoning: true,
+    context_window: 1000000, max_output_tokens: 128000 })),
 ];
 
 export const AI_CATALOG = {
-  checked_at: '2026-10-30', currency: 'USD', unit: '1M tokens', models: AI_MODELS,
+  checked_at: '2026-11-23', currency: 'USD', unit: '1M tokens', models: AI_MODELS,
+  providers: AI_PROVIDERS,
   sources: {
     openai: 'https://developers.openai.com/api/docs/pricing',
     deepseek: 'https://api-docs.deepseek.com/quick_start/pricing/',
+    gemini: 'https://aistudio.google.com/docs/pricing',
+    claude: 'https://platform.claude.com/docs/en/about-claude/pricing',
   },
 };
 
 export function findAiModel(provider: string, model: string) {
-  return AI_MODELS.find((entry) => entry.provider === provider && entry.id === model);
+  const entry = AI_MODELS.find((entry) => entry.provider === provider && entry.id === model);
+  return entry && currentModelPrices(entry);
+}
+
+export function currentModelPrices(model: AiModel, now = new Date()): AiModel {
+  return model.price_change && now.toISOString().slice(0, 10) >= model.price_change.effective_at
+    ? { ...model, ...model.price_change } : { ...model };
 }

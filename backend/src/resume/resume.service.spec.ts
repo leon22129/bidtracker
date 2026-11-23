@@ -4,6 +4,7 @@ import { plainToInstance } from 'class-transformer';
 import { validateSync } from 'class-validator';
 import { GenerateApplicationDto, GenerateProfilePromptDto } from './dto/generate.dto';
 import { DEFAULT_RESUME_PROMPT, RESUME_OUTPUT_INSTRUCTIONS } from '../ai/resume-prompt';
+import { AI_PROVIDERS } from '../ai/ai-catalog';
 import { applicationQuestionId, buildApplicationQuestionsInput, type ApplicationQuestionInput } from './original-prompts';
 
 function providerAnswers(answers: Array<ApplicationQuestionInput & { answer: string }>) {
@@ -425,19 +426,24 @@ describe('ApplicationGenerationService application metadata eligibility', () => 
     expect(prompt).not.toContain('{{candidate_info}}');
   });
 
-  it.each(['openai', 'deepseek'])('uses a local session and bounded context for the complete %s workflow', async (providerName) => {
+  it.each(['openai', 'deepseek', 'gemini', 'claude'] as const)('uses a local session and bounded context for the complete %s workflow', async (providerName) => {
     const { service, prisma, drafts, aiSettings } = setup();
     (service as any).createGenerationConversation.mockRestore();
     const config = await aiSettings.forWorkspace();
-    const baseUrl = providerName === 'openai' ? 'https://api.openai.com/v1' : 'https://api.deepseek.com';
+    const platform = AI_PROVIDERS[providerName];
+    const baseUrl = platform.base_url;
     aiSettings.forWorkspace.mockResolvedValue({ ...config, provider: providerName,
-      model: providerName === 'openai' ? 'gpt-6.1-sol' : 'deepseek-flash', baseUrl } as any);
+      model: platform.default_model, baseUrl } as any);
     prisma.resumeConversation.create.mockImplementation(async ({ data }) => ({ id: 'conversation-1', ...data }));
     const json = (body: unknown) => new Response(JSON.stringify(body), { headers: { 'content-type': 'application/json' } });
+    const result = (text: string) => json(providerName === 'gemini'
+      ? { candidates: [{ content: { parts: [{ text }] }, finishReason: 'STOP' }] }
+      : providerName === 'claude' ? { type: 'message', content: [{ type: 'text', text }], stop_reason: 'end_turn' }
+      : { output_text: text });
     const provider = jest.spyOn(globalThis, 'fetch')
-      .mockResolvedValueOnce(json({ output_text: eligible() }))
-      .mockResolvedValueOnce(json({ output_text: JSON.stringify({ summary: 'Tailored summary', annual_salary: '$150,000', hourly_rate: '$72.12' }) }))
-      .mockResolvedValueOnce(json({ output_text: providerAnswers([{ question: 'Why this role?', answer: 'It fits my experience.' }]) }));
+      .mockResolvedValueOnce(result(eligible()))
+      .mockResolvedValueOnce(result(JSON.stringify({ summary: 'Tailored summary', annual_salary: '$150,000', hourly_rate: '$72.12' })))
+      .mockResolvedValueOnce(result(providerAnswers([{ question: 'Why this role?', answer: 'It fits my experience.' }])));
     try {
       await expect(service.generate(user, dto)).resolves.toMatchObject({ success: true, conversation_id: 'conversation-1' });
       const saved = { id: 'conversation-1', ...prisma.resumeConversation.create.mock.calls[0][0].data,
@@ -446,14 +452,23 @@ describe('ApplicationGenerationService application metadata eligibility', () => 
       await expect(service.answerQuestions(user, {
         conversation_id: 'conversation-1', questions: [{ question: 'Name' }, { question: 'Why this role?' }],
       })).resolves.toEqual({ answers: [{ question: 'Name', answer: 'Candidate' }, { question: 'Why this role?', answer: 'It fits my experience.' }] });
-      expect(provider.mock.calls.map(([url]) => url)).toEqual(Array(3).fill(baseUrl + '/responses'));
-      const [eligibility, resume, answers] = provider.mock.calls.map(([, init]) => JSON.parse(init!.body as string));
-      for (const body of [eligibility, resume, answers]) {
+      expect(provider.mock.calls.map(([url]) => url)).toEqual(Array(3).fill(platform.target_url.replace('{model}', platform.default_model)));
+      const bodies = provider.mock.calls.map(([, init]) => JSON.parse(init!.body as string));
+      for (const body of bodies) {
         expect(body).not.toHaveProperty('conversation');
         expect(body).not.toHaveProperty('previous_response_id');
         if (providerName === 'openai') expect(body.store).toBe(false);
         else expect(body).not.toHaveProperty('store');
       }
+      const [eligibility, resume, answers] = bodies.map((body) => {
+        if (providerName === 'gemini' || providerName === 'claude') {
+          const parts = providerName === 'gemini' ? body.contents[0].parts : body.messages[0].content;
+          return { input: parts.length === 1 ? parts[0].text : parts.map((part: any) => ({ content: part.text })),
+            instructions: providerName === 'gemini' ? body.systemInstruction?.parts[0].text : body.system,
+            reasoning: { effort: providerName === 'gemini' ? body.generationConfig.thinkingConfig.thinkingLevel : body.output_config.effort } };
+        }
+        return body;
+      });
       expect(eligibility.input).toContain(dto.job_description);
       expect(eligibility.reasoning.effort).toBe('low');
       expect(resume.input).not.toContain('requires_clearance');

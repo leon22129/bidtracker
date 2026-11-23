@@ -234,8 +234,8 @@ company submissions against PostgreSQL. It creates and removes an isolated schem
 
 For resume-generation connection errors, run `cd backend && npm run check:ai -- <admin-email-or-id>`
 on the API server after building. It checks that admin's saved key and model access without generating
-text or displaying the key. Each admin must configure **Account → AI generation**, choosing OpenAI or
-DeepSeek, compare model input/cached-input/output prices per million tokens, and save an API key.
+text or displaying the key. Each admin must configure **Account → AI generation**, choosing OpenAI,
+DeepSeek, Gemini (Google), or Claude (Anthropic), compare token prices, and save that provider's API key.
 These settings apply to workspaces created by that admin, including generation by their bidders.
 Keys are encrypted on the server and never returned to the browser; each provider keeps its own key.
 Set a stable `AI_SETTINGS_ENCRYPTION_KEY` (32+ characters), or the server uses `JWT_SECRET`.
@@ -255,16 +255,20 @@ including deprecated models still listed by the provider. Dated snapshots and du
 are omitted. Image/audio/embedding/moderation, restricted research, and shut-down models are
 excluded. Prices were verified on 2026-10-30 against [OpenAI](https://developers.openai.com/api/docs/pricing)
 and [DeepSeek](https://api-docs.deepseek.com/quick_start/pricing/); update `backend/src/ai/ai-catalog.ts`
-when prices or availability change. DeepSeek peak and off-peak prices are shown separately.
+when prices or availability change. Gemini and Claude model IDs, limits, endpoints, and pricing were
+verified on 2026-11-23; see [the provider integration notes](docs/ai-providers.md). The page shows each
+provider's own review date. DeepSeek peak and off-peak prices are shown separately.
 Generation uses standard processing; the display is a reference, not a billing guarantee.
 
 Run `npm run prisma:deploy` in `backend` and rebuild/restart both services when installing this change.
-New runs use one local conversation ID for both OpenAI and DeepSeek. Eligibility and resume
+New runs use one local conversation ID for all four providers. Eligibility and resume
 generation are independent requests; a rejected job never reaches resume generation. Answers receive
 the saved JD and final resume, current candidate information, and only the unanswered questions.
 Earlier eligibility instructions, resume-writing prompts, and question history are not replayed.
 OpenAI requests use `store: false`; DeepSeek's separate adapter sends only its supported stateless
-Responses API parameters. Both adapters retain the selected provider/model and credentials.
+Responses API parameters. Gemini uses its native streaming GenerateContent API, and Claude uses
+streaming Messages. Each adapter retains the selected provider/model and credentials. Apply the
+`20261123000000_gemini_claude` migration before starting a backend with the new providers.
 
 Known name, contact, address, and work-authorization fields are answered directly from the saved
 profile without an AI request. Other answers are cached per conversation in the database. Changes

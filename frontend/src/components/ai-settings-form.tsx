@@ -7,7 +7,7 @@ import { useToast } from '@/components/ui/toast';
 import { ResumePromptEditor } from './resume-prompt-editor';
 
 const usd = (value: number) => `$${value.toLocaleString('en-US', { maximumFractionDigits: 4 })}`;
-const price = (model: AiModel) => `${usd(model.input)} input / ${usd(model.output)} output`;
+const price = (model: Pick<AiModel, 'input' | 'output'>) => `${usd(model.input)} input / ${usd(model.output)} output`;
 
 export function AiSettingsForm() {
   const toast = useToast();
@@ -32,11 +32,12 @@ export function AiSettingsForm() {
   const models = settings?.models.filter((model) => model.provider === provider) ?? [];
   const selected = models.find((model) => model.id === modelId);
   const keyStatus = settings?.keys[provider];
+  const platform = settings?.providers[provider];
 
   function changeProvider(value: AiProvider) {
     setProvider(value); setKey('');
     setModelId(settings?.provider === value ? settings.model
-      : settings?.models.find((model) => model.provider === value)?.id ?? '');
+      : settings?.providers[value].default_model ?? '');
   }
 
   async function save(removeKey = false) {
@@ -68,8 +69,8 @@ export function AiSettingsForm() {
           <div>
             <label className="label" htmlFor="ai-platform">AI platform</label>
             <select id="ai-platform" className="input" value={provider} onChange={(event) => changeProvider(event.target.value as AiProvider)}>
-              <option value="openai">OpenAI</option>
-              <option value="deepseek">DeepSeek</option>
+              {(Object.entries(settings.providers) as [AiProvider, AiSettings['providers'][AiProvider]][])
+                .map(([id, info]) => <option key={id} value={id}>{info.name}</option>)}
             </select>
           </div>
           <div>
@@ -88,11 +89,27 @@ export function AiSettingsForm() {
                 <div><dt className="text-gray-500 dark:text-gray-400">Cached input</dt><dd className="mt-1 font-medium">{selected.cached_input === null ? 'No discount' : usd(selected.cached_input)}</dd></div>
                 <div><dt className="text-gray-500 dark:text-gray-400">Output</dt><dd className="mt-1 font-medium">{usd(selected.output)}</dd></div>
               </dl>
+              {selected.cache_write !== undefined && <p className="mt-2 text-2xs text-gray-600 dark:text-gray-400">
+                Cache writes (5 minutes): {usd(selected.cache_write)} per 1M tokens.
+              </p>}
+              {selected.long_context && <p className="mt-2 text-2xs text-gray-600 dark:text-gray-400">
+                Above {selected.long_context.above_tokens.toLocaleString('en-US')} input tokens: {price(selected.long_context)}
+                {selected.long_context.cached_input !== null && ` / ${usd(selected.long_context.cached_input)} cached input`}
+                {selected.long_context.cache_write !== undefined && ` / ${usd(selected.long_context.cache_write)} cache writes`}.
+              </p>}
+              {selected.price_change && <p className="mt-2 text-2xs text-gray-600 dark:text-gray-400">
+                Rates from {selected.price_change.effective_at}: {price(selected.price_change)}
+                {selected.price_change.cached_input !== null && ` / ${usd(selected.price_change.cached_input)} cached input`}.
+              </p>}
+              {selected.context_window && <p className="mt-2 text-2xs text-gray-600 dark:text-gray-400">
+                Context: {selected.context_window.toLocaleString('en-US')} tokens{provider === 'gemini' ? ' (input and output combined)' : ''}.
+                {' '}Maximum output per request: {selected.max_output_tokens?.toLocaleString('en-US')} tokens, including thinking.
+              </p>}
               {selected.off_peak && <p className="mt-2 text-2xs text-gray-600 dark:text-gray-400">
                 Off-peak: {usd(selected.off_peak.input)} input · {usd(selected.off_peak.cached_input)} cached input · {usd(selected.off_peak.output)} output.
                 Peak: Mon–Fri, 01:00–04:00 and 06:00–10:00 UTC, excluding Chinese public holidays.
               </p>}
-              {selected.deprecated && <p className="mt-2 text-2xs text-amber-800 dark:text-amber-200">This model is deprecated by OpenAI and may have limited availability.</p>}
+              {selected.deprecated && <p className="mt-2 text-2xs text-amber-800 dark:text-amber-200">This model is deprecated by its provider and may have limited availability.</p>}
             </div>
           )}
           <details className="text-2xs">
@@ -108,18 +125,24 @@ export function AiSettingsForm() {
             </div>
           </details>
           <p className="text-2xs text-gray-500 dark:text-gray-400">
-            Text generation model families, without dated snapshots or duplicate aliases. Image, audio, embeddings, restricted research models, and retired models are excluded.
-            Prices checked {settings.checked_at}. Standard text rates; long prompts, tools, and special processing can cost more. Availability depends on your API account.{' '}
+            Supported text generation model families. Image, audio, embeddings, restricted research models, and retired models are excluded.
+            Prices checked {platform?.checked_at ?? settings.checked_at}. Standard text rates; long prompts, tools, and special processing can cost more. Availability depends on your API account.{' '}
             <a href={settings.sources[provider]} target="_blank" rel="noreferrer" className="text-primary-600 underline">Official pricing</a>
           </p>
+          {platform?.notes && <p className="text-2xs text-gray-500 dark:text-gray-400">{platform.notes}</p>}
+          {platform && <details className="text-2xs text-gray-500 dark:text-gray-400">
+            <summary className="cursor-pointer">API endpoint</summary>
+            <code className="mt-1 block break-all">{platform.target_url.replace('{model}', modelId)}</code>
+          </details>}
           <div>
-            <label className="label" htmlFor="ai-api-key">{provider === 'openai' ? 'OpenAI' : 'DeepSeek'} API key</label>
+            <label className="label" htmlFor="ai-api-key">{platform?.name} API key</label>
             <input id="ai-api-key" type="password" className="input" autoComplete="new-password" maxLength={1000}
               placeholder={keyStatus?.configured ? 'Leave blank to keep the current key' : 'Enter API key'}
               value={key} onChange={(event) => setKey(event.target.value)} />
             <p className="mt-1 text-2xs text-gray-500 dark:text-gray-400">
               {keyStatus?.saved ? 'Your key is saved. ' : 'Add your own API key to enable generation. '}
               Saved keys are encrypted and never displayed again. Each platform keeps its own key.
+              {platform && <> <a href={platform.key_url} target="_blank" rel="noreferrer" className="text-primary-600 underline">Get an API key</a></>}
             </p>
           </div>
           <div className="flex justify-end gap-2 pt-1">
