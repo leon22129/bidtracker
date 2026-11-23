@@ -1090,7 +1090,7 @@ ${JSON.stringify(resume)}`;
         failure_type: 'configuration',
         error_message: `${config.provider} API key is not configured`,
       });
-      throw new BadGatewayException('Ask your admin to configure an API key in Account > AI generation');
+      throw new BadGatewayException('Ask your admin to configure an API key in Account > AI generation or in this profile’s AI settings');
     }
 
     logEvent(this.logger, 'log', 'openai_request_started', {

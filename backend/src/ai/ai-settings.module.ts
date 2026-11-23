@@ -1,6 +1,6 @@
 import { Module } from '@nestjs/common';
-import { AiSettingsController } from './ai-settings.controller';
+import { AiSettingsController, ProfileAiSettingsController } from './ai-settings.controller';
 import { AiSettingsService } from './ai-settings.service';
 
-@Module({ controllers: [AiSettingsController], providers: [AiSettingsService], exports: [AiSettingsService] })
+@Module({ controllers: [AiSettingsController, ProfileAiSettingsController], providers: [AiSettingsService], exports: [AiSettingsService] })
 export class AiSettingsModule {}

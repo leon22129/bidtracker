@@ -7,6 +7,7 @@ import { useAuth } from '@/lib/auth-context';
 import { canManageWorkspaces } from '@/lib/permissions';
 import type { User, Workspace } from '@/lib/types';
 import { useToast } from '@/components/ui/toast';
+import { ProfileAiSettingsModal } from '@/components/profile-ai-settings-modal';
 
 type WorkspaceFilter = 'active' | 'archived' | 'all';
 
@@ -26,6 +27,7 @@ export default function WorkspacesPage() {
   const [assigningManager, setAssigningManager] = useState<Workspace | null>(null);
   const [assigningBidder, setAssigningBidder] = useState<Workspace | null>(null);
   const [editingProfile, setEditingProfile] = useState<Workspace | null>(null);
+  const [editingAiProfile, setEditingAiProfile] = useState<Workspace | null>(null);
   const [viewingProfile, setViewingProfile] = useState<Workspace | null>(null);
   const [workspaceFilter, setWorkspaceFilter] = useState<WorkspaceFilter>('active');
   const [selectedBidderId, setSelectedBidderId] = useState('all');
@@ -363,6 +365,11 @@ export default function WorkspacesPage() {
                     Edit profile
                   </button>
                 )}
+                {canEditProfiles && w.can_edit && (
+                  <button type="button" className="btn-secondary btn-xs" onClick={() => setEditingAiProfile(w)}>
+                    AI settings
+                  </button>
+                )}
                 {user?.role === 'bidder_manager' && w.profile && (
                   <button
                     type="button"
@@ -442,6 +449,10 @@ export default function WorkspacesPage() {
       )}
       {editingProfile && (
         <ProfileModal workspace={editingProfile} onClose={() => setEditingProfile(null)} onChanged={load} />
+      )}
+      {editingAiProfile && canEditProfiles && (
+        <ProfileAiSettingsModal key={editingAiProfile.id} workspaceId={editingAiProfile.id} name={editingAiProfile.name}
+          onClose={() => setEditingAiProfile(null)} />
       )}
       {viewingProfile && (
         <ProfileViewModal workspace={viewingProfile} onClose={() => setViewingProfile(null)} />

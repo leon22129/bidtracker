@@ -18,14 +18,23 @@ export interface AiSettings {
   provider: AiProvider;
   model: string;
   keys: Record<AiProvider, { saved: boolean; configured: boolean }>;
-  resume_prompt: string;
-  default_resume_prompt: string;
-  resume_prompt_customized: boolean;
-  resume_prompt_variables: string[];
-  resume_prompt_max_length: number;
   checked_at: string;
   models: AiModel[];
   sources: Record<AiProvider, string>;
   providers: Record<AiProvider, { name: string; base_url: string; target_url: string; default_model: string;
     key_url: string; checked_at: string; notes: string }>;
+}
+
+export interface ResumePromptSettings {
+  resume_prompt: string;
+  default_resume_prompt: string;
+  resume_prompt_customized: boolean;
+  resume_prompt_variables: string[];
+  resume_prompt_max_length: number;
+}
+
+export interface ProfileAiSettings extends AiSettings {
+  workspace_id: string;
+  uses_account_defaults: boolean;
+  account_defaults: { provider: AiProvider; model: string; configured: boolean };
 }

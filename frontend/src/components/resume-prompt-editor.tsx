@@ -2,10 +2,10 @@
 
 import { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
-import { AiSettings } from '@/lib/ai-types';
+import { ResumePromptSettings } from '@/lib/ai-types';
 import { useToast } from '@/components/ui/toast';
 
-export function ResumePromptEditor({ settings, onSaved }: { settings: AiSettings; onSaved: (settings: AiSettings) => void }) {
+export function ResumePromptEditor({ settings, onSaved }: { settings: ResumePromptSettings; onSaved: (settings: ResumePromptSettings) => void }) {
   const toast = useToast();
   const [prompt, setPrompt] = useState(settings.resume_prompt);
   const [busy, setBusy] = useState(false);

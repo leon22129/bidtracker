@@ -2,16 +2,16 @@
 
 import { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
-import { AiModel, AiProvider, AiSettings } from '@/lib/ai-types';
+import { AiModel, AiProvider, AiSettings, ProfileAiSettings } from '@/lib/ai-types';
 import { useToast } from '@/components/ui/toast';
-import { ResumePromptEditor } from './resume-prompt-editor';
 
 const usd = (value: number) => `$${value.toLocaleString('en-US', { maximumFractionDigits: 4 })}`;
 const price = (model: Pick<AiModel, 'input' | 'output'>) => `${usd(model.input)} input / ${usd(model.output)} output`;
 
-export function AiSettingsForm() {
+export function AiSettingsForm({ workspaceId }: { workspaceId?: string }) {
   const toast = useToast();
-  const [settings, setSettings] = useState<AiSettings | null>(null);
+  const [settings, setSettings] = useState<AiSettings | ProfileAiSettings | null>(null);
+  const [customizing, setCustomizing] = useState(false);
   const [provider, setProvider] = useState<AiProvider>('openai');
   const [modelId, setModelId] = useState('');
   const [key, setKey] = useState('');
@@ -19,20 +19,27 @@ export function AiSettingsForm() {
   const [error, setError] = useState('');
   const [loadVersion, setLoadVersion] = useState(0);
 
+  function applySettings(data: AiSettings | ProfileAiSettings) {
+    setSettings(data); setProvider(data.provider); setModelId(data.model); setKey('');
+    setCustomizing('uses_account_defaults' in data ? !data.uses_account_defaults : true);
+  }
+
   useEffect(() => {
     let active = true;
     setError('');
-    void api.aiSettings().then((data) => {
+    setSettings(null); setKey('');
+    void (workspaceId ? api.profileAiSettings(workspaceId) : api.aiSettings()).then((data) => {
       if (!active) return;
-      setSettings(data); setProvider(data.provider); setModelId(data.model);
+      applySettings(data);
     }).catch((err) => { if (active) setError(err instanceof Error ? err.message : 'Could not load AI settings'); });
     return () => { active = false; };
-  }, [loadVersion]);
+  }, [loadVersion, workspaceId]);
 
   const models = settings?.models.filter((model) => model.provider === provider) ?? [];
   const selected = models.find((model) => model.id === modelId);
   const keyStatus = settings?.keys[provider];
   const platform = settings?.providers[provider];
+  const profileSettings = settings && 'uses_account_defaults' in settings ? settings : null;
 
   function changeProvider(value: AiProvider) {
     setProvider(value); setKey('');
@@ -43,29 +50,62 @@ export function AiSettingsForm() {
   async function save(removeKey = false) {
     setBusy(true);
     try {
-      const data = await api.updateAiSettings({ provider, model: modelId,
+      const changes = { provider, model: modelId,
         ...(removeKey ? { remove_api_key: true } : key.trim() ? { api_key: key.trim() } : {}),
-      });
-      setSettings(data); setKey('');
-      toast.success(removeKey ? 'Saved API key removed' : 'AI settings saved');
+      };
+      const data = await (workspaceId ? api.updateProfileAiSettings(workspaceId, changes) : api.updateAiSettings(changes));
+      applySettings(data);
+      toast.success(removeKey ? 'Account API key removed' : workspaceId ? 'Profile override saved' : 'Account AI defaults saved');
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Could not save AI settings');
     } finally { setBusy(false); }
   }
 
+  async function useAccountDefaults() {
+    if (!workspaceId) return;
+    setBusy(true);
+    try {
+      applySettings(await api.resetProfileAiSettings(workspaceId));
+      toast.success('Profile now uses account defaults');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not reset AI settings');
+    } finally { setBusy(false); }
+  }
+
   return (
-    <>
-    <form className="card mt-5 space-y-3 p-4" onSubmit={(event) => { event.preventDefault(); void save(); }}>
+    <form className={workspaceId ? 'mt-4 space-y-3' : 'card mt-5 space-y-3 p-4'}
+      onSubmit={(event) => { event.preventDefault(); if (customizing) void save(); }}>
       <div>
         <h2 className="text-sm font-semibold">AI generation</h2>
         <p className="mt-1 text-2xs text-gray-500 dark:text-gray-400">
-          Choose the platform and model for your profiles and bidders. Used for resumes, cover letters, eligibility checks, and application answers.
+          {workspaceId
+            ? 'Choose a special model and API key for this profile, or use its admin’s account defaults.'
+            : 'Set the default model and API key for your profiles. Profiles with their own override keep their special settings.'}
+          {' '}Used for resumes, cover letters, eligibility checks, and application answers.
         </p>
       </div>
       {error ? <div role="alert" className="text-xs text-red-700 dark:text-red-300">{error}
         <button type="button" className="ml-2 underline" onClick={() => setLoadVersion((value) => value + 1)}>Retry</button>
       </div> : !settings ? <p className="text-xs text-gray-500 dark:text-gray-400">Loading AI settings…</p> : (
         <fieldset disabled={busy} className="space-y-3 disabled:opacity-60">
+          {profileSettings && <div className="rounded border border-gray-200 p-3 text-xs dark:border-gray-700">
+            <p className="font-semibold">{profileSettings.uses_account_defaults ? 'Using account defaults' : 'Using profile override'}</p>
+            <p className="mt-1 break-words text-gray-500 dark:text-gray-400">
+              Account default: {settings.providers[profileSettings.account_defaults.provider].name} / {profileSettings.account_defaults.model}.
+              {' '}{profileSettings.account_defaults.configured ? 'Account key is saved.' : 'No account key is configured. Ask the profile admin to save one in Account.'}
+            </p>
+            {!profileSettings.uses_account_defaults ? <>
+              <p className="mt-1 text-gray-500 dark:text-gray-400">Returning to account defaults clears this profile’s saved model and keys.</p>
+              <button type="button" className="btn-secondary btn-xs mt-2" onClick={() => void useAccountDefaults()}>Use account defaults</button>
+            </> : customizing ? <>
+              <p className="mt-1 text-gray-500 dark:text-gray-400">Account defaults stay active until you save the override with its own API key.</p>
+              <button type="button" className="btn-secondary btn-xs mt-2" onClick={() => applySettings(profileSettings)}>Cancel override</button>
+            </> : <>
+              <p className="mt-1 text-gray-500 dark:text-gray-400">Changes to the admin’s account settings apply automatically.</p>
+              <button type="button" className="btn-secondary btn-xs mt-2" onClick={() => setCustomizing(true)}>Set profile override</button>
+            </>}
+          </div>}
+          {customizing && <>
           <div>
             <label className="label" htmlFor="ai-platform">AI platform</label>
             <select id="ai-platform" className="input" value={provider} onChange={(event) => changeProvider(event.target.value as AiProvider)}>
@@ -141,20 +181,20 @@ export function AiSettingsForm() {
               value={key} onChange={(event) => setKey(event.target.value)} />
             <p className="mt-1 text-2xs text-gray-500 dark:text-gray-400">
               {keyStatus?.saved ? 'Your key is saved. ' : 'Add your own API key to enable generation. '}
-              Saved keys are encrypted and never displayed again. Each platform keeps its own key.
+              Saved keys are encrypted and never displayed again.{' '}
+              {workspaceId ? 'This override uses its own key, separate from the account defaults.' : 'Each platform keeps its own account key.'}
               {platform && <> <a href={platform.key_url} target="_blank" rel="noreferrer" className="text-primary-600 underline">Get an API key</a></>}
             </p>
           </div>
           <div className="flex justify-end gap-2 pt-1">
-            {keyStatus?.saved && <button type="button" className="btn-danger" disabled={!selected} onClick={() => void save(true)}>Remove saved key</button>}
+            {!workspaceId && keyStatus?.saved && <button type="button" className="btn-danger" disabled={!selected} onClick={() => void save(true)}>Remove saved key</button>}
             <button className="btn-primary" type="submit" disabled={!selected || (!keyStatus?.configured && !key.trim())}>
               {busy ? 'Saving…' : 'Save AI settings'}
             </button>
           </div>
+          </>}
         </fieldset>
       )}
     </form>
-    {settings && <ResumePromptEditor settings={settings} onSaved={setSettings} />}
-    </>
   );
 }

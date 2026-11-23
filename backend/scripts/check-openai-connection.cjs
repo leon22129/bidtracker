@@ -1,4 +1,4 @@
-// Run after building: npm run check:ai -- <admin email or id>. Does not generate text.
+// Run after building: npm run check:ai -- <workspace id>. Does not generate text.
 require('dotenv').config({ path: require('node:path').join(__dirname, '../.env') });
 require('reflect-metadata');
 const { PrismaClient } = require('@prisma/client');
@@ -7,12 +7,9 @@ const db = new PrismaClient();
 
 async function main() {
   const selector = process.argv[2]?.trim();
-  if (!selector) throw Error('Usage: npm run check:ai -- <admin email or id>');
-  const admin = await db.user.findFirst({ where: { OR: [{ id: selector }, { email: selector }],
-    role: { in: ['admin', 'super_admin'] }, is_active: true } });
-  if (!admin) throw Error('An active admin with that email or id was not found');
-  const { apiKey: key, model, provider, baseUrl } = await new AiSettingsService(db).forAdmin(admin.id);
-  console.log(JSON.stringify({ node: process.version, admin_id: admin.id, provider, model, key_configured: true }));
+  if (!selector) throw Error('Usage: npm run check:ai -- <workspace id>');
+  const { apiKey: key, model, provider, baseUrl } = await new AiSettingsService(db).forWorkspace(selector);
+  console.log(JSON.stringify({ node: process.version, workspace_id: selector, provider, model, key_configured: true }));
   try {
     const endpoint = provider === 'deepseek' ? '/models' : `/models/${encodeURIComponent(model)}`;
     const response = await fetch(`${baseUrl}${endpoint}`, {
@@ -32,8 +29,8 @@ async function main() {
     const accessible = provider === 'gemini' ? data?.name === `models/${model}`
       : provider !== 'deepseek' ? data?.id === model
       : Array.isArray(data?.data) && data.data.some((item) => item.id === model);
-    if (!accessible) throw Error('The selected model was not returned by the provider for this admin');
-    console.log(`PASS: the server can reach ${provider} and access this admin's selected model`);
+    if (!accessible) throw Error('The selected model was not returned by the provider for this profile');
+    console.log(`PASS: the server can reach ${provider} and access this profile's selected model`);
   } catch (error) {
     const codes = [];
     for (let cause = error; cause; cause = cause.cause) {

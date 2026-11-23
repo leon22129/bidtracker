@@ -1,8 +1,13 @@
 # Gemini and Claude integration
 
-Reviewed 2026-11-23. Configure **Account → AI generation** with a separate API key for each provider.
-The workspace's owning admin pays for generation. Keys are encrypted with the existing server secret;
-they never go to the browser or fall back to environment credentials.
+Reviewed 2026-11-23. Configure **Account → AI generation** with a default model and API key.
+Profiles inherit their admin's current account settings unless an admin saves a model and separate key
+in **Dashboard → a profile → AI settings → Set profile override**. Generation uses the effective settings
+for resumes, cover letters, eligibility checks, and application answers, including requests from bidders.
+Account changes affect inherited profiles only. **Use account defaults** clears the profile override and
+its keys. Model and key always come from the same configuration. Its creating admin and super admins may
+manage a profile's settings; bidders and bidder managers cannot access them. Keys are encrypted with the
+existing server secret and never returned to the browser. Environment keys are never used.
 
 ## Endpoints and authentication
 
@@ -68,9 +73,13 @@ References: [Gemini thinking and limits](https://aistudio.google.com/docs/thinki
 
 Apply `npm run prisma:deploy` from `backend`, regenerate Prisma, then build/restart the backend and
 frontend. PostgreSQL and legacy SQLite migrations preserve existing keys, model selection and prompt.
+The `20261123010000_profile_ai_settings` migration creates empty override storage, leaving account
+settings intact. Existing and new profiles use account defaults until explicitly customized. Override
+keys bind encryption to the profile and provider. Reassigning a profile to another bidder does not
+change its override or owning admin's defaults. Account-level base resume prompts remain on Account.
 On Windows, stop the local backend before regenerating Prisma if it holds the engine DLL open.
 
-`npm run check:ai -- <admin-email-or-id>` checks the saved model's availability without generating
+`npm run check:ai -- <workspace-id>` checks the profile's effective model availability without generating
 text. `npm run test:ai-settings` verifies migrations and authenticated settings using a disposable
 PostgreSQL schema. Native provider request tests use recorded response shapes and mocked network
 calls; live generation still requires a valid paid/account-enabled provider key.

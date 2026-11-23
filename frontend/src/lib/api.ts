@@ -111,11 +111,19 @@ export const api = {
   extensionRelease: () => request<import('./types').ExtensionRelease>('/extension-release'),
   updateExtensionRelease: (data: { download_url: string }) =>
     request<import('./types').ExtensionRelease>('/extension-release', { method: 'PATCH', body: JSON.stringify(data) }),
+  resumePromptSettings: () => request<import('./ai-types').ResumePromptSettings>('/ai-settings'),
   aiSettings: () => request<import('./ai-types').AiSettings>('/ai-settings'),
   updateAiSettings: (data: {
     provider: import('./ai-types').AiProvider; model: string; api_key?: string; remove_api_key?: boolean;
   }) => request<import('./ai-types').AiSettings>('/ai-settings', { method: 'PATCH', body: JSON.stringify(data) }),
-  updateResumePrompt: (resume_prompt: string | null) => request<import('./ai-types').AiSettings>(
+  profileAiSettings: (workspaceId: string) => request<import('./ai-types').ProfileAiSettings>(`/workspaces/${encodeURIComponent(workspaceId)}/ai-settings`),
+  updateProfileAiSettings: (workspaceId: string, data: {
+    provider: import('./ai-types').AiProvider; model: string; api_key?: string; remove_api_key?: boolean;
+  }) => request<import('./ai-types').ProfileAiSettings>(`/workspaces/${encodeURIComponent(workspaceId)}/ai-settings`, { method: 'PATCH', body: JSON.stringify(data) }),
+  resetProfileAiSettings: (workspaceId: string) => request<import('./ai-types').ProfileAiSettings>(
+    `/workspaces/${encodeURIComponent(workspaceId)}/ai-settings`, { method: 'DELETE' },
+  ),
+  updateResumePrompt: (resume_prompt: string | null) => request<import('./ai-types').ResumePromptSettings>(
     '/ai-settings/resume-prompt', { method: 'PATCH', body: JSON.stringify({ resume_prompt }) },
   ),
   // ---- auth ----

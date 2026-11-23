@@ -232,16 +232,27 @@ cd frontend && npm run typecheck && npm run build
 After building the backend, `cd backend && npm run test:company-cooldown` verifies simultaneous
 company submissions against PostgreSQL. It creates and removes an isolated schema for its fixtures.
 
-For resume-generation connection errors, run `cd backend && npm run check:ai -- <admin-email-or-id>`
-on the API server after building. It checks that admin's saved key and model access without generating
-text or displaying the key. Each admin must configure **Account → AI generation**, choosing OpenAI,
-DeepSeek, Gemini (Google), or Claude (Anthropic), compare token prices, and save that provider's API key.
-These settings apply to workspaces created by that admin, including generation by their bidders.
-Keys are encrypted on the server and never returned to the browser; each provider keeps its own key.
+For resume-generation connection errors, run `cd backend && npm run check:ai -- <workspace-id>`
+on the API server after building. It checks the profile's effective key and model access without generating
+text or displaying the key. Admins configure their defaults in **Account → AI generation**, choosing
+OpenAI, DeepSeek, Gemini (Google), or Claude (Anthropic), compare prices, and save the provider's API key.
+Profiles without an override use their creating admin's current account model and key, including generation
+by assigned bidders. Account changes automatically apply to those profiles.
+
+For a special configuration, open **Dashboard → a profile → AI settings → Set profile override** and save
+a model with a separate API key. The override uses its own model/key together; it never borrows an account
+key. Account changes do not affect overridden profiles. **Use account defaults** removes that profile's
+saved override and provider keys and resumes inheritance. Only its creating admin or a super admin can
+manage the override; bidders and bidder managers cannot view or edit AI settings.
+Keys are encrypted on the server and never returned to the browser.
 Set a stable `AI_SETTINGS_ENCRYPTION_KEY` (32+ characters), or the server uses `JWT_SECRET`.
 Rotating that secret requires re-entering saved keys. Provider keys are never read from `.env` or other
-environment variables. Removing a saved key disables generation with that provider until the admin
-saves a replacement. No admin can use another admin's credentials.
+environment variables. Removing an account key disables generation for profiles inheriting that provider
+until the admin saves a replacement. Profiles with their own override continue using their own key.
+
+Apply `20261123010000_profile_ai_settings` before starting the updated backend. It adds storage for
+explicit profile overrides and leaves existing account settings unchanged. Existing and new profiles
+inherit account defaults until an override is saved. Account-level resume prompt editing remains available.
 
 Admins can also edit **Account → Base resume generation prompt**. The editor starts with the original
 full prompt and applies saved changes to new resumes and cover letters for that admin's profiles.

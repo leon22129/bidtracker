@@ -5,6 +5,7 @@ import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 import { isAdmin, roleLabel } from '@/lib/permissions';
 import { useToast } from '@/components/ui/toast';
+import { AccountResumePrompt } from '@/components/account-resume-prompt';
 import { AiSettingsForm } from '@/components/ai-settings-form';
 import { ThemeSettings } from '@/components/theme-settings';
 
@@ -111,7 +112,7 @@ export default function AccountPage() {
 
       <ThemeSettings />
 
-      {isAdmin(user) && <AiSettingsForm />}
+      {isAdmin(user) && <><AiSettingsForm /><AccountResumePrompt /></>}
 
         <form onSubmit={saveSlack} className="card mt-5 space-y-3 p-4">
           <div>

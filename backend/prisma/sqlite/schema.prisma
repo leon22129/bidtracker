@@ -63,6 +63,7 @@ model User {
 // The owner controls the current assignment. Payment attribution is immutable on each application.
 // ---------------------------------------------------------------------------
 model Workspace {
+  aiSettings         ProfileAiSettings?
   id                 String   @id @default(cuid())
   name               String   @unique
   owner_user_id      String
@@ -170,6 +171,7 @@ model ResumeConversation {
   draft ApplicationDraft?
 }
 
+// Account-wide model/key defaults and resume prompt.
 model AiSettings {
   resume_prompt String?
   admin_id String @id
@@ -183,6 +185,22 @@ model AiSettings {
   admin User @relation(fields: [admin_id], references: [id], onDelete: Cascade)
 
   @@map("ai_settings")
+}
+
+// Optional profile override. Without a row, the workspace inherits its admin's account defaults.
+model ProfileAiSettings {
+  workspace_id String @id
+  provider String @default("openai")
+  model String @default("gpt-6.1-sol")
+  openai_key String?
+  deepseek_key String?
+  gemini_key String?
+  claude_key String?
+  legacy_admin_id String?
+  updated_at DateTime @updatedAt
+  workspace Workspace @relation(fields: [workspace_id], references: [id], onDelete: Cascade)
+
+  @@map("profile_ai_settings")
 }
 
 // ---------------------------------------------------------------------------
