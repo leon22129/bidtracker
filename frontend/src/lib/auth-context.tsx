@@ -1,7 +1,7 @@
 'use client';
 
 import {
-  createContext, useCallback, useContext, useEffect, useMemo, useState,
+  createContext, useCallback, useContext, useEffect, useMemo, useRef, useState,
 } from 'react';
 import { useRouter } from 'next/navigation';
 import { api, tokenStore } from './api';
@@ -20,21 +20,25 @@ const AuthContext = createContext<AuthState | null>(null);
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+  const sessionGeneration = useRef(0);
   const router = useRouter();
 
   const refresh = useCallback(async () => {
-    if (!tokenStore.get()) {
+    const generation = ++sessionGeneration.current;
+    const token = tokenStore.get();
+    if (!token) {
       setUser(null);
       setLoading(false);
       return;
     }
     try {
-      setUser(await api.me());
+      const currentUser = await api.me();
+      if (generation === sessionGeneration.current && tokenStore.get() === token) setUser(currentUser);
     } catch {
       // api.ts already cleared the token and redirected on a 401.
-      setUser(null);
+      if (generation === sessionGeneration.current && (!tokenStore.get() || tokenStore.get() === token)) setUser(null);
     } finally {
-      setLoading(false);
+      if (generation === sessionGeneration.current) setLoading(false);
     }
   }, []);
 
@@ -43,14 +47,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [refresh]);
 
   const login = useCallback(async (email: string, password: string) => {
-    const { access_token, user: loggedIn } = await api.login(email, password);
-    tokenStore.set(access_token);
-    setUser(loggedIn);
+    const generation = ++sessionGeneration.current;
+    try {
+      const { access_token, user: loggedIn } = await api.login(email, password);
+      if (generation !== sessionGeneration.current) return;
+      tokenStore.set(access_token);
+      setUser(loggedIn);
+    } finally {
+      if (generation === sessionGeneration.current) setLoading(false);
+    }
   }, []);
 
   const logout = useCallback(() => {
+    sessionGeneration.current++;
     tokenStore.clear();
     setUser(null);
+    setLoading(false);
     router.push('/login');
   }, [router]);
 

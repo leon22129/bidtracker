@@ -41,11 +41,100 @@ describe('OpenAI request recovery', () => {
         referenceContext: 'Resume and job', reasoningEffort: 'low', maxOutputTokens: 4096 })).resolves.toBe('Answer');
       const [url, request] = fetchMock.mock.calls[0];
       expect(url).toBe('https://api.openai.com/v1/responses');
-      expect(request.headers.Authorization).toBe('Bearer test-key');
+      const headers = new Headers(request.headers);
+      expect(headers.get('authorization')).toBe('Bearer test-key');
+      expect(headers.get('x-stainless-package-version')).toBeTruthy();
+      expect(headers.get('x-stainless-retry-count')).toBe('0');
       expect(JSON.parse(request.body)).toMatchObject({ model, reasoning: { effort: 'low' }, max_output_tokens: 4096,
         input: [{ role: 'user', content: 'Resume and job' }, { role: 'user', content: 'Why this role?' }], store: false });
     },
   );
+
+  it('keeps the saved OpenAI credentials and endpoint isolated from SDK environment defaults', async () => {
+    const ambient = {
+      OPENAI_API_KEY: 'ambient-key', OPENAI_ADMIN_KEY: 'ambient-admin-key',
+      OPENAI_BASE_URL: 'https://unused.invalid/v1', OPENAI_ORG_ID: 'ambient-org', OPENAI_PROJECT_ID: 'ambient-project',
+      OPENAI_CUSTOM_HEADERS: 'Authorization: Bearer ambient-header-key\nOpenAI-Organization: ambient-header-org\nOpenAI-Project: ambient-header-project',
+    };
+    const previous = Object.fromEntries(Object.keys(ambient).map((key) => [key, process.env[key]]));
+    Object.assign(process.env, ambient);
+    try {
+      fetchMock.mockResolvedValueOnce(stream({ status: 'completed', output_text: 'Answer' }, 'response.completed'));
+      await expect(generate('Question')).resolves.toBe('Answer');
+      const [url, request] = fetchMock.mock.calls[0];
+      expect(url).toBe('https://api.openai.com/v1/responses');
+      const headers = new Headers(request.headers);
+      expect(headers.get('authorization')).toBe('Bearer test-key');
+      expect(headers.has('openai-organization')).toBe(false);
+      expect(headers.has('openai-project')).toBe(false);
+      await expect(generate('Question', { config: { ...config, apiKey: '' } })).rejects.toThrow('configure an API key');
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    } finally {
+      for (const [key, value] of Object.entries(previous)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
+  });
+
+  it('continues legacy OpenAI conversations and reads a single page of their history through the SDK', async () => {
+    fetchMock.mockResolvedValueOnce(stream({ status: 'completed', output_text: 'Answer' }, 'response.completed'))
+      .mockResolvedValueOnce(json({ data: [{ id: 'msg_answer' }], has_more: true }));
+    await expect(generate('Follow-up', { conversationId: 'conv_legacy' })).resolves.toBe('Answer');
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(body.conversation).toBe('conv_legacy');
+    expect(body).not.toHaveProperty('store');
+    await expect((service as any).requestProvider('/conversations/conv_legacy/items?order=desc&limit=100',
+      undefined, 'GET', 'conversation_history', config)).resolves.toMatchObject({ data: [{ id: 'msg_answer' }] });
+    const [url, request] = fetchMock.mock.calls[1];
+    const endpoint = new URL(url);
+    expect(endpoint.pathname).toBe('/v1/conversations/conv_legacy/items');
+    expect(endpoint.searchParams.get('order')).toBe('desc');
+    expect(endpoint.searchParams.get('limit')).toBe('100');
+    expect(request.method).toBe('GET');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('preserves the provider request ID and cached token accounting through the SDK', async () => {
+    const response = stream({ id: 'resp_usage', status: 'completed', output_text: 'Answer',
+      usage: { input_tokens: 1200, input_tokens_details: { cached_tokens: 1024 }, output_tokens: 20 } }, 'response.completed');
+    response.headers.set('x-request-id', 'req_usage');
+    fetchMock.mockResolvedValueOnce(response);
+    await generate('Question');
+    const events = (service as any).logger.log.mock.calls.map(([entry]: [string]) => JSON.parse(entry));
+    expect(events).toContainEqual(expect.objectContaining({ provider_request_id: 'req_usage', response_id: 'resp_usage',
+      cached_input_tokens: 1024, uncached_input_tokens: 176, output_tokens: 20 }));
+  });
+
+  it('preserves timeout reporting and the three-attempt limit with SDK retries disabled', async () => {
+    fetchMock.mockImplementation((_url, options) => new Promise((_resolve, reject) => {
+      options.signal.addEventListener('abort', () => reject(Object.assign(new Error('Aborted'), { name: 'AbortError' })), { once: true });
+    }));
+    const result = expect(generate('Question')).rejects.toThrow('took too long');
+    await jest.advanceTimersByTimeAsync(400_000);
+    await result;
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it('keeps the request deadline active while reading a stalled SDK response stream', async () => {
+    jest.spyOn(AbortSignal, 'timeout').mockImplementation((delay) => {
+      const controller = new AbortController();
+      setTimeout(() => controller.abort(), delay);
+      return controller.signal;
+    });
+    fetchMock.mockImplementation(async (_url, options) => new Response(new ReadableStream({
+      start(controller) {
+        options.signal.addEventListener('abort', () => controller.error(new DOMException('Aborted', 'AbortError')), { once: true });
+      },
+    }), { headers: { 'content-type': 'text/event-stream' } }));
+    const result = expect(generate('Question')).rejects.toThrow('took too long');
+    await jest.advanceTimersByTimeAsync(400_000);
+    await result;
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(JSON.parse((service as any).logger.error.mock.calls[0][0])).toMatchObject({
+      failure_type: 'stream', error_message: expect.stringContaining('timed out'),
+    });
+  });
 
   it('routes DeepSeek generation with the saved model and its own key, including local question context', async () => {
     fetchMock.mockResolvedValueOnce(stream({ status: 'completed', output_text: 'Answer' }, 'response.completed'));

@@ -67,6 +67,7 @@ export function useApplications(
     setPages(new Map());
     setTotal(0);
     setError(null);
+    setLoading(false);
   }, []);
 
   useEffect(() => {
@@ -121,8 +122,10 @@ export function useApplications(
           setError(err instanceof Error ? err.message : 'Failed to load applications');
         }
       } finally {
-        inFlight.current.delete(pageIndex);
-        if (inFlight.current.size === 0) setLoading(false);
+        if (gen === generation.current) {
+          inFlight.current.delete(pageIndex);
+          if (inFlight.current.size === 0) setLoading(false);
+        }
       }
     },
     [workspaceId, filters],

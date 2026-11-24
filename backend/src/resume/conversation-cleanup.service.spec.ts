@@ -41,8 +41,11 @@ describe('ConversationCleanupService', () => {
     }));
     expect(fetch).toHaveBeenLastCalledWith(
       'https://api.openai.com/v1/conversations/conv-1',
-      expect.objectContaining({ method: 'DELETE', headers: { Authorization: 'Bearer saved-admin-key' } }),
+      expect.objectContaining({ method: 'DELETE' }),
     );
+    const headers = new Headers((fetch as jest.Mock).mock.calls[3][1].headers);
+    expect(headers.get('authorization')).toBe('Bearer saved-admin-key');
+    expect(headers.get('x-stainless-package-version')).toBeTruthy();
     expect(fetch).toHaveBeenCalledWith(
       'https://api.openai.com/v1/conversations/conv-1/items/item-1',
       expect.objectContaining({ method: 'DELETE' }),
@@ -69,6 +72,20 @@ describe('ConversationCleanupService', () => {
       ServiceUnavailableException,
     );
     expect(prisma.resumeConversation.deleteMany).not.toHaveBeenCalled();
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('removes the local mapping when the SDK reports that the remote conversation is already gone', async () => {
+    const prisma = { resumeConversation: {
+      findMany: jest.fn().mockResolvedValue([{ id: 'local-1', openai_conversation_id: 'conv-1', workspace_id: 'workspace-1' }]),
+      deleteMany: jest.fn().mockResolvedValue({ count: 1 }),
+    } };
+    const request = jest.spyOn(globalThis, 'fetch').mockResolvedValueOnce(new Response(
+      JSON.stringify({ error: { message: 'Conversation not found' } }), { status: 404 },
+    ));
+    await expect(new ConversationCleanupService(prisma as any, aiSettings as any).deleteForWorkspaceOrThrow('workspace-1')).resolves.toBe(1);
+    expect(request).toHaveBeenCalledTimes(1);
+    expect(prisma.resumeConversation.deleteMany).toHaveBeenCalledWith({ where: { id: { in: ['local-1'] } } });
   });
 
   it('cleans local question context without a provider key or network request', async () => {

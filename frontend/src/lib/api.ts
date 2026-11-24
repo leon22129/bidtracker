@@ -39,6 +39,18 @@ export const tokenStore = {
   },
 };
 
+function rejectExpiredSession(status: number, sentToken: string | null) {
+  if (status !== 401) return;
+  // An old request must not sign out a session established while it was in flight.
+  if (tokenStore.get() === sentToken) {
+    tokenStore.clear();
+    if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/login')) {
+      window.location.href = `/login?next=${encodeURIComponent(window.location.pathname)}`;
+    }
+  }
+  throw new ApiError('Your session has expired. Please sign in again.', 401);
+}
+
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const token = tokenStore.get();
   const isFormData = init.body instanceof FormData;
@@ -53,15 +65,8 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     cache: 'no-store',
   });
 
-  if (res.status === 401) {
-    // The token is gone or the account was deactivated: drop it and bounce to login. Doing this
-    // centrally means no page has to handle expiry itself.
-    tokenStore.clear();
-    if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/login')) {
-      window.location.href = `/login?next=${encodeURIComponent(window.location.pathname)}`;
-    }
-    throw new ApiError('Your session has expired. Please sign in again.', 401);
-  }
+  // Failed sign-in is a credential error, not evidence that the current session has expired.
+  if (path !== '/auth/login') rejectExpiredSession(res.status, token);
 
   if (!res.ok) {
     let body: any = null;
@@ -86,6 +91,7 @@ async function requestBlob(path: string): Promise<Blob> {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
     cache: 'no-store',
   });
+  rejectExpiredSession(res.status, token);
   if (!res.ok) {
     const body = await res.json().catch(() => null);
     throw new ApiError(body?.message ?? `Request failed (${res.status})`, res.status, body);

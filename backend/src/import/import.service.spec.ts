@@ -79,6 +79,20 @@ describe('ImportService missing company/title warnings', () => {
     );
   });
 
+  it('skips impossible spreadsheet dates instead of saving rows in a different month', async () => {
+    const { service, applications } = setup();
+    const result = await service.import(user, 'workspace-1', { ...file, buffer: Buffer.from([
+      'URL,Company Name,Job Title,Date',
+      'https://example.com/jobs/invalid,Acme,Engineer,2/31/2026',
+      'https://example.com/jobs/valid,Other,Designer,2/28/2026',
+    ].join('\n')) });
+    expect(result.created).toBe(1);
+    expect(result.skipped).toContainEqual({ row: 2, reason: 'Unrecognised date "2/31/2026"' });
+    expect(applications.insertChunked).toHaveBeenCalledWith([
+      expect.objectContaining({ url: 'https://example.com/jobs/valid', date: new Date('2026-02-28T00:00:00Z') }),
+    ], 'workspace-1', expect.anything());
+  });
+
   it('imports an Excel workbook through the same validated path', async () => {
     const workbook = new ExcelJS.Workbook();
     const sheet = workbook.addWorksheet('Applications');

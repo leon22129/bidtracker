@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { useAuth } from '@/lib/auth-context';
 import { BrandIcon } from '@/components/brand-icon';
 import { ThemeToggle } from '@/components/theme-toggle';
+import { loginRedirectTarget } from '@/lib/login-redirect';
 
 /**
  * `useSearchParams` opts a route out of static prerendering unless it sits inside a Suspense boundary,
@@ -44,7 +45,7 @@ function LoginForm() {
   const { user, loading, login } = useAuth();
   const router = useRouter();
   const params = useSearchParams();
-  const next = params.get('next') || '/workspaces';
+  const next = loginRedirectTarget(params.get('next'));
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');

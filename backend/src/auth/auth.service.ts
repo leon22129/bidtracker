@@ -1,6 +1,6 @@
 import { BadRequestException, ForbiddenException, Injectable, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
-import * as bcrypt from 'bcryptjs';
+import bcrypt from 'bcryptjs';
 import { PrismaService } from '../prisma/prisma.service';
 import { ChangePasswordDto, LoginDto, UpdateSlackSettingsDto } from './dto/auth.dto';
 import { Role } from '../common/constants';
@@ -32,10 +32,9 @@ export class AuthService {
       await bcrypt.compare(dto.password, '$2a$10$invalidinvalidinvalidinvalidinvalidinvalidinvalidinva');
       throw invalid;
     }
-    if (!user.is_active) throw new UnauthorizedException('This account has been deactivated');
-
     const ok = await bcrypt.compare(dto.password, user.password_hash);
     if (!ok) throw invalid;
+    if (!user.is_active) throw new UnauthorizedException('This account has been deactivated');
 
     return {
       access_token: await this.signToken(user),
@@ -54,7 +53,7 @@ export class AuthService {
     if (!user) throw new UnauthorizedException();
 
     const ok = await bcrypt.compare(dto.current_password, user.password_hash);
-    if (!ok) throw new UnauthorizedException('Current password is incorrect');
+    if (!ok) throw new BadRequestException('Current password is incorrect');
 
     await this.prisma.user.update({
       where: { id: userId },

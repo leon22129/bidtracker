@@ -72,7 +72,7 @@ async function main() {
       is_us_job: true, work_arrangement_is_remote_only: true, requires_in_person_interview: false, requires_onsite_onboarding: false,
     });
     if (options.operation === 'resume_generation') return JSON.stringify({
-      summary: 'Prepared resume', skills: ['TypeScript'], workexperience: [],
+      main_title: 'Software Engineer', summary: 'Prepared resume', skills: ['TypeScript'], workexperience: [],
       annual_salary: '$150,000', hourly_rate: '$72.12', rate_in_jd: false,
     });
     if (options.operation === 'application_answers') return JSON.stringify({ answers: [{

@@ -3,6 +3,7 @@ import { Cron } from '@nestjs/schedule';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AiSettingsService } from '../ai/ai-settings.service';
+import { OpenAiSdk } from '../ai/providers/openai-sdk';
 
 const OPENAI_API_BASE = 'https://api.openai.com/v1';
 const CLEANUP_LOCK_ID = 734927451012345679n;
@@ -16,6 +17,7 @@ function retentionDays() {
 @Injectable()
 export class ConversationCleanupService {
   private readonly logger = new Logger(ConversationCleanupService.name);
+  private readonly openAiSdk = new OpenAiSdk();
 
   constructor(private readonly prisma: PrismaService, private readonly aiSettings: AiSettingsService) {}
 
@@ -101,12 +103,12 @@ export class ConversationCleanupService {
   /** The conversation DELETE endpoint does not delete its items, so purge items first. */
   private async purgeProviderConversation(conversationId: string, apiKey: string) {
     const encodedConversationId = encodeURIComponent(conversationId);
-    const headers = { Authorization: `Bearer ${apiKey}` };
+    const credentials = { apiKey, baseUrl: OPENAI_API_BASE };
 
     while (true) {
-      const listResponse = await fetch(
-        `${OPENAI_API_BASE}/conversations/${encodedConversationId}/items?limit=100`,
-        { headers, signal: AbortSignal.timeout(15_000) },
+      const listResponse = await this.openAiSdk.request(
+        `/conversations/${encodedConversationId}/items?limit=100`,
+        undefined, 'GET', credentials, 15_000,
       );
       if (listResponse.status === 404) return;
       if (!listResponse.ok) throw new Error(`item listing returned ${listResponse.status}`);
@@ -121,9 +123,9 @@ export class ConversationCleanupService {
       if (!itemIds.length) break;
 
       await mapWithConcurrency(itemIds, 10, async (itemId) => {
-        const response = await fetch(
-          `${OPENAI_API_BASE}/conversations/${encodedConversationId}/items/${encodeURIComponent(itemId)}`,
-          { method: 'DELETE', headers, signal: AbortSignal.timeout(15_000) },
+        const response = await this.openAiSdk.request(
+          `/conversations/${encodedConversationId}/items/${encodeURIComponent(itemId)}`,
+          undefined, 'DELETE', credentials, 15_000,
         );
         if (!response.ok && response.status !== 404) {
           throw new Error(`item deletion returned ${response.status}`);
@@ -131,11 +133,9 @@ export class ConversationCleanupService {
       });
     }
 
-    const response = await fetch(`${OPENAI_API_BASE}/conversations/${encodedConversationId}`, {
-      method: 'DELETE',
-      headers,
-      signal: AbortSignal.timeout(15_000),
-    });
+    const response = await this.openAiSdk.request(
+      `/conversations/${encodedConversationId}`, undefined, 'DELETE', credentials, 15_000,
+    );
     if (!response.ok && response.status !== 404) {
       throw new Error(`conversation deletion returned ${response.status}`);
     }

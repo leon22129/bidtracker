@@ -1,6 +1,6 @@
 "use client"
 
-import { TEMPLATES, type TemplateId } from "@/lib/pdf-templates"
+import { TEMPLATES, type TemplateId } from "@/lib/pdf-templates/types"
 import { cn } from "@/lib/utils"
 import { Check } from "lucide-react"
 

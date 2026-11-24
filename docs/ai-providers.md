@@ -1,4 +1,4 @@
-# Gemini and Claude integration
+# AI provider integration
 
 Reviewed 2026-11-24. Configure **Account → AI generation** with a default model and API key.
 Profiles inherit their admin's current account settings unless an admin saves a model and separate key
@@ -13,8 +13,9 @@ existing server secret and never returned to the browser. Environment keys are n
 
 | Platform | `target_url` (POST) | Authentication |
 | --- | --- | --- |
+| OpenAI API | `https://api.openai.com/v1/responses` | `Authorization: Bearer <API key>` |
 | Gemini Developer API | `https://generativelanguage.googleapis.com/v1beta/models/{model}:streamGenerateContent?alt=sse` | `x-goog-api-key` |
-| Claude API | `https://api.anthropic.com/v1/messages` | `x-api-key`, `anthropic-version: 2023-06-01` |
+| Claude API | `https://api.anthropic.com/v1/messages` | SDK sends `Authorization: Bearer <API key>`, `anthropic-version: 2023-06-01` |
 
 Gemini's JSON equivalent is `.../models/{model}:generateContent`. These integrations use the direct
 provider APIs, rather than Vertex AI or Bedrock credentials. Endpoint URLs are fixed by the server.
@@ -66,6 +67,23 @@ provider's deprecated label. GPT-5.5 prompts above 272,000 input tokens use 2× 
 
 ## Provider behavior
 
+- Resume and cover-letter content share one generation request. A disabled cover-letter setting
+  instructs the model to return an empty letter; unwanted letter text is also excluded from saved results.
+  The backend validates resume field types, career entries and requested cover letters before preparing
+  documents. Local question context is created with the validated resume in one write, after generation
+  succeeds. Rejected jobs and provider failures do not create empty conversation records.
+- Job descriptions with company/title headers skip the separate identity-extraction call. When that
+  call is needed, its token usage is included in the application total alongside eligibility and resume
+  generation. Provider request logs include duration and token counts for measuring actual latency/cost.
+- The extension loads PDF rendering and template code on the first download, keeping it out of startup
+  and settings screens. Resume and cover-letter downloads use the same candidate details from the
+  generated resume, including during automatic downloads.
+- OpenAI generation uses the official `openai` package and `client.responses.create()`. The SDK also
+  handles legacy conversation history and retention cleanup. Version 6 is pinned for the backend's
+  Node 20 runtime. SDK retries are disabled so the application's bounded retry policy applies once.
+  Raw SDK responses retain the existing stream handling, request IDs and usage accounting. New sessions
+  still use local reference context with `store: false`; legacy provider conversations remain supported.
+  Installing the SDK does not change token prices or create a billing discount.
 - Gemini has a shared 1,048,576-token context window; this app caps each streaming response at 65,536
   tokens and does not use long decode. Claude's listed models have 1M context and 128K maximum output,
   except Haiku 4.5, which has 200K context and 64K maximum output.
@@ -78,6 +96,19 @@ provider's deprecated label. GPT-5.5 prompts above 272,000 input tokens use 2× 
 - Gemini uses implicit caching. Claude marks reusable reference context with a five-minute cache
   breakpoint; writes are billed separately from ordinary input and cache hits. Discounts require
   qualifying prompt lengths and reuse; they are not guaranteed.
+- Claude generation uses the official `@anthropic-ai/sdk`. Application-question follow-ups use its
+  message-thread helper with `message-threads-2026-08-12`: the first request creates a thread, and later
+  requests send the latest response ID and new questions. Top-level prompt caching is enabled on each
+  turn. IDs reduce repeated uploads; cached input tokens produce billing savings, and SDK usage fields
+  continue to report cache reads and writes separately. Existing saved answers still avoid repeat API calls.
+- Threads are isolated by application, API key, endpoint, model, candidate facts, reference material,
+  instructions and thinking configuration. Concurrent turns are serialized. The SDK replays its local
+  history if a remote thread expires and can fall back to ordinary cached messages if threads are
+  unsupported. Refused, interrupted or exhausted turns are discarded before another generation.
+- Thread history stays in process memory, with a five-minute idle lifetime, at most eight successful
+  turns per thread and a 256,000-character history limit. The cache prunes to 64 idle/active entries
+  when possible without evicting active work. After eviction or server restart, a new thread starts
+  from the saved resume/job context and current question. No database migration is needed for threads.
 - Gemini free-tier content can be used for product improvement; use a paid project for candidate data.
   Claude API credits are separate from a chat subscription. API billing, model access, region and
   rate limits must be enabled for the saved account.
@@ -89,8 +120,11 @@ provider's deprecated label. GPT-5.5 prompts above 272,000 input tokens use 2× 
   successful documents. Content logging stays off by default and credentials are redacted.
 
 References: [Gemini thinking and limits](https://aistudio.google.com/docs/thinking?generate-content=true),
+[OpenAI SDK](https://developers.openai.com/api/docs/libraries),
 [Claude thinking](https://platform.claude.com/docs/en/build-with-claude/adaptive-thinking),
 [Claude caching](https://platform.claude.com/docs/en/build-with-claude/prompt-caching),
+[Claude message threads](https://platform.claude.com/docs/en/build-with-claude/message-threads),
+[Anthropic TypeScript SDK](https://platform.claude.com/docs/en/api/sdks/typescript),
 [Claude streaming](https://platform.claude.com/docs/en/build-with-claude/streaming).
 
 ## Installation and checks

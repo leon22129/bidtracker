@@ -1,3 +1,5 @@
+import { BadRequestException } from '@nestjs/common';
+
 /**
  * All dates in this system are UTC-midnight "day buckets".
  *
@@ -10,28 +12,42 @@
 /** Accepts `YYYY-MM-DD`, an ISO datetime, a Date, or an Excel serial-parsed Date. */
 export function toDayStart(input: string | Date): Date {
   if (input instanceof Date) {
-    return new Date(Date.UTC(input.getUTCFullYear(), input.getUTCMonth(), input.getUTCDate()));
+    if (!Number.isFinite(input.getTime())) throw new BadRequestException('Unrecognised date');
+    return calendarDay(input.getUTCFullYear(), input.getUTCMonth() + 1, input.getUTCDate());
   }
   const s = String(input).trim();
 
   const dateOnly = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
   if (dateOnly) {
-    return new Date(Date.UTC(+dateOnly[1], +dateOnly[2] - 1, +dateOnly[3]));
+    return calendarDay(+dateOnly[1], +dateOnly[2], +dateOnly[3]);
   }
 
   // US-style M/D/YYYY, common in exported spreadsheets.
   const us = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(s);
   if (us) {
-    return new Date(Date.UTC(+us[3], +us[1] - 1, +us[2]));
+    return calendarDay(+us[3], +us[1], +us[2]);
   }
 
+  // Date.parse also rolls invalid ISO calendar dates forward before applying the time-zone offset.
+  const isoDay = /^(\d{4})-(\d{2})-(\d{2})(?:T|\s)/i.exec(s);
+  if (isoDay) calendarDay(+isoDay[1], +isoDay[2], +isoDay[3]);
+  const usDay = /^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:T|\s)/i.exec(s);
+  if (usDay) calendarDay(+usDay[3], +usDay[1], +usDay[2]);
   const parsed = new Date(s);
   if (Number.isNaN(parsed.getTime())) {
-    throw new Error(`Unrecognised date: "${s}"`);
+    throw new BadRequestException(`Unrecognised date: "${s}"`);
   }
-  return new Date(
-    Date.UTC(parsed.getUTCFullYear(), parsed.getUTCMonth(), parsed.getUTCDate()),
-  );
+  return calendarDay(parsed.getUTCFullYear(), parsed.getUTCMonth() + 1, parsed.getUTCDate());
+}
+
+function calendarDay(year: number, month: number, day: number): Date {
+  const result = new Date(0);
+  // setUTCFullYear preserves years 0000-0099, unlike Date.UTC's implicit 1900 offset.
+  result.setUTCFullYear(year, month - 1, day);
+  if (result.getUTCFullYear() !== year || result.getUTCMonth() !== month - 1 || result.getUTCDate() !== day) {
+    throw new BadRequestException('Unrecognised date: day or month is outside the calendar');
+  }
+  return result;
 }
 
 export function todayUtc(): Date {

@@ -18,6 +18,12 @@ export const RESUME_OUTPUT_INSTRUCTIONS = `Return valid JSON only, with the foll
   BASE_PROMPT_TEXT.indexOf('## Field Requirements'),
 )}`;
 
+export function resumeOutputInstructions(generateCoverLetter: boolean): string {
+  return `${RESUME_OUTPUT_INSTRUCTIONS}\n\n${generateCoverLetter
+    ? 'Include a complete cover letter in "coverletter". End with a closing salutation but no signer name; the document adds the saved candidate name.'
+    : 'Cover letter generation is disabled for this profile. Set "coverletter" to "". Do not draft a cover letter, even if the writing instructions ask for one.'}`;
+}
+
 export function validateResumePrompt(value: string | null): string | null {
   if (value === null) return null;
   if (typeof value !== 'string' || !value.trim() || value.length > RESUME_PROMPT_MAX_LENGTH) {

@@ -1,3 +1,4 @@
+import { BadRequestException } from '@nestjs/common';
 import {
   endOfWeekSunday,
   formatWeekLabel,
@@ -13,6 +14,19 @@ describe('date.util', () => {
 
   it('parses US spreadsheet dates', () => {
     expect(toDayStart('8/25/2026').toISOString()).toBe('2026-08-25T00:00:00.000Z');
+  });
+
+  it.each(['2026-02-29', '2026-02-31', '2026-04-31', '2026-13-01', '2026-00-10',
+    '2/30/2026', '0/1/2026', '1/0/2026', '2026-02-31T12:00:00Z', '2026-02-31T00:00:00-05:00',
+    '2026-02-31 12:00:00', '2/30/2026 12:00:00',
+    'invalid', new Date(NaN)])('rejects an impossible date instead of moving it to another day: %s', (input) => {
+    expect(() => toDayStart(input)).toThrow(BadRequestException);
+  });
+
+  it('preserves leap days and buckets valid timestamps using their UTC date', () => {
+    expect(toDayStart('2024-02-29').toISOString()).toBe('2024-02-29T00:00:00.000Z');
+    expect(toDayStart('2026-03-01T00:30:00+02:00').toISOString()).toBe('2026-02-28T00:00:00.000Z');
+    expect(toDayStart('0099-01-01').toISOString()).toBe('0099-01-01T00:00:00.000Z');
   });
 
   it('finds Monday for any day of the week', () => {

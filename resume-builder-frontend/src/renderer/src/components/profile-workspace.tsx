@@ -54,16 +54,15 @@ import {
 } from "@/lib/parse-resume";
 import type { AiProfile, ApplicationQuestionInput, GenerateResumeResult } from "../../../shared/ai-profiles";
 import {
-  generateCoverLetterPDF,
   DEFAULT_COVER_LETTER_TEMPLATE,
   type CoverLetterTemplateId,
-} from "@/lib/cover-letter-templates";
+} from "@/lib/cover-letter-templates/types";
+import { generateResumePDF, generateCoverLetterPDF } from "@/lib/generate-pdf";
 import { stripTrailingCoverLetterSigner } from "@/lib/cover-letter-templates/text";
 import {
   DEFAULT_TEMPLATE,
-  generateResumePDF,
   type TemplateId,
-} from "@/lib/pdf-templates";
+} from "@/lib/pdf-templates/types";
 import {
   getFriendlyErrorMessage,
   parseGeneratedResume,
@@ -418,8 +417,6 @@ function ProfileWorkspaceContent({
         return;
       }
       const generatedContent = data.tailored_resume || "";
-
-      console.log(generatedContent);
 
       if (!generatedContent)
         throw new Error("No response received from the selected profile");
@@ -818,7 +815,7 @@ function ProfileWorkspaceContent({
           await generateCoverLetterPDF(
             {
               text: targetCoverLetterText,
-              personalInfo,
+              personalInfo: targetResumeData.personalInfo,
               companyName: targetCompanyName || "",
             },
             coverLetterFilename,
@@ -842,7 +839,7 @@ function ProfileWorkspaceContent({
           await generateCoverLetterPDF(
             {
               text: targetCoverLetterText,
-              personalInfo,
+              personalInfo: targetResumeData.personalInfo,
               companyName: targetCompanyName || "",
             },
             coverLetterFilename,

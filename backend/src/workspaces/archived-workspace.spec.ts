@@ -162,7 +162,8 @@ describe('Archived profile write protection across services', () => {
     if (enabled) context.generateText.mockResolvedValueOnce(JSON.stringify(eligibility));
     context.generateText.mockImplementationOnce(async () => {
       context.workspace.is_archived = true;
-      return JSON.stringify({ summary: 'Tailored summary', annual_salary: '$150,000', hourly_rate: '$72.12' });
+      return JSON.stringify({ main_title: 'Software Engineer', summary: 'Tailored summary', skills: ['TypeScript'], workexperience: [],
+        annual_salary: '$150,000', hourly_rate: '$72.12', rate_in_jd: false });
     });
     await expect(context.generation.generate(user, input)).rejects.toBeInstanceOf(ForbiddenException);
     expect(context.generateText).toHaveBeenCalledTimes(enabled ? 2 : 1);

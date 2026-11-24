@@ -1,7 +1,9 @@
-import { UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, UnauthorizedException } from '@nestjs/common';
+import bcrypt from 'bcryptjs';
 import { AuthService } from './auth.service';
 
 describe('AuthService', () => {
+  const passwordHash = bcrypt.hashSync('correct-password', 4);
   afterEach(() => jest.useRealTimers());
 
   it('allows a bidder to save and clear their own optional Slack ID, but never edit a webhook', async () => {
@@ -27,7 +29,7 @@ describe('AuthService', () => {
           id: 'user-1',
           username: 'inactive',
           email: 'inactive@example.com',
-          password_hash: 'unused',
+          password_hash: passwordHash,
           role: 'bidder',
           is_active: false,
           created_at: new Date(),
@@ -42,6 +44,22 @@ describe('AuthService', () => {
       service.login({ email: 'inactive@example.com', password: 'correct-password' }),
     ).rejects.toEqual(new UnauthorizedException('This account has been deactivated'));
     expect(jwt.signAsync).not.toHaveBeenCalled();
+  });
+
+  it('does not disclose a deactivated account when the password is incorrect', async () => {
+    const prisma = { user: { findUnique: jest.fn().mockResolvedValue({ is_active: false, password_hash: passwordHash }) } };
+    const jwt = { signAsync: jest.fn() };
+    await expect(new AuthService(prisma as any, jwt as any).login({ email: 'inactive@example.com', password: 'wrong' }))
+      .rejects.toEqual(new UnauthorizedException('Invalid email or password'));
+    expect(jwt.signAsync).not.toHaveBeenCalled();
+  });
+
+  it('reports an incorrect current password as a validation error without invalidating the session', async () => {
+    const prisma = { user: { findUnique: jest.fn().mockResolvedValue({ password_hash: passwordHash }), update: jest.fn() } };
+    await expect(new AuthService(prisma as any, {} as any).changeOwnPassword('user-1', {
+      current_password: 'wrong', new_password: 'replacement-password',
+    })).rejects.toEqual(new BadRequestException('Current password is incorrect'));
+    expect(prisma.user.update).not.toHaveBeenCalled();
   });
 
   it('returns only safe Slack configuration for the authenticated admin', async () => {

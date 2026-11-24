@@ -3,7 +3,7 @@ import { ForbiddenException } from '@nestjs/common';
 import { plainToInstance } from 'class-transformer';
 import { validateSync } from 'class-validator';
 import { GenerateApplicationDto, GenerateProfilePromptDto } from './dto/generate.dto';
-import { DEFAULT_RESUME_PROMPT, RESUME_OUTPUT_INSTRUCTIONS } from '../ai/resume-prompt';
+import { DEFAULT_RESUME_PROMPT, resumeOutputInstructions } from '../ai/resume-prompt';
 import { AI_PROVIDERS } from '../ai/ai-catalog';
 import { applicationQuestionId, buildApplicationQuestionsInput, type ApplicationQuestionInput } from './original-prompts';
 
@@ -15,6 +15,12 @@ function providerAnswers(answers: Array<ApplicationQuestionInput & { answer: str
 
 function requestedQuestions(prompt: string): Array<ApplicationQuestionInput & { question_id: string }> {
   return JSON.parse(prompt.match(/Application questions:\s*([\s\S]*?)\n\s*Return valid JSON/)![1]);
+}
+
+function resumeResult(overrides: Record<string, unknown> = {}) {
+  return JSON.stringify({ main_title: 'Software Engineer', summary: 'Tailored summary',
+    skills: [{ category: 'Languages', items: ['TypeScript'] }], workexperience: [],
+    annual_salary: '$150,000', hourly_rate: '$72.12', rate_in_jd: false, coverletter: '', ...overrides });
 }
 
 describe('ApplicationGenerationService application metadata eligibility', () => {
@@ -59,7 +65,7 @@ describe('ApplicationGenerationService application metadata eligibility', () => 
       applicationDraft: { findFirst: jest.fn().mockResolvedValue(null), updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
       resumeConversation: {
         findUnique: jest.fn(),
-        create: jest.fn(),
+        create: jest.fn(async ({ data }) => ({ id: 'conversation-1', ...data })),
         update: jest.fn().mockResolvedValue({}),
       },
       jobApplication: {
@@ -119,10 +125,7 @@ describe('ApplicationGenerationService application metadata eligibility', () => 
     );
     (service as any).logger = { log: jest.fn(), warn: jest.fn(), error: jest.fn() };
     jest.spyOn(service as any, 'extractJobIdentity').mockResolvedValue({ company_name: 'Acme', job_title: 'Software Engineer' });
-    jest.spyOn(service as any, 'createGenerationConversation').mockResolvedValue({
-      id: 'conversation-1',
-      openai_conversation_id: 'conv_openai_1',
-    });
+    jest.spyOn(service as any, 'createGenerationConversation');
     return { service, duplicates, prisma, access, applications, bannedUrls, drafts, aiSettings };
   }
 
@@ -150,9 +153,7 @@ describe('ApplicationGenerationService application metadata eligibility', () => 
     const { service, drafts, prisma } = setup(false);
     const actor = { ...user, role };
     const jobDescription = 'Acme is hiring a Software Engineer onsite in Canada. Clearance and onsite onboarding required.';
-    const generateText = jest.spyOn(service as any, 'generateText').mockResolvedValue(JSON.stringify({
-      summary: 'Generated resume', annual_salary: '$150,000', hourly_rate: '$72.12',
-    }));
+    const generateText = jest.spyOn(service as any, 'generateText').mockResolvedValue(resumeResult({ summary: 'Generated resume' }));
 
     await expect(service.generate(actor, { ...dto, mode, job_description: jobDescription,
       url: mode === 'manual' ? undefined : dto.url })).resolves.toMatchObject({
@@ -182,7 +183,7 @@ describe('ApplicationGenerationService application metadata eligibility', () => 
     (service as any).extractJobIdentity.mockRestore();
     const generateText = jest.spyOn(service as any, 'generateText')
       .mockResolvedValueOnce(JSON.stringify({ company_name: 'Acme', job_title: 'Software Engineer' }))
-      .mockResolvedValueOnce(JSON.stringify({ summary: 'Resume', annual_salary: '$150,000', hourly_rate: '$72.12' }));
+      .mockResolvedValueOnce(resumeResult({ summary: 'Resume' }));
     await expect(service.generate(user, dto)).resolves.toMatchObject({ success: true, eligibility_skipped: true });
     expect(generateText.mock.calls.map(([, options]: any[]) => options.operation)).toEqual(['job_identity', 'resume_generation']);
   });
@@ -262,7 +263,7 @@ describe('ApplicationGenerationService application metadata eligibility', () => 
       generateText.mockResolvedValueOnce(eligible());
       if (failure === 'provider') generateText.mockRejectedValueOnce(new Error('Provider unavailable'));
       else {
-        generateText.mockResolvedValueOnce(JSON.stringify({ summary: 'Resume', annual_salary: '$150,000', hourly_rate: '$72.12' }));
+        generateText.mockResolvedValueOnce(resumeResult({ summary: 'Resume' }));
         drafts.prepare.mockRejectedValueOnce(new Error('Could not save'));
       }
       await expect(service.generate(user, dto)).rejects.toThrow();
@@ -290,7 +291,7 @@ describe('ApplicationGenerationService application metadata eligibility', () => 
     jest.spyOn(service as any, 'generateText')
       .mockResolvedValueOnce(eligible({ requires_clearance: true, requires_public_trust: true, is_us_job: false,
         work_arrangement_is_remote_only: false, requires_in_person_interview: true, requires_onsite_onboarding: true }))
-      .mockResolvedValueOnce(JSON.stringify({ summary: 'Continued resume', annual_salary: '$150,000', hourly_rate: '$72.12' }));
+      .mockResolvedValueOnce(resumeResult({ summary: 'Continued resume' }));
     await expect(service.generate(actor, { ...dto, mode, url: mode === 'manual' ? undefined : dto.url,
       continue_after_eligibility_failure: true })).resolves.toMatchObject({ success: true, draft: { id: 'draft-1' } });
     expect(drafts.prepare).toHaveBeenCalledTimes(1);
@@ -356,17 +357,99 @@ describe('ApplicationGenerationService application metadata eligibility', () => 
     }
   });
 
-  it('creates a local session before eligibility without a provider conversation request', async () => {
+  it('does not request, return or save unwanted cover-letter content', async () => {
+    const { service, drafts } = setup(false);
+    const generateText = jest.spyOn(service as any, 'generateText').mockResolvedValue(resumeResult({ coverletter: 'Unwanted letter' }));
+    await expect(service.generate(user, dto)).resolves.toMatchObject({ success: true, resume: { coverletter: '' } });
+    expect(generateText).toHaveBeenCalledTimes(1);
+    expect(generateText.mock.calls[0][1]).toMatchObject({ instructions: expect.stringContaining('Set "coverletter" to ""') });
+    expect(drafts.prepare.mock.calls[0][1].cover_letter_text).toBeUndefined();
+  });
+
+  it('requires the requested cover letter before saving the resume', async () => {
+    const { service, prisma, drafts } = setup(false);
+    Object.assign((await prisma.workspace.findUnique()).resumeProfile, { generate_cover_letter: true });
+    jest.spyOn(service as any, 'generateText').mockResolvedValue(resumeResult());
+    await expect(service.generate(user, dto)).rejects.toThrow('requested cover letter');
+    expect(prisma.resumeConversation.create).not.toHaveBeenCalled();
+    expect(drafts.prepare).not.toHaveBeenCalled();
+    expect(drafts.releaseGeneration).toHaveBeenCalledWith('reservation-1');
+  });
+
+  it.each([
+    { main_title: { text: 'Engineer' } }, { summary: ' ' }, { rate_in_jd: 'false' },
+    { skills: '["TypeScript"]' }, { skills: [{ category: 'Languages', items: [{}] }] },
+    { workexperience: [null] },
+    { workexperience: [{ companyname: 'Previous employer', role: 'Engineer', duration: '2020 - 2024', experience: [{ text: 'Built software' }] }] },
+  ])('rejects malformed resume fields before creating artifacts: %j', async (invalid) => {
+    const { service, prisma, drafts } = setup(false);
+    const generateText = jest.spyOn(service as any, 'generateText').mockResolvedValue(resumeResult(invalid));
+    await expect(service.generate(user, dto)).rejects.toThrow('incomplete or invalid resume');
+    expect(generateText).toHaveBeenCalledTimes(1);
+    expect(prisma.resumeConversation.create).not.toHaveBeenCalled();
+    expect(drafts.prepare).not.toHaveBeenCalled();
+    expect(drafts.releaseGeneration).toHaveBeenCalledWith('reservation-1');
+  });
+
+  it('rejects an omitted career history and missing original titles when tailoring is disabled', async () => {
+    const { service, prisma, drafts } = setup(false);
+    Object.assign((await prisma.workspace.findUnique()).resumeProfile, {
+      career_path: 'Previous employer: Engineer, 2020 - 2024', use_generated_role_titles: false,
+    });
+    const generateText = jest.spyOn(service as any, 'generateText').mockResolvedValueOnce(resumeResult())
+      .mockResolvedValueOnce(resumeResult({ workexperience: [{ companyname: 'Previous employer', role: 'Tailored title',
+        duration: '2020 - 2024', experience: ['Built software.'] }] }));
+    await expect(service.generate(user, dto)).rejects.toThrow('incomplete or invalid resume');
+    await expect(service.generate(user, dto)).rejects.toThrow('incomplete or invalid resume');
+    expect(generateText).toHaveBeenCalledTimes(2);
+    expect(drafts.prepare).not.toHaveBeenCalled();
+  });
+
+  it('includes the identity extraction call in total application usage', async () => {
+    const { service } = setup();
+    (service as any).extractJobIdentity.mockRestore();
+    jest.spyOn(service as any, 'generateText').mockImplementation(async (_prompt, rawOptions) => {
+      const options = rawOptions as any;
+      const input = options.operation === 'job_identity' ? 100 : options.operation === 'job_eligibility' ? 200 : 300;
+      options.onUsage({ input_tokens: input, output_tokens: input / 10 });
+      return options.operation === 'job_identity' ? JSON.stringify({ company_name: 'Acme', job_title: 'Engineer' })
+        : options.operation === 'job_eligibility' ? eligible() : resumeResult();
+    });
+    await service.generate(user, dto);
+    const events = (service as any).logger.log.mock.calls.map(([entry]: [string]) => JSON.parse(entry));
+    expect(events).toContainEqual(expect.objectContaining({ event: 'application_generation_usage',
+      identity_input_tokens: 100, eligibility_input_tokens: 200, resume_input_tokens: 300,
+      application_input_tokens: 600, application_output_tokens: 60, application_total_tokens: 660 }));
+  });
+
+  it('uses complete JD headers without a paid identity call, but does not read across empty header lines', async () => {
+    const { service, aiSettings } = setup(false);
+    (service as any).extractJobIdentity.mockRestore();
+    const generateText = jest.spyOn(service as any, 'generateText')
+      .mockResolvedValue(JSON.stringify({ company_name: 'Unknown', job_title: 'Engineer' }));
+    const config = await aiSettings.forWorkspace();
+    await expect((service as any).extractJobIdentity('Company: Acme\r\nTitle: Engineer\r\n\r\nJob Description\r\nBuild software', config))
+      .resolves.toEqual({ company_name: 'Acme', job_title: 'Engineer' });
+    expect(generateText).not.toHaveBeenCalled();
+    await expect((service as any).extractJobIdentity('Company:\nTitle: Engineer\n\nJob Description\nBuild software', config))
+      .resolves.toEqual({ company_name: '', job_title: 'Engineer' });
+    expect(generateText).toHaveBeenCalledTimes(1);
+  });
+
+  it('saves the local session and reference context in one write after generation succeeds', async () => {
     const { service, prisma, applications, drafts } = setup();
     (service as any).createGenerationConversation.mockRestore();
     prisma.resumeConversation.create.mockImplementation(async ({ data }) => ({ id: 'conversation-local', ...data }));
     const generateText = jest.spyOn(service as any, 'generateText')
       .mockResolvedValueOnce(eligible())
-      .mockResolvedValueOnce(JSON.stringify({ summary: 'Generated resume', annual_salary: '$150,000', hourly_rate: '$72.12' }));
+      .mockResolvedValueOnce(resumeResult({ summary: 'Generated resume' }));
     const request = jest.spyOn(service as any, 'requestProvider');
     await expect(service.generate(user, dto)).resolves.toMatchObject({ success: true, conversation_id: 'conversation-local' });
     expect(prisma.resumeConversation.create.mock.calls[0][0].data.openai_conversation_id).toMatch(/^local_/);
-    expect(prisma.resumeConversation.create.mock.invocationCallOrder[0]).toBeLessThan(generateText.mock.invocationCallOrder[0]);
+    expect(prisma.resumeConversation.create.mock.invocationCallOrder[0]).toBeGreaterThan(generateText.mock.invocationCallOrder[1]);
+    expect(prisma.resumeConversation.create).toHaveBeenCalledTimes(1);
+    expect(prisma.resumeConversation.create.mock.calls[0][0].data.reference_context).toContain('Generated resume');
+    expect(prisma.resumeConversation.update).not.toHaveBeenCalled();
     for (const [, options] of generateText.mock.calls) expect(options).not.toHaveProperty('conversationId');
     expect(request).not.toHaveBeenCalled();
     expect(applications.createGenerated).not.toHaveBeenCalled();
@@ -377,7 +460,7 @@ describe('ApplicationGenerationService application metadata eligibility', () => 
     const { service, drafts, prisma, duplicates, bannedUrls, applications, access } = setup();
     const generateText = jest.spyOn(service as any, 'generateText')
       .mockResolvedValueOnce(eligible())
-      .mockResolvedValueOnce(JSON.stringify({ summary: 'Manual resume', annual_salary: '$150,000', hourly_rate: '$72.12' }));
+      .mockResolvedValueOnce(resumeResult({ summary: 'Manual resume' }));
     await expect(service.generate(user, { ...dto, mode: 'manual', url: undefined })).resolves.toMatchObject({
       success: true, draft: { url: '', company_name: 'Acme' }, conversation_id: 'conversation-1',
     });
@@ -388,7 +471,7 @@ describe('ApplicationGenerationService application metadata eligibility', () => 
     expect(duplicates.findRecentCompanyMatch).toHaveBeenCalledWith(dto.workspace_id, 'Acme');
     expect(generateText.mock.calls[0][0]).toContain('Not provided (manual application)');
     expect(drafts.prepare).toHaveBeenCalledWith(user, expect.objectContaining({ url: '', normalized_url: '', conversation_id: 'conversation-1' }), 'reservation-1');
-    expect(prisma.resumeConversation.update.mock.calls[0][0].data.reference_context).toContain('Manual resume');
+    expect(prisma.resumeConversation.create.mock.calls[0][0].data.reference_context).toContain('Manual resume');
     expect(applications.createGenerated).not.toHaveBeenCalled();
   });
 
@@ -414,11 +497,11 @@ describe('ApplicationGenerationService application metadata eligibility', () => 
       'Write concise accomplishments.\n{{job_description}}\n{{career_milestones}}\n{{candidate_location}}\n{{candidate_info}}' });
     const generateText = jest.spyOn(service as any, 'generateText')
       .mockResolvedValueOnce(eligible())
-      .mockResolvedValueOnce(JSON.stringify({ summary: 'Custom resume', annual_salary: '$150,000', hourly_rate: '$72.12' }));
+      .mockResolvedValueOnce(resumeResult({ summary: 'Custom resume' }));
     await expect(service.generate(user, dto)).resolves.toMatchObject({ success: true });
     expect(aiSettings.forWorkspace).toHaveBeenLastCalledWith(dto.workspace_id);
     expect(generateText).toHaveBeenLastCalledWith(expect.stringContaining('Write concise accomplishments.'),
-      expect.objectContaining({ operation: 'resume_generation', instructions: RESUME_OUTPUT_INSTRUCTIONS }));
+      expect.objectContaining({ operation: 'resume_generation', instructions: resumeOutputInstructions(false) }));
     const prompt = generateText.mock.calls[1][0] as string;
     expect(prompt).toContain(dto.job_description);
     expect(prompt).toContain('Chicago, IL');
@@ -426,8 +509,11 @@ describe('ApplicationGenerationService application metadata eligibility', () => 
     expect(prompt).not.toContain('{{candidate_info}}');
   });
 
-  it.each(['openai', 'deepseek', 'gemini', 'claude'] as const)('uses a local session and bounded context for the complete %s workflow', async (providerName) => {
+  it.each((['openai', 'deepseek', 'gemini', 'claude'] as const).flatMap((provider) =>
+    [false, true].map((coverLetter) => [provider, coverLetter] as const)))('uses local context for the complete %s workflow with cover letter %s', async (providerName, coverLetter) => {
     const { service, prisma, drafts, aiSettings } = setup();
+    const workspace = await prisma.workspace.findUnique();
+    Object.assign(workspace.resumeProfile, { generate_cover_letter: coverLetter });
     (service as any).createGenerationConversation.mockRestore();
     const config = await aiSettings.forWorkspace();
     const platform = AI_PROVIDERS[providerName];
@@ -436,18 +522,29 @@ describe('ApplicationGenerationService application metadata eligibility', () => 
       model: platform.default_model, baseUrl } as any);
     prisma.resumeConversation.create.mockImplementation(async ({ data }) => ({ id: 'conversation-1', ...data }));
     const json = (body: unknown) => new Response(JSON.stringify(body), { headers: { 'content-type': 'application/json' } });
-    const result = (text: string) => json(providerName === 'gemini'
-      ? { candidates: [{ content: { parts: [{ text }] }, finishReason: 'STOP' }] }
-      : providerName === 'claude' ? { type: 'message', content: [{ type: 'text', text }], stop_reason: 'end_turn' }
-      : { output_text: text });
+    const result = (text: string) => {
+      if (providerName !== 'claude') return json(providerName === 'gemini'
+        ? { candidates: [{ content: { parts: [{ text }] }, finishReason: 'STOP' }] } : { output_text: text });
+      const events = [
+        { type: 'message_start', message: { id: 'msg_workflow', type: 'message', role: 'assistant', model: platform.default_model,
+          content: [], stop_reason: null, stop_sequence: null, usage: { input_tokens: 100, output_tokens: 1 } } },
+        { type: 'content_block_start', index: 0, content_block: { type: 'text', text } },
+        { type: 'content_block_stop', index: 0 },
+        { type: 'message_delta', delta: { stop_reason: 'end_turn', stop_sequence: null }, usage: { output_tokens: 15 } },
+        { type: 'message_stop' },
+      ];
+      return new Response(events.map((event) => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join(''),
+        { headers: { 'content-type': 'text/event-stream' } });
+    };
     const provider = jest.spyOn(globalThis, 'fetch')
       .mockResolvedValueOnce(result(eligible()))
-      .mockResolvedValueOnce(result(JSON.stringify({ summary: 'Tailored summary', annual_salary: '$150,000', hourly_rate: '$72.12' })))
+      .mockResolvedValueOnce(result(resumeResult({ coverletter: coverLetter ? 'Dear hiring team,\nI can contribute to this role.\n\nSincerely,\nCandidate' : '' })))
       .mockResolvedValueOnce(result(providerAnswers([{ question: 'Why this role?', answer: 'It fits my experience.' }])));
     try {
       await expect(service.generate(user, dto)).resolves.toMatchObject({ success: true, conversation_id: 'conversation-1' });
-      const saved = { id: 'conversation-1', ...prisma.resumeConversation.create.mock.calls[0][0].data,
-        reference_context: prisma.resumeConversation.update.mock.calls[0][0].data.reference_context };
+      const saved = { id: 'conversation-1', ...prisma.resumeConversation.create.mock.calls[0][0].data };
+      expect(drafts.prepare.mock.calls[0][1].cover_letter_text).toBe(coverLetter
+        ? 'Dear hiring team,\nI can contribute to this role.\n\nSincerely,' : undefined);
       prisma.resumeConversation.findUnique.mockResolvedValue(saved);
       await expect(service.answerQuestions(user, {
         conversation_id: 'conversation-1', questions: [{ question: 'Name' }, { question: 'Why this role?' }],
@@ -472,7 +569,7 @@ describe('ApplicationGenerationService application metadata eligibility', () => 
       expect(eligibility.input).toContain(dto.job_description);
       expect(eligibility.reasoning.effort).toBe('low');
       expect(resume.input).not.toContain('requires_clearance');
-      expect(resume.instructions).toBe(RESUME_OUTPUT_INSTRUCTIONS);
+      expect(resume.instructions).toBe(resumeOutputInstructions(coverLetter));
       expect(answers.input[0].content).toBe(saved.reference_context);
       expect(answers.input[0].content).toContain('Tailored summary');
       expect(answers.input[0].content).toContain('Job description:');
@@ -492,54 +589,54 @@ describe('ApplicationGenerationService application metadata eligibility', () => 
     const request = jest.spyOn(service as any, 'requestProvider');
     const generateText = jest.spyOn(service as any, 'generateText')
       .mockResolvedValueOnce(eligible())
-      .mockResolvedValueOnce(JSON.stringify({ summary: 'Tailored summary', annual_salary: '$150,000', hourly_rate: '$72.12' }));
+      .mockResolvedValueOnce(resumeResult());
 
     await expect(service.generate(user, dto)).resolves.toMatchObject({ success: true, conversation_id: 'local-conversation' });
     expect(request).not.toHaveBeenCalled();
     expect(prisma.resumeConversation.create.mock.calls[0][0].data.openai_conversation_id).toMatch(/^local_/);
     for (const [, options] of generateText.mock.calls) expect(options).not.toHaveProperty('conversationId');
-    const context = prisma.resumeConversation.update.mock.calls[0][0].data.reference_context;
+    const context = prisma.resumeConversation.create.mock.calls[0][0].data.reference_context;
     expect(context).toContain(dto.url);
     expect(context).toContain('"fullName":"Candidate"');
     expect(context).toContain('Tailored summary');
   });
 
-  it('keeps rejected conversations tracked for cleanup without generating a resume or prepared job', async () => {
+  it('does not create conversation records for rejected jobs', async () => {
     const { service, prisma, drafts } = setup();
     (service as any).createGenerationConversation.mockRestore();
     prisma.resumeConversation.create.mockImplementation(async ({ data }) => ({ id: 'rejected-conversation', ...data }));
     jest.spyOn(service as any, 'requestProvider').mockResolvedValue({ id: 'conv_rejected' });
     const generateText = jest.spyOn(service as any, 'generateText').mockResolvedValue(eligible({ requires_clearance: true }));
     await expect(service.generate(user, dto)).resolves.toMatchObject({ success: false, eligible: false });
-    expect(prisma.resumeConversation.create.mock.calls[0][0].data.openai_conversation_id).toMatch(/^local_/);
+    expect(prisma.resumeConversation.create).not.toHaveBeenCalled();
     expect(generateText).toHaveBeenCalledTimes(1);
     expect(generateText.mock.calls[0][1]).not.toHaveProperty('conversationId');
     expect(prisma.resumeConversation.update).not.toHaveBeenCalled();
     expect(drafts.prepare).not.toHaveBeenCalled();
   });
 
-  it('keeps the local session when resume generation fails and does not prepare a job', async () => {
+  it('does not create conversation records or prepared jobs when generation fails', async () => {
     const { service, prisma, drafts } = setup();
     (service as any).createGenerationConversation.mockRestore();
     prisma.resumeConversation.create.mockImplementation(async ({ data }) => ({ id: 'failed-conversation', ...data }));
     const request = jest.spyOn(service as any, 'requestProvider').mockResolvedValue({ id: 'conv_failed' });
     jest.spyOn(service as any, 'generateText').mockResolvedValueOnce(eligible()).mockRejectedValueOnce(new Error('Provider unavailable'));
     await expect(service.generate(user, dto)).rejects.toThrow('Provider unavailable');
-    expect(prisma.resumeConversation.create.mock.calls[0][0].data.openai_conversation_id).toMatch(/^local_/);
+    expect(prisma.resumeConversation.create).not.toHaveBeenCalled();
     expect(request).not.toHaveBeenCalled();
     expect(prisma.resumeConversation.update).not.toHaveBeenCalled();
     expect(drafts.prepare).not.toHaveBeenCalled();
   });
 
-  it('does not send provider requests when the local session cannot be saved', async () => {
+  it('does not prepare a job when saving its reference context fails', async () => {
     const { service, prisma, drafts } = setup();
     (service as any).createGenerationConversation.mockRestore();
     prisma.resumeConversation.create.mockRejectedValue(new Error('Database unavailable'));
     const request = jest.spyOn(service as any, 'requestProvider');
-    const generateText = jest.spyOn(service as any, 'generateText');
+    const generateText = jest.spyOn(service as any, 'generateText').mockResolvedValueOnce(eligible()).mockResolvedValueOnce(resumeResult());
     await expect(service.generate(user, dto)).rejects.toThrow('Database unavailable');
     expect(request).not.toHaveBeenCalled();
-    expect(generateText).not.toHaveBeenCalled();
+    expect(generateText).toHaveBeenCalledTimes(2);
     expect(drafts.prepare).not.toHaveBeenCalled();
   });
 
@@ -701,7 +798,7 @@ describe('ApplicationGenerationService application metadata eligibility', () => 
     const { service, applications, drafts } = setup();
     const generateText = jest.spyOn(service as any, 'generateText')
       .mockResolvedValueOnce(eligible())
-      .mockResolvedValueOnce(JSON.stringify({
+      .mockResolvedValueOnce(resumeResult({
         target_company: 'Different AI spelling',
         target_job_title: 'Different AI title',
         summary: 'Tailored summary',
@@ -755,7 +852,7 @@ describe('ApplicationGenerationService application metadata eligibility', () => 
     });
     jest.spyOn(service as any, 'generateText')
       .mockResolvedValueOnce(eligible())
-      .mockResolvedValueOnce(JSON.stringify({
+      .mockResolvedValueOnce(resumeResult({
         summary: 'Tailored summary',
         coverletter: 'Thank you for your consideration.\n\nSincerely,\nCandidate',
         annual_salary: '$150,000', hourly_rate: '$72.12',
@@ -833,6 +930,27 @@ describe('ApplicationGenerationService application metadata eligibility', () => 
     expect(options).toMatchObject({ config, referenceContext: 'Saved resume and JD' });
     expect(options).not.toHaveProperty('conversationId');
     expect((service as any).aiSettings.forWorkspace).toHaveBeenCalledWith(dto.workspace_id);
+  });
+
+  it('scopes Claude threads to the owned conversation and current candidate facts', async () => {
+    const { service, prisma, aiSettings } = setup();
+    prisma.resumeConversation.findUnique.mockResolvedValue({ id: 'application-1', user_id: user.id,
+      workspace_id: dto.workspace_id, profile_id: profile.id, openai_conversation_id: 'local_unique',
+      reference_context: 'Saved resume and JD' });
+    aiSettings.forWorkspace.mockResolvedValue({ provider: 'claude', model: 'claude-sonnet-5', apiKey: 'saved-key',
+      baseUrl: 'https://api.anthropic.com/v1', resumePrompt: DEFAULT_RESUME_PROMPT });
+    const generateText = jest.spyOn(service as any, 'generateText').mockResolvedValue(providerAnswers([
+      { question: 'Why this role?', answer: 'A good fit.' },
+    ]));
+    const input = { conversation_id: 'application-1', questions: [{ question: 'Why this role?' }] };
+    await service.answerQuestions(user, input);
+    await service.answerQuestions(user, input);
+    const first = (generateText.mock.calls[0][1] as any).claudeThreadKey;
+    expect(first).toMatch(/^[a-f0-9]{64}$/);
+    expect((generateText.mock.calls[1][1] as any).claudeThreadKey).toBe(first);
+    prisma.resumeProfile.findUnique.mockResolvedValue({ ...profile, full_name: 'Updated Candidate' });
+    await service.answerQuestions(user, input);
+    expect((generateText.mock.calls[2][1] as any).claudeThreadKey).not.toBe(first);
   });
 
   it.each([false, true])('maps reordered answers by ID and preserves original questions (extra question text: %s)', async (includeQuestionText) => {
@@ -1057,9 +1175,9 @@ describe('ApplicationGenerationService application metadata eligibility', () => 
     const { service, prisma } = setup();
     jest.spyOn(service as any, 'generateText')
       .mockResolvedValueOnce(eligible())
-      .mockResolvedValueOnce(JSON.stringify({ summary: 'Tailored summary', annual_salary: '$150,000', hourly_rate: '$72.12' }));
+      .mockResolvedValueOnce(resumeResult());
     await service.generate(user, dto);
-    const context = prisma.resumeConversation.update.mock.calls[0][0].data.reference_context as string;
+    const context = prisma.resumeConversation.create.mock.calls[0][0].data.reference_context as string;
     expect(context).toContain(dto.url);
     expect(context).toContain('"personalInfo":{"fullName":"Candidate"');
     expect(context).toContain('Tailored summary');
