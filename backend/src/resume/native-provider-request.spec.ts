@@ -37,13 +37,17 @@ describe('Gemini and Claude generation', () => {
   });
   afterEach(() => { jest.restoreAllMocks(); jest.useRealTimers(); });
 
-  it.each(['gemini', 'claude'] as const)('routes %s with native authentication, instructions and bounded local context', async (provider) => {
+  it.each([
+    config('gemini'), config('gemini', 'gemini-3.8-flash'),
+    config('claude'), config('claude', 'claude-sonnet-5'), config('claude', 'claude-sonnet-4-6'),
+  ])('routes $model with native authentication, instructions and bounded local context', async (settings) => {
+    const { provider } = settings;
     fetchMock.mockResolvedValueOnce(json(reply(provider)));
-    await expect(service.generateText('Why this role?', { config: config(provider), referenceContext: 'Resume and job',
+    await expect(service.generateText('Why this role?', { config: settings, referenceContext: 'Resume and job',
       instructions: 'Return JSON', reasoningEffort: 'low', maxOutputTokens: 4096 })).resolves.toBe('Answer');
     const [url, request] = fetchMock.mock.calls[0];
     const body = JSON.parse(request.body);
-    expect(url).toBe(AI_PROVIDERS[provider].target_url.replace('{model}', config(provider).model));
+    expect(url).toBe(AI_PROVIDERS[provider].target_url.replace('{model}', settings.model));
     expect(request.headers.Authorization).toBeUndefined();
     for (const field of ['conversation', 'previous_response_id', 'store', 'input', 'reasoning']) expect(body).not.toHaveProperty(field);
     if (provider === 'gemini') {
@@ -53,6 +57,7 @@ describe('Gemini and Claude generation', () => {
       expect(body.generationConfig).toEqual({ maxOutputTokens: 4096, thinkingConfig: { thinkingLevel: 'low' } });
       expect(body).not.toHaveProperty('stream');
     } else {
+      expect(body.model).toBe(settings.model);
       expect(request.headers['x-api-key']).toBe('claude-secret');
       expect(request.headers['anthropic-version']).toBe('2023-06-01');
       expect(body.messages[0].content).toEqual([{ type: 'text', text: 'Resume and job', cache_control: { type: 'ephemeral' } },
@@ -61,6 +66,24 @@ describe('Gemini and Claude generation', () => {
       expect(body).not.toHaveProperty('temperature');
     }
     expect(JSON.stringify(service.logger.log.mock.calls)).not.toContain('Private thought');
+  });
+
+  it.each([
+    { effort: 'low', maxTokens: 4096, budget: 1024 },
+    { effort: 'medium', maxTokens: 16000, budget: 4096 },
+    { effort: 'high', maxTokens: 20000, budget: 8192 },
+    { effort: undefined, maxTokens: 16000, budget: 4096 },
+    { effort: 'high', maxTokens: 2048, budget: 1024 },
+    { effort: 'low', maxTokens: 1024, budget: null },
+  ])('uses supported Haiku 4.5 thinking with $effort effort and $maxTokens output tokens', async ({ effort, maxTokens, budget }) => {
+    fetchMock.mockResolvedValueOnce(json(claude()));
+    await expect(service.generateText('Answer', { config: config('claude', 'claude-haiku-4-5-20251001'),
+      reasoningEffort: effort, maxOutputTokens: maxTokens })).resolves.toBe('Answer');
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(body).toMatchObject({ model: 'claude-haiku-4-5-20251001', max_tokens: maxTokens, stream: true });
+    expect(body.thinking).toEqual(budget === null ? { type: 'disabled' } : { type: 'enabled', budget_tokens: budget });
+    expect(body).not.toHaveProperty('output_config');
+    expect(body).not.toHaveProperty('temperature');
   });
 
   it.each(AI_MODELS.filter((m) => m.provider === 'gemini' || m.provider === 'claude'))('caps output for $id', async (model) => {
@@ -173,10 +196,15 @@ describe('Gemini and Claude generation', () => {
     expect(openAiUsageFields(mixedCalls, service.usageRates(settings, mixedCalls)).estimated_total_cost_usd).toBe(0.064);
   });
 
-  it.each(['gemini-4-carbon', 'gemini-4-argon'])('changes %s promotional prices on the published date', (id) => {
+  it.each([
+    { id: 'gemini-4-carbon', date: '2026-12-01', input: 2, rates: { input: 4, output: 20, cached_input: 0.2 } },
+    { id: 'gemini-4-argon', date: '2026-12-01', input: 2, rates: { input: 4, output: 20, cached_input: 0.2 } },
+    { id: 'gemini-3.8-flash', date: '2027-01-01', input: 0.75, rates: { input: 1.5, output: 7.5, cached_input: 0.15 } },
+  ])('changes $id promotional prices on the published date', ({ id, date, input, rates }) => {
     const model = AI_MODELS.find((m) => m.id === id)!;
-    expect(currentModelPrices(model, new Date('2026-11-30T23:59:59Z')).input).toBe(2);
-    expect(currentModelPrices(model, new Date('2026-12-01T00:00:00Z'))).toMatchObject({ input: 4, output: 20, cached_input: 0.2 });
-    expect(model.input).toBe(2);
+    const effectiveAt = new Date(`${date}T00:00:00Z`);
+    expect(currentModelPrices(model, new Date(effectiveAt.getTime() - 1)).input).toBe(input);
+    expect(currentModelPrices(model, effectiveAt)).toMatchObject(rates);
+    expect(model.input).toBe(input);
   });
 });

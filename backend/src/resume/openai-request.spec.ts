@@ -34,6 +34,19 @@ describe('OpenAI request recovery', () => {
     { headers: { 'content-type': 'text/event-stream' } },
   );
 
+  it.each(['gpt-5.5-2026-04-23', 'gpt-5.1-2025-11-13', 'gpt-5-mini-2025-08-07'])(
+    'sends the exact %s snapshot to OpenAI with reasoning and local context', async (model) => {
+      fetchMock.mockResolvedValueOnce(stream({ status: 'completed', output_text: 'Answer' }, 'response.completed'));
+      await expect(generate('Why this role?', { config: { ...config, model },
+        referenceContext: 'Resume and job', reasoningEffort: 'low', maxOutputTokens: 4096 })).resolves.toBe('Answer');
+      const [url, request] = fetchMock.mock.calls[0];
+      expect(url).toBe('https://api.openai.com/v1/responses');
+      expect(request.headers.Authorization).toBe('Bearer test-key');
+      expect(JSON.parse(request.body)).toMatchObject({ model, reasoning: { effort: 'low' }, max_output_tokens: 4096,
+        input: [{ role: 'user', content: 'Resume and job' }, { role: 'user', content: 'Why this role?' }], store: false });
+    },
+  );
+
   it('routes DeepSeek generation with the saved model and its own key, including local question context', async () => {
     fetchMock.mockResolvedValueOnce(stream({ status: 'completed', output_text: 'Answer' }, 'response.completed'));
     await expect(generate('Why this role?', {

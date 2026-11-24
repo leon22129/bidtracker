@@ -52,6 +52,26 @@ describe('Profile AI settings', () => {
     return ['v1', iv.toString('base64'), cipher.getAuthTag().toString('base64'), encrypted.toString('base64')].join(':');
   }
 
+  it.each<{ provider: AiProvider; model: string }>([
+    { provider: 'openai', model: 'gpt-5.5-2026-04-23' },
+    { provider: 'claude', model: 'claude-sonnet-5' },
+    { provider: 'gemini', model: 'gemini-3.8-flash' },
+    { provider: 'claude', model: 'claude-haiku-4-5-20251001' },
+    { provider: 'claude', model: 'claude-sonnet-4-6' },
+    { provider: 'openai', model: 'gpt-5.1-2025-11-13' },
+    { provider: 'openai', model: 'gpt-5-mini-2025-08-07' },
+  ])('preserves $model for account defaults, inherited profiles and overrides', async ({ provider, model }) => {
+    const { service } = setup();
+    const account = await service.update(admin, { provider, model, api_key: 'account-key' });
+    expect(account.models).toContainEqual(expect.objectContaining({ provider, id: model }));
+    await expect(service.get(admin)).resolves.toMatchObject({ provider, model });
+    await expect(service.getProfile(admin, 'w1')).resolves.toMatchObject({ provider, model, uses_account_defaults: true });
+    await expect(service.forWorkspace('w1')).resolves.toMatchObject({ provider, model, apiKey: 'account-key' });
+    await service.updateProfile(admin, 'w1', { provider, model, api_key: 'profile-key' });
+    await expect(service.getProfile(admin, 'w1')).resolves.toMatchObject({ provider, model, uses_account_defaults: false });
+    await expect(service.forWorkspace('w1')).resolves.toMatchObject({ provider, model, apiKey: 'profile-key' });
+  });
+
   it.each(Object.keys(AI_PROVIDERS) as AiProvider[])('encrypts %s keys for a single profile and never returns credentials', async (provider) => {
     const { service, profiles } = setup();
     const result = await service.updateProfile(admin, 'w1', selection(provider, 'profile-secret'));

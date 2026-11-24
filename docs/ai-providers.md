@@ -1,6 +1,6 @@
 # Gemini and Claude integration
 
-Reviewed 2026-11-23. Configure **Account → AI generation** with a default model and API key.
+Reviewed 2026-11-24. Configure **Account → AI generation** with a default model and API key.
 Profiles inherit their admin's current account settings unless an admin saves a model and separate key
 in **Dashboard → a profile → AI settings → Set profile override**. Generation uses the effective settings
 for resumes, cover letters, eligibility checks, and application answers, including requests from bidders.
@@ -31,13 +31,18 @@ USD per million text tokens, standard paid processing:
 | `gemini-4-carbon` | 2.00 | 0.10 | 10.00 | — |
 | `gemini-4-neon` | 3.00 | 0.15 | 15.00 | — |
 | `gemini-4-argon` | 2.00 | 0.10 | 10.00 | — |
+| `gemini-3.8-flash` | 0.75 | 0.075 | 3.75 | — |
 | `claude-sonnet-5-5` (default) | 2.00 | 0.10 | 10.00 | 2.50 |
 | `claude-haiku-5-5` | 0.10 | 0.01 | 0.50 | 0.125 |
 | `claude-opus-5-5` | 4.00 | 0.20 | 20.00 | 5.00 |
 | `claude-fable-5-2` | 8.00 | 0.20 | 40.00 | 10.00 |
+| `claude-sonnet-5` | 2.00 | 0.20 | 10.00 | 2.50 |
+| `claude-sonnet-4-6` | 3.00 | 0.30 | 15.00 | 3.75 |
+| `claude-haiku-4-5-20251001` | 1.00 | 0.10 | 5.00 | 1.25 |
 
-Carbon and Argon change to $4 input / $0.20 cached / $20 output on 2026-12-01. The catalog and cost
-estimates switch automatically at that UTC date. Haiku prompts above 100,000 tokens use $0.50 input /
+Carbon and Argon change to $4 input / $0.20 cached / $20 output on 2026-12-01. Gemini 3.8 Flash changes
+to $1.50 input / $0.15 cached / $7.50 output on 2027-01-01. The catalog and cost estimates switch
+automatically at those UTC dates. Haiku 5.5 prompts above 100,000 tokens use $0.50 input /
 $0.05 cached / $2.50 output / $0.625 cache writes, including cached tokens when selecting the tier.
 Prices exclude taxes, tools, regional premiums, batch/priority discounts and free-tier allowances.
 Sources: [Google pricing](https://aistudio.google.com/docs/pricing),
@@ -45,10 +50,29 @@ Sources: [Google pricing](https://aistudio.google.com/docs/pricing),
 [Gemini models](https://aistudio.google.com/docs/models),
 [Claude models](https://platform.claude.com/docs/en/models/overview).
 
+The OpenAI selector also includes these exact snapshots alongside their model family aliases:
+
+| Model ID | Input | Cached input | Output |
+| --- | ---: | ---: | ---: |
+| `gpt-5.5-2026-04-23` | 5.00 | 0.50 | 30.00 |
+| `gpt-5.1-2025-11-13` | 1.25 | 0.125 | 10.00 |
+| `gpt-5-mini-2025-08-07` | 0.25 | 0.025 | 2.00 |
+
+Snapshot IDs are saved and sent to OpenAI exactly as selected. GPT-5.1 and GPT-5 mini retain their
+provider's deprecated label. GPT-5.5 prompts above 272,000 input tokens use 2× input/cached rates and
+1.5× output rates. Sources: [GPT-5.5](https://developers.openai.com/api/docs/models/gpt-5.5),
+[GPT-5.1](https://developers.openai.com/api/docs/models/gpt-5.1),
+[GPT-5 mini](https://developers.openai.com/api/docs/models/gpt-5-mini).
+
 ## Provider behavior
 
 - Gemini has a shared 1,048,576-token context window; this app caps each streaming response at 65,536
-  tokens and does not use long decode. Claude's listed models have 1M context and 128K maximum output.
+  tokens and does not use long decode. Claude's listed models have 1M context and 128K maximum output,
+  except Haiku 4.5, which has 200K context and 64K maximum output.
+- Haiku 4.5 uses extended thinking with budgets of 1,024 / 4,096 / 8,192 tokens for low / medium / high
+  effort, capped at half the output limit to leave room for the answer. Thinking is disabled when the
+  available budget is below the API's 1,024-token minimum. Other listed Claude models use adaptive
+  thinking. See [extended thinking](https://platform.claude.com/docs/en/build-with-claude/extended-thinking).
 - Thinking counts toward output limits and costs. Gemini thought parts and Claude thinking blocks are
   excluded from returned text. Claude does not report a separate thinking-token count here.
 - Gemini uses implicit caching. Claude marks reusable reference context with a five-minute cache
